@@ -1,0 +1,25 @@
+{
+  "storage_root": "pipeline_storage",
+  "active_domains": [
+    "expense_receipt"
+  ],
+  "pipeline_folders": [
+    "01_raw_inbox",
+    "02_split_pages",
+    "03_processing_queue",
+    "04_archive"
+  ],
+  "logging": {
+    "logs_dir": "logs",
+    "rotation": "00:00",
+    "retention": "30 days",
+    "compression": "zip",
+    "level": "INFO"
+  },
+  "archiving": {
+    "keep_split_pages": true,
+    "split_format": "pdf, png",
+    "filename_pattern": "{domain}_{source}_{doc_no}_{page_no}",
+    "use_ai_fallback_matching": true
+  }
+}

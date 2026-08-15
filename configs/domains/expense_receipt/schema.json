@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExpenseReceipt",
+  "description": "Unified schema for extracting expense receipts.",
+  "type": "object",
+  "properties": {
+    "transaction_date": {
+      "type": "string",
+      "description": "The date of the transaction in YYYY-MM-DD format (e.g., 2026-08-15)."
+    },
+    "merchant_name": {
+      "type": "string",
+      "description": "The official name of the merchant or store."
+    },
+    "tax_id": {
+      "type": "string",
+      "description": "The merchant's 13-digit Tax ID (เลขประจำตัวผู้เสียภาษี) in Thailand, if available."
+    },
+    "expense_category": {
+      "type": "string",
+      "description": "The classification of the expense, such as Food & Beverage, Transport, Office Supplies, Delivery, Utilities, etc."
+    },
+    "items": {
+      "type": "array",
+      "description": "Detailed list of items or services purchased.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The description or name of the item."
+          },
+          "qty": {
+            "type": "integer",
+            "description": "Quantity purchased. Default to 1 if not specified."
+          },
+          "unit_price": {
+            "type": "number",
+            "description": "Price per unit of the item."
+          },
+          "total_price": {
+            "type": "number",
+            "description": "Total price for the item (qty * unit_price)."
+          }
+        },
+        "required": ["name", "qty", "unit_price", "total_price"]
+      }
+    },
+    "financial_summary": {
+      "type": "object",
+      "description": "Financial totals of the transaction.",
+      "properties": {
+        "subtotal": {
+          "type": "number",
+          "description": "Total amount before discounts and taxes."
+        },
+        "discount": {
+          "type": "number",
+          "description": "Total discount amount applied. Default to 0.0 if none."
+        },
+        "vat_amount": {
+          "type": "number",
+          "description": "Value Added Tax (VAT) amount. Default to 0.0 if none."
+        },
+        "net_amount": {
+          "type": "number",
+          "description": "The final amount paid (subtotal - discount + vat_amount)."
+        }
+      },
+      "required": ["subtotal", "discount", "vat_amount", "net_amount"]
+    },
+    "payment_method": {
+      "type": "string",
+      "description": "Method of payment, e.g., Cash, Credit Card, Bank Transfer, ShopeePay, TrueMoney, GrabPay, QR Pay."
+    }
+  },
+  "required": [
+    "transaction_date",
+    "merchant_name",
+    "tax_id",
+    "expense_category",
+    "items",
+    "financial_summary",
+    "payment_method"
+  ]
+}

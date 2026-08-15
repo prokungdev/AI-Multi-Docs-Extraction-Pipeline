@@ -1,0 +1,5 @@
+{
+  "keywords": ["Grab", "แกร็บ", "GrabFood", "GrabCar", "GrabExpress", "GrabTaxi"],
+  "tax_ids": ["0105556101164", "0105561081515"],
+  "file_prefixes": ["Grab_", "GrabExpress_"]
+}

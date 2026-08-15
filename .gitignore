@@ -1,0 +1,74 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nosenv/
+.pytest_cache/
+.mypy_cache/
+venv/
+.venv/
+ENV/
+env/
+
+# Environments
+.env
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Local Pipeline Logs (keep directory structure but ignore text files)
+logs/*
+!logs/.gitkeep
+
+# Local Staging & Pipeline Storage
+# Ignore all files under pipeline_storage recursively (PDF, PNG, JSON, DB files)
+pipeline_storage/**/*
+
+# Do not ignore .gitkeep files to maintain the workspace folder structure in Git
+!pipeline_storage/**/.gitkeep
+
+# Exclude SQLite Database files explicitly
+pipeline_storage/**/pipeline.db
+pipeline_storage/**/*.db
+
+# Output exports
+outputs/*
+!outputs/.gitkeep

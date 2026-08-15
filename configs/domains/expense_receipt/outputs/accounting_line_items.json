@@ -1,0 +1,13 @@
+{
+  "granularity": "line_items",
+  "columns": {
+    "Transaction Date": "transaction_date",
+    "Merchant Name": "merchant_name",
+    "Tax ID": "tax_id",
+    "Item Name": "item.name",
+    "Quantity": "item.qty",
+    "Unit Price": "item.unit_price",
+    "Total Price": "item.total_price",
+    "Net Amount": "financial_summary.net_amount"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "granularity": "summary",
+  "columns": {
+    "Transaction Date": "transaction_date",
+    "Merchant Name": "merchant_name",
+    "Tax ID": "tax_id",
+    "Category": "expense_category",
+    "Subtotal": "financial_summary.subtotal",
+    "Discount": "financial_summary.discount",
+    "VAT Amount": "financial_summary.vat_amount",
+    "Net Amount": "financial_summary.net_amount",
+    "Payment Method": "payment_method"
+  }
+}
