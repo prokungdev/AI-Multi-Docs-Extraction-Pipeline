@@ -1,7 +1,7 @@
 @echo off
 echo ==========================================
-echo   Run_04_Transform_Outputs: Exporting Flat Data
+echo   Run_06_Run_UI: Starting Streamlit Web Portal
 echo ==========================================
-.\.venv\Scripts\python.exe transform_outputs.py
+.\.venv\Scripts\streamlit run src/ui/app.py
 echo ==========================================
 pause

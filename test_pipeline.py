@@ -10,6 +10,7 @@ from src.core.source_matcher import match_source
 from src.core.transformer import transform_data
 from src.core.initializer import initialize_storage_directories
 from src.core.logger import setup_logger
+from src.core.db import get_db_connection, initialize_db_schema, insert_relational_receipt
 
 class TestPipeline(unittest.TestCase):
     
@@ -135,6 +136,62 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(rows[1]["Total Price"], 20.0)
         self.assertEqual(rows[1]["Net Amount"], 120.0)  # Cloned from top-level
         print("[TEST] Transformer (Line Items) test passed.")
+
+    def test_05_relational_db_insert(self):
+        """Test inserting extracted data into relational tables."""
+        initialize_db_schema()
+        
+        mock_extracted = {
+            "transaction_date": "2026-08-15",
+            "merchant_name": "SPX Express (Thailand) Co., Ltd.",
+            "tax_id": "0105561164871",
+            "expense_category": "Delivery",
+            "items": [
+                {"name": "Shipping Fee - SPXTH987654321", "qty": 1, "unit_price": 100.0, "total_price": 100.0},
+                {"name": "Packaging Material", "qty": 2, "unit_price": 10.0, "total_price": 20.0}
+            ],
+            "financial_summary": {
+                "subtotal": 120.0,
+                "discount": 0.0,
+                "vat_amount": 0.0,
+                "net_amount": 120.0
+            },
+            "payment_method": "ShopeePay"
+        }
+        
+        doc_id = "test_doc_123"
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Ensure parent batch exists
+        cursor.execute("INSERT OR REPLACE INTO processed_batches (batch_id, original_pdf_name, total_pages, storage_path, file_hash, created_at) VALUES ('test_batch_123', 'test.pdf', 1, 'path', 'hash123', '2026-08-15')")
+        
+        # Ensure dummy document exists
+        cursor.execute("INSERT OR REPLACE INTO documents (document_id, batch_id, domain_id, source_id, status_code, created_at) VALUES ('test_doc_123', 'test_batch_123', 'expense_receipt', 'spx_express', 'PROCESSED', '2026-08-15')")
+        conn.commit()
+        
+        success = insert_relational_receipt(doc_id, mock_extracted, "test.pdf", conn=conn)
+        self.assertTrue(success)
+        
+        # Verify merchant was auto-created
+        cursor.execute("SELECT * FROM merchant_master WHERE tax_id = '0105561164871'")
+        merchant = cursor.fetchone()
+        self.assertIsNotNone(merchant)
+        self.assertEqual(merchant["merchant_name"], "SPX Express (Thailand) Co., Ltd.")
+        
+        # Verify receipt was created
+        cursor.execute("SELECT * FROM expense_receipt WHERE document_id = 'test_doc_123'")
+        receipt = cursor.fetchone()
+        self.assertIsNotNone(receipt)
+        self.assertEqual(receipt["net_amount"], 120.0)
+        
+        # Verify details were created
+        cursor.execute("SELECT * FROM expense_receipt_d WHERE receipt_id = ?", (receipt["receipt_id"],))
+        items = cursor.fetchall()
+        self.assertEqual(len(items), 2)
+        
+        conn.close()
+        print("[TEST] Relational database insertion test passed.")
 
 if __name__ == "__main__":
     unittest.main()

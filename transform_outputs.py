@@ -4,8 +4,15 @@ import pandas as pd
 from src.core.db import get_db_connection
 from src.core.transformer import transform_data
 from src.core.config_loader import load_system_settings
+from src.core.logger import setup_logger
+from loguru import logger
 
 def main():
+    setup_logger()
+    logger.info("==========================================")
+    logger.info("  Run_04_Transform_Outputs: Flat Report Export")
+    logger.info("==========================================")
+    
     settings = load_system_settings()
     domain = "expense_receipt" # default domain
     
@@ -24,18 +31,21 @@ def main():
         docs = cursor.fetchall()
         
         if not docs:
-            print("[*] No processed/approved documents found for transformation.")
+            logger.info("No processed/approved documents found for transformation.")
             return
             
-        print(f"[*] Found {len(docs)} document(s) to transform and export...")
+        logger.info(f"Found {len(docs)} document(s) to transform and export...")
         
         # Scan templates for output
         templates_dir = f"configs/domains/{domain}/outputs"
         if not os.path.exists(templates_dir):
-            print(f"[-] Error: Templates directory does not exist: {templates_dir}")
+            logger.error(f"Templates directory does not exist: {templates_dir}")
             return
             
         templates = [f for f in os.listdir(templates_dir) if f.endswith(".json")]
+        
+        exported_files = []
+        total_rows_exported = 0
         
         for tpl_file in templates:
             template_name = os.path.splitext(tpl_file)[0]
@@ -57,23 +67,32 @@ def main():
                     rows = transform_data(payload, template_path)
                     all_rows.extend(rows)
                 except Exception as e:
-                    print(f"[-] Failed to transform document {doc['document_id']}: {e}")
+                    logger.error(f"Failed to transform document {doc['document_id']}: {e}")
                     
             if all_rows:
                 os.makedirs("outputs", exist_ok=True)
                 df = pd.DataFrame(all_rows)
                 
-                csv_path = os.path.join("outputs", f"{domain}_{template_name}_export.csv")
+                csv_path = os.path.join("outputs", f"{domain}_{template_name}_export.csv").replace("\\", "/")
                 df.to_csv(csv_path, index=False, encoding="utf-8-sig")
-                print(f"[+] Exported CSV: {csv_path} ({len(all_rows)} rows)")
+                logger.info(f"Exported CSV: {csv_path} ({len(all_rows)} rows)")
+                exported_files.append(csv_path)
+                total_rows_exported += len(all_rows)
                 
-                json_path = os.path.join("outputs", f"{domain}_{template_name}_export.json")
+                json_path = os.path.join("outputs", f"{domain}_{template_name}_export.json").replace("\\", "/")
                 df.to_json(json_path, orient="records", force_ascii=False, indent=2)
-                print(f"[+] Exported JSON: {json_path}")
+                logger.info(f"Exported JSON: {json_path}")
+                exported_files.append(json_path)
                 
-        print("\n[SUCCESS] Completed Step 5! Flat report transformation and export finished.")
+        logger.info("==========================================")
+        logger.info("  Step 4: Flat Report Transformation Summary")
+        logger.info("==========================================")
+        logger.info(f"Total documents processed: {len(docs)}")
+        logger.info(f"Total rows exported: {total_rows_exported}")
+        logger.info(f"Exported files: {', '.join(exported_files)}")
+        logger.info("==========================================")
     except Exception as e:
-        print(f"[-] Error during data transformation execution: {e}")
+        logger.error(f"Error during data transformation execution: {e}")
     finally:
         if conn:
             conn.close()

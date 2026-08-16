@@ -19,24 +19,13 @@ def load_system_settings(settings_path: str = "configs/settings.json") -> dict:
 
 def get_active_domains_hybrid() -> list[dict]:
     """
-    Returns only domains that are present in document_domains.json AND marked active in DB.
+    Returns only domains that are active from configs/document_domains.json.
     """
     try:
-        db_domains = get_domains()
-        # Filter domains that exist in DB and have is_active == 1
-        active_db_domains = [d for d in db_domains if d["is_active"] == 1]
-        return active_db_domains
+        domains = get_domains()
+        return [d for d in domains if d.get("is_active") == 1]
     except Exception as e:
-        logger.error(f"Error loading active domains in hybrid mode: {e}")
-        # Fallback to local file if DB is not initialized yet
-        fallback_path = "configs/document_domains.json"
-        if os.path.exists(fallback_path):
-            try:
-                with open(fallback_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    return [d for d in data if d.get("is_active", True)]
-            except Exception:
-                pass
+        logger.error(f"Error loading active domains: {e}")
         return []
 
 def get_active_sources_hybrid(domain_id: str) -> list[str]:

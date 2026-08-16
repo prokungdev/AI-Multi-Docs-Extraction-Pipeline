@@ -34,6 +34,13 @@ def setup_logger(settings_path: str = "configs/settings.json") -> None:
     # Ensure logs directory exists
     os.makedirs(logs_dir, exist_ok=True)
     
+    # Ensure logs database exists and has schema
+    try:
+        from src.core.db import initialize_log_db_schema
+        initialize_log_db_schema(settings_path)
+    except Exception as e:
+        print(f"Warning: Failed to initialize log DB: {e}")
+    
     # 3. Add Console Sink (Stderr) with colored tags
     # Format: [2026-08-15 23:55:07] [INFO] Message
     console_format = "<green>[{time:YYYY-MM-DD HH:mm:ss}]</green> <level>[{level}]</level> {message}"
@@ -72,8 +79,8 @@ def setup_logger(settings_path: str = "configs/settings.json") -> None:
             created_at = record["time"].isoformat()
             
             # Local import to prevent circular dependency
-            from src.core.db import get_db_connection
-            conn = get_db_connection()
+            from src.core.db import get_log_db_connection
+            conn = get_log_db_connection()
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO application_logs (level, message, module, function, created_at)
@@ -87,5 +94,6 @@ def setup_logger(settings_path: str = "configs/settings.json") -> None:
 
     logger.add(
         db_sink,
-        level=level
+        level=level,
+        enqueue=True
     )

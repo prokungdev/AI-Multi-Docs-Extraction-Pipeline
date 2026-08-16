@@ -31,6 +31,53 @@ def get_db_connection(settings_path: str = "configs/settings.json") -> sqlite3.C
     conn.row_factory = sqlite3.Row
     return conn
 
+def get_log_db_connection(settings_path: str = "configs/settings.json") -> sqlite3.Connection:
+    """
+    Establishes a connection to the separate logs SQLite database (logs/logs.db).
+    """
+    logs_dir = "logs"
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+            logging_cfg = settings.get("logging", {})
+            logs_dir = logging_cfg.get("logs_dir", "logs")
+        except Exception:
+            pass
+            
+    os.makedirs(logs_dir, exist_ok=True)
+    db_path = os.path.join(logs_dir, "logs.db").replace("\\", "/")
+    
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def initialize_log_db_schema(settings_path: str = "configs/settings.json"):
+    """
+    Initializes the logging database schema (application_logs table).
+    """
+    conn = None
+    try:
+        conn = get_log_db_connection(settings_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS application_logs (
+                log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                level TEXT NOT NULL,
+                message TEXT NOT NULL,
+                module TEXT,
+                function TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+    except Exception as e:
+        print(f"Warning: Failed to initialize SQLite log database schema: {e}")
+    finally:
+        if conn:
+            conn.close()
+
 def initialize_db_schema():
     """
     Creates relational database schema if tables do not exist.
@@ -40,28 +87,17 @@ def initialize_db_schema():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 1. document_domains
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS document_domains (
-                domain_id TEXT PRIMARY KEY,
-                display_name TEXT NOT NULL,
-                is_active INTEGER DEFAULT 1,
-                sort_order INTEGER DEFAULT 0
-            )
-        """)
-        
-        # 2. document_sources
+        # 1. document_sources (No FK constraint to document_domains)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS document_sources (
                 source_id TEXT PRIMARY KEY,
                 domain_id TEXT NOT NULL,
                 display_name TEXT NOT NULL,
-                is_active INTEGER DEFAULT 1,
-                FOREIGN KEY (domain_id) REFERENCES document_domains(domain_id) ON DELETE CASCADE
+                is_active INTEGER DEFAULT 1
             )
         """)
         
-        # 3. document_statuses
+        # 2. document_statuses
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS document_statuses (
                 status_code TEXT PRIMARY KEY,
@@ -70,7 +106,7 @@ def initialize_db_schema():
             )
         """)
         
-        # 4. processed_batches
+        # 3. processed_batches
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS processed_batches (
                 batch_id TEXT PRIMARY KEY,
@@ -82,7 +118,7 @@ def initialize_db_schema():
             )
         """)
         
-        # 5. documents
+        # 4. documents (No FK constraint to document_domains)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS documents (
                 document_id TEXT PRIMARY KEY,
@@ -107,13 +143,12 @@ def initialize_db_schema():
                 created_at TEXT NOT NULL,
                 updated_at TEXT,
                 FOREIGN KEY (batch_id) REFERENCES processed_batches(batch_id) ON DELETE CASCADE,
-                FOREIGN KEY (domain_id) REFERENCES document_domains(domain_id),
                 FOREIGN KEY (source_id) REFERENCES document_sources(source_id),
                 FOREIGN KEY (status_code) REFERENCES document_statuses(status_code)
             )
         """)
         
-        # 6. document_pages
+        # 5. document_pages
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS document_pages (
                 page_id TEXT PRIMARY KEY,
@@ -129,7 +164,56 @@ def initialize_db_schema():
             )
         """)
 
-        # 7. api_credentials
+        # 6. merchant_master
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS merchant_master (
+                merchant_id TEXT PRIMARY KEY,
+                tax_id TEXT UNIQUE,
+                merchant_name TEXT NOT NULL,
+                default_wht_rate REAL DEFAULT 0.0,
+                is_vat_registered INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT
+            )
+        """)
+
+        # 7. expense_receipt
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS expense_receipt (
+                receipt_id TEXT PRIMARY KEY,
+                document_id TEXT UNIQUE,
+                merchant_id TEXT,
+                transaction_date TEXT,
+                merchant_name TEXT,
+                tax_id TEXT,
+                expense_category TEXT,
+                subtotal REAL,
+                discount REAL,
+                vat_amount REAL,
+                net_amount REAL,
+                payment_method TEXT,
+                source_file_name TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                FOREIGN KEY (document_id) REFERENCES documents(document_id) ON DELETE CASCADE,
+                FOREIGN KEY (merchant_id) REFERENCES merchant_master(merchant_id) ON DELETE SET NULL
+            )
+        """)
+
+        # 8. expense_receipt_d
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS expense_receipt_d (
+                item_id TEXT PRIMARY KEY,
+                receipt_id TEXT NOT NULL,
+                item_name TEXT NOT NULL,
+                qty INTEGER DEFAULT 1,
+                unit_price REAL,
+                total_price REAL,
+                FOREIGN KEY (receipt_id) REFERENCES expense_receipt(receipt_id) ON DELETE CASCADE
+            )
+        """)
+
+        # 9. api_credentials
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_credentials (
                 credential_id TEXT PRIMARY KEY,
@@ -164,18 +248,6 @@ def initialize_db_schema():
             )
         """)
 
-        # 9. application_logs
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS application_logs (
-                log_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                level TEXT NOT NULL,
-                message TEXT NOT NULL,
-                module TEXT,
-                function TEXT,
-                created_at TEXT NOT NULL
-            )
-        """)
-        
         conn.commit()
         logger.info("Relational SQLite schema initialized successfully.")
     except Exception as e:
@@ -198,6 +270,7 @@ def seed_initial_data(configs_dir: str = "configs"):
         statuses = [
             ("PENDING", "Pending Review", "Document is waiting for initial preprocessing or splitting."),
             ("PREPROCESSED", "Preprocessed", "Document is split and matched, ready for AI extraction."),
+            ("EXTRACTED", "Extracted", "AI successfully extracted document payload to JSON file, waiting for DB insertion."),
             ("PROCESSED", "Processed", "AI successfully extracted document payload, waiting for human audit."),
             ("APPROVED", "Approved", "Document has been approved by the user and locked."),
             ("REJECTED", "Rejected", "Document has been rejected by the user."),
@@ -209,18 +282,7 @@ def seed_initial_data(configs_dir: str = "configs"):
             VALUES (?, ?, ?)
         """, statuses)
         
-        # 2. Seed document domains from config file
-        domains_json = os.path.join(configs_dir, "document_domains.json")
-        if os.path.exists(domains_json):
-            with open(domains_json, "r", encoding="utf-8") as f:
-                domains_data = json.load(f)
-            for d in domains_data:
-                cursor.execute("""
-                    INSERT OR IGNORE INTO document_domains (domain_id, display_name, is_active, sort_order)
-                    VALUES (?, ?, ?, ?)
-                """, (d["domain_id"], d["display_name"], 1 if d.get("is_active", True) else 0, d.get("sort_order", 0)))
-                
-        # 3. Discover and seed document sources from domain directory scans
+        # 2. Discover and seed document sources from domain directory scans
         domains_dir = os.path.join(configs_dir, "domains")
         if os.path.exists(domains_dir):
             for domain_id in os.listdir(domains_dir):
@@ -629,21 +691,28 @@ def search_documents(domain_id: str, source_id: str = None, start_date: str = No
 
 def get_domains() -> list[dict]:
     """
-    Returns list of domains from database.
+    Returns list of domains from configs/document_domains.json.
     """
-    conn = None
+    json_path = "configs/document_domains.json"
+    if not os.path.exists(json_path):
+        logger.warning(f"Domain configuration file not found at: {json_path}")
+        return []
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM document_domains ORDER BY sort_order ASC")
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        with open(json_path, "r", encoding="utf-8") as f:
+            domains = json.load(f)
+        formatted_domains = []
+        for d in domains:
+            formatted_domains.append({
+                "domain_id": d.get("domain_id"),
+                "display_name": d.get("display_name"),
+                "is_active": 1 if d.get("is_active", True) else 0,
+                "sort_order": d.get("sort_order", 0)
+            })
+        formatted_domains.sort(key=lambda x: x["sort_order"])
+        return formatted_domains
     except Exception as e:
-        logger.error(f"Failed to load domains: {e}")
-    finally:
-        if conn:
-            conn.close()
-    return []
+        logger.error(f"Failed to load domains from JSON file: {e}")
+        return []
 
 def get_sources(domain_id: str) -> list[dict]:
     """
@@ -665,21 +734,34 @@ def get_sources(domain_id: str) -> list[dict]:
 
 def update_domain_active_status(domain_id: str, is_active: int) -> bool:
     """
-    Toggles is_active for a domain.
+    Toggles is_active for a domain inside configs/document_domains.json.
     """
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE document_domains SET is_active = ? WHERE domain_id = ?", (is_active, domain_id))
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Failed to toggle domain active status: {e}")
+    json_path = "configs/document_domains.json"
+    if not os.path.exists(json_path):
+        logger.error(f"Domain configuration file not found at: {json_path}")
         return False
-    finally:
-        if conn:
-            conn.close()
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            domains = json.load(f)
+            
+        updated = False
+        for d in domains:
+            if d.get("domain_id") == domain_id:
+                d["is_active"] = True if is_active == 1 else False
+                updated = True
+                break
+                
+        if updated:
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(domains, f, ensure_ascii=False, indent=2)
+            logger.info(f"Updated domain '{domain_id}' active status to {is_active == 1} in configs/document_domains.json")
+            return True
+        else:
+            logger.warning(f"Domain '{domain_id}' not found in configs/document_domains.json")
+            return False
+    except Exception as e:
+        logger.error(f"Failed to update domain active status in JSON file: {e}")
+        return False
 
 def update_source_active_status(source_id: str, is_active: int) -> bool:
     """
@@ -789,4 +871,223 @@ def create_api_call_log(log_id: str, batch_id: str, credential_id: str, provider
         return False
     finally:
         if conn:
+            conn.close()
+
+def get_merchants(conn: sqlite3.Connection = None) -> list[dict]:
+    """
+    Retrieves all merchants from merchant_master.
+    """
+    should_close = False
+    if conn is None:
+        conn = get_db_connection()
+        should_close = True
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM merchant_master ORDER BY merchant_name ASC")
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Failed to get merchants: {e}")
+        return []
+    finally:
+        if should_close and conn:
+            conn.close()
+
+def upsert_merchant(merchant_id: str, tax_id: str, merchant_name: str,
+                    default_wht_rate: float = 0.0, is_vat_registered: int = 1,
+                    conn: sqlite3.Connection = None) -> bool:
+    """
+    Inserts or updates a merchant record in merchant_master.
+    """
+    should_close = False
+    if conn is None:
+        conn = get_db_connection()
+        should_close = True
+    try:
+        cursor = conn.cursor()
+        now_str = datetime.now().isoformat()
+        
+        # Check by merchant_id first
+        cursor.execute("SELECT merchant_id FROM merchant_master WHERE merchant_id = ?", (merchant_id,))
+        exists_by_id = cursor.fetchone()
+        
+        # Check by tax_id
+        exists_by_tax = None
+        if tax_id and tax_id.strip():
+            cursor.execute("SELECT merchant_id FROM merchant_master WHERE tax_id = ?", (tax_id.strip(),))
+            exists_by_tax = cursor.fetchone()
+            
+        if exists_by_id:
+            cursor.execute("""
+                UPDATE merchant_master
+                SET tax_id = ?, merchant_name = ?, default_wht_rate = ?, is_vat_registered = ?, updated_at = ?
+                WHERE merchant_id = ?
+            """, (tax_id, merchant_name, default_wht_rate, is_vat_registered, now_str, merchant_id))
+        elif exists_by_tax:
+            cursor.execute("""
+                UPDATE merchant_master
+                SET merchant_name = ?, default_wht_rate = ?, is_vat_registered = ?, updated_at = ?
+                WHERE tax_id = ?
+            """, (merchant_name, default_wht_rate, is_vat_registered, now_str, tax_id))
+        else:
+            cursor.execute("""
+                INSERT INTO merchant_master (merchant_id, tax_id, merchant_name, default_wht_rate, is_vat_registered, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (merchant_id, tax_id, merchant_name, default_wht_rate, is_vat_registered, now_str))
+            
+        if should_close:
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Failed to upsert merchant: {e}")
+        return False
+    finally:
+        if should_close and conn:
+            conn.close()
+
+def match_merchant(tax_id: str, name: str, conn: sqlite3.Connection = None) -> str | None:
+    """
+    Matches a merchant from merchant_master by tax_id first, then by merchant_name.
+    Returns merchant_id if matched, otherwise None.
+    """
+    should_close = False
+    if conn is None:
+        conn = get_db_connection()
+        should_close = True
+    try:
+        cursor = conn.cursor()
+        # 1. Match by Tax ID (exact match)
+        if tax_id and tax_id.strip():
+            cursor.execute("SELECT merchant_id FROM merchant_master WHERE tax_id = ?", (tax_id.strip(),))
+            row = cursor.fetchone()
+            if row:
+                return row["merchant_id"]
+        # 2. Match by Merchant Name (exact case-insensitive match)
+        if name and name.strip():
+            cursor.execute("SELECT merchant_id FROM merchant_master WHERE LOWER(merchant_name) = ?", (name.strip().lower(),))
+            row = cursor.fetchone()
+            if row:
+                return row["merchant_id"]
+    except Exception as e:
+        logger.error(f"Error matching merchant: {e}")
+    finally:
+        if should_close and conn:
+            conn.close()
+    return None
+
+def delete_merchant(merchant_id: str, conn: sqlite3.Connection = None) -> bool:
+    """
+    Deletes a merchant record from merchant_master.
+    """
+    should_close = False
+    if conn is None:
+        conn = get_db_connection()
+        should_close = True
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM merchant_master WHERE merchant_id = ?", (merchant_id,))
+        if should_close:
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Failed to delete merchant: {e}")
+        return False
+    finally:
+        if should_close and conn:
+            conn.close()
+
+def insert_relational_receipt(document_id: str, payload: dict, original_filename: str, conn: sqlite3.Connection = None) -> bool:
+    """
+    Parses extracted JSON payload and inserts header and items into relational tables.
+    Also auto-registers new merchants in merchant_master.
+    """
+    import uuid
+    should_close = False
+    if conn is None:
+        conn = get_db_connection()
+        should_close = True
+    try:
+        cursor = conn.cursor()
+        now_str = datetime.now().isoformat()
+        
+        # 1. Extract merchant information
+        merchant_name = payload.get("merchant_name")
+        tax_id = payload.get("tax_id")
+        
+        if not merchant_name:
+            merchant_name = "Unknown Merchant"
+        if tax_id:
+            tax_id = tax_id.strip()
+            
+        # 2. Match merchant in merchant_master
+        merchant_id = match_merchant(tax_id, merchant_name, conn=conn)
+        if not merchant_id:
+            merchant_id = f"mer_{uuid.uuid4().hex[:12]}"
+            upsert_merchant(
+                merchant_id=merchant_id,
+                tax_id=tax_id,
+                merchant_name=merchant_name,
+                default_wht_rate=0.0,
+                is_vat_registered=1,
+                conn=conn
+            )
+            
+        # 3. Clean up any existing receipt for this document_id (updates/re-runs)
+        cursor.execute("SELECT receipt_id FROM expense_receipt WHERE document_id = ?", (document_id,))
+        existing_receipt = cursor.fetchone()
+        if existing_receipt:
+            receipt_id = existing_receipt["receipt_id"]
+            cursor.execute("DELETE FROM expense_receipt_d WHERE receipt_id = ?", (receipt_id,))
+            cursor.execute("DELETE FROM expense_receipt WHERE receipt_id = ?", (receipt_id,))
+        else:
+            receipt_id = f"rcpt_{uuid.uuid4().hex[:12]}"
+            
+        # 4. Save Header
+        fin = payload.get("financial_summary", {})
+        subtotal = fin.get("subtotal", 0.0)
+        discount = fin.get("discount", 0.0)
+        vat_amount = fin.get("vat_amount", 0.0)
+        net_amount = fin.get("net_amount", 0.0)
+        
+        cursor.execute("""
+            INSERT INTO expense_receipt (
+                receipt_id, document_id, merchant_id, transaction_date, merchant_name, tax_id,
+                expense_category, subtotal, discount, vat_amount, net_amount, payment_method,
+                source_file_name, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            receipt_id, document_id, merchant_id, payload.get("transaction_date"),
+            merchant_name, tax_id, payload.get("expense_category"), subtotal,
+            discount, vat_amount, net_amount, payload.get("payment_method"),
+            original_filename, now_str
+        ))
+        
+        # 5. Save Details (concatenated line items)
+        for item in payload.get("items", []):
+            item_id = f"itm_{uuid.uuid4().hex[:12]}"
+            item_name = item.get("name")
+            if not item_name:
+                continue
+            qty = item.get("qty", 1)
+            unit_price = item.get("unit_price", 0.0)
+            total_price = item.get("total_price", 0.0)
+            
+            cursor.execute("""
+                INSERT INTO expense_receipt_d (item_id, receipt_id, item_name, qty, unit_price, total_price)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (item_id, receipt_id, item_name, qty, unit_price, total_price))
+            
+        if should_close:
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Failed to insert relational receipt for doc '{document_id}': {e}")
+        if should_close and conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False
+    finally:
+        if should_close and conn:
             conn.close()

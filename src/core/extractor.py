@@ -245,7 +245,7 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
                     
                 # Read and log raw API response
                 result_text = response.text.strip()
-                logger.info(f"Raw API Response from {model_name}: {result_text}")
+                logger.info(f"Raw API Response received successfully from {model_name} (Length: {len(result_text)} chars).")
                 
                 # Try parsing JSON
                 try:
@@ -266,7 +266,7 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
                             output_tokens=0,
                             latency_ms=latency_ms,
                             error_reason=f"JSON Parsing Error: {str(json_err)}",
-                            raw_response=result_text
+                            raw_response=None
                         )
                     raise json_err
                 
@@ -295,7 +295,7 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
                         output_tokens=output_t,
                         latency_ms=latency_ms,
                         error_reason=None,
-                        raw_response=result_text
+                        raw_response=None
                     )
                 
                 logger.info(f"Structured extraction completed successfully via model '{model_name}'.")

@@ -1,7 +1,7 @@
 @echo off
 echo ==========================================
-echo   Run_05_Run_UI: Starting Streamlit Web Portal
+echo   Run_04_Transform_To_DB: Importing JSON to Database
 echo ==========================================
-.\.venv\Scripts\streamlit run src/ui/app.py
+.\.venv\Scripts\python.exe transform_to_db.py
 echo ==========================================
 pause

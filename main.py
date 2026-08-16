@@ -30,7 +30,8 @@ from src.core.db import (
     create_document,
     link_pages_to_document,
     update_document_payload,
-    update_document_to_failed
+    update_document_to_failed,
+    insert_relational_receipt
 )
 
 def merge_chunk_payloads(payloads: list[dict]) -> dict:
@@ -312,19 +313,6 @@ def process_document(file_path: str, domain: str, template_name: str, export_for
     logger.info("[STEP 4/5] Merging chunked outputs...")
     final_payload = merge_chunk_payloads(payloads)
     
-    # Save the consolidated JSON file to the queue folder
-    new_json_base = filename_pattern.replace("{domain}", domain)\
-                                    .replace("{source}", source)\
-                                    .replace("{doc_no}", base_filename)\
-                                    .replace("{page_no}", "001")
-    json_filename = f"{new_json_base}.json"
-    queue_json_path = os.path.join(queue_dir, json_filename)
-    
-    with open(queue_json_path, "w", encoding="utf-8") as f:
-        json.dump(final_payload, f, ensure_ascii=False, indent=2)
-        
-    logger.info(f"Saved consolidated JSON to queue: {queue_json_path}")
-    
     # Evaluate Validation Meta (Missing pages scan error check)
     validation_meta = final_payload.get("validation_meta", {})
     is_complete = validation_meta.get("is_complete", True)
@@ -368,6 +356,11 @@ def process_document(file_path: str, domain: str, template_name: str, export_for
     
     # Link all page images to this document
     link_pages_to_document(batch_id, document_id)
+    
+    # Insert relational receipt details into SQLite
+    if status_code == "PROCESSED":
+        insert_relational_receipt(document_id, final_payload, os.path.basename(file_path))
+        
     logger.info(f"Registered document record '{document_id}' (Status: {status_code}) in database.")
     
     if status_code == "FAILED":
