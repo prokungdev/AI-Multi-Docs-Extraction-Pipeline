@@ -9,6 +9,7 @@
     "03_processing_queue",
     "04_archive"
   ],
+  "max_images_per_request": 50,
   "logging": {
     "logs_dir": "logs",
     "rotation": "00:00",
@@ -21,5 +22,16 @@
     "split_format": "pdf, png",
     "filename_pattern": "{domain}_{source}_{doc_no}_{page_no}",
     "use_ai_fallback_matching": true
+  },
+  "ai_provider": {
+    "active_provider": "gemini",
+    "gemini": {
+      "model_name": "gemini-3.5-flash",
+      "api_key_env": "GEMINI_API_KEY"
+    },
+    "openai": {
+      "model_name": "gpt-4o",
+      "api_key_env": "OPENAI_API_KEY"
+    }
   }
 }

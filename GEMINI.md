@@ -17,3 +17,9 @@ This document defines the rules and conventions that AI agents and developers mu
 ### 3. User Interface (UI) Strings
 - **User-facing labels, buttons, forms, and instructions in the Streamlit UI SHOULD be in Thai** (as requested by the user for the web interface experience).
 - Error messages displayed to users can be in Thai or English with clear instructions.
+
+## Agent Constraints
+
+### 4. Agent Behaviors & Approvals
+- **Do NOT modify any code files (.py, .json, .txt, .bat, etc.) without explicit user approval of the implementation plan.**
+- Before executing any modifying actions on the source code, the agent must present the implementation plan and wait for the user to review and explicitly approve it.

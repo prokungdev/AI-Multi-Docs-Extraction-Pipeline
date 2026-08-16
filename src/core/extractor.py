@@ -1,11 +1,14 @@
 import os
 import json
 import copy
+import time
+from datetime import datetime
 from PIL import Image
 from google import genai
 from google.genai import types
 from loguru import logger
-
+from src.core.config_loader import load_source_ai_config
+from src.core.db import get_active_credentials, update_credential_status, create_api_call_log
 
 def clean_schema_for_gemini(schema: dict) -> dict:
     """
@@ -38,20 +41,53 @@ def clean_schema_for_gemini(schema: dict) -> dict:
         
     return convert_types(schema_copy)
 
-def extract_receipt_data(image_path: str, source: str, domain: str, configs_dir: str = "configs") -> dict:
+def extract_document_data(image_paths: str | list[str], source: str, domain: str, configs_dir: str = "configs",
+                          batch_id: str = None, chunk_index: int = 1) -> dict:
     """
-    Extracts structured data from an image file using Gemini 2.5 Flash and a specific
+    Extracts structured data from one or more image files using Gemini 2.5 Flash and a specific
     prompt/schema configuration.
     
     Args:
-        image_path: Path to the receipt image file.
-        source: The merchant identifier (e.g. 'grab_thailand').
+        image_paths: Path or list of paths to the receipt/document image files.
+        source: The merchant or source identifier (e.g. 'grab_thailand').
         domain: The domain folder name (e.g. 'expense_receipt').
         configs_dir: The root configuration directory.
+        batch_id: Optional ID of the parent batch for logging.
+        chunk_index: Optional index of the current chunk/part for logging.
         
     Returns:
-        A dictionary containing the extracted data conforming to the domain's schema.
+        A dictionary containing the extracted data conforming to the domain's schema
+        along with validation_meta checks.
     """
+    if isinstance(image_paths, str):
+        image_paths = [image_paths]
+
+    # Load settings to check max_images_per_request
+    settings_path = os.path.join(configs_dir, "settings.json")
+    max_images = 50
+    settings = {}
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, "r", encoding="utf-8") as sf:
+                settings = json.load(sf)
+                max_images = settings.get("max_images_per_request", 50)
+        except Exception as se:
+            logger.warning(f"Failed to read settings.json for max_images check: {se}")
+
+    if len(image_paths) > max_images:
+        error_msg = f"Number of pages ({len(image_paths)}) exceeds the maximum allowed images per request ({max_images})."
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    # Resolve AI provider and model configuration for this source
+    provider, model_name = load_source_ai_config(domain, source, settings)
+    logger.info(f"AI Config resolved for source '{source}': Provider='{provider}', Model='{model_name}'")
+    
+    if provider != "gemini":
+        err_msg = f"AI Provider '{provider}' is not supported in current implementation. Only 'gemini' is supported."
+        logger.error(err_msg)
+        raise NotImplementedError(err_msg)
+
     domain_dir = os.path.join(configs_dir, "domains", domain)
     schema_path = os.path.join(domain_dir, "schema.json")
     
@@ -63,12 +99,42 @@ def extract_receipt_data(image_path: str, source: str, domain: str, configs_dir:
         raw_schema = json.load(f)
     cleaned_schema = clean_schema_for_gemini(raw_schema)
     
+    # Inject system validation_meta and doc_number into the response schema dynamically
+    if "properties" in cleaned_schema:
+        cleaned_schema["properties"]["doc_number"] = {
+            "type": "STRING",
+            "description": "The unique invoice number, receipt number, or tax invoice ID printed on the document (e.g., INV-9999, RC2026-0001). Set to empty string if not found."
+        }
+        cleaned_schema["properties"]["validation_meta"] = {
+            "type": "OBJECT",
+            "description": "System metadata for multi-page continuity validation and logical reordering.",
+            "properties": {
+                "is_complete": {
+                    "type": "BOOLEAN",
+                    "description": "True if all scanned pages of the document are present and complete (e.g. no pages are missing based on header/footer page count indicators)."
+                },
+                "missing_pages": {
+                    "type": "ARRAY",
+                    "items": {"type": "INTEGER"},
+                    "description": "List of page numbers that appear to be missing (e.g. [2] if page 1 and page 3 exist but page 2 is missing)."
+                },
+                "logical_page_order": {
+                    "type": "ARRAY",
+                    "items": {"type": "INTEGER"},
+                    "description": "The sequence of logical page numbers mapped to the input images (e.g. [2, 1] if the input images were scanned out of order, representing the correct reading sequence)."
+                }
+            },
+            "required": ["is_complete", "missing_pages", "logical_page_order"]
+        }
+        if "required" in cleaned_schema and isinstance(cleaned_schema["required"], list):
+            if "validation_meta" not in cleaned_schema["required"]:
+                cleaned_schema["required"].append("validation_meta")
+
     # 2. Load the source-specific prompt, falling back to _default if not found
     prompt_dir = os.path.join(domain_dir, "sources", source)
     prompt_path = os.path.join(prompt_dir, "prompt.txt")
     
     if not os.path.exists(prompt_path):
-        # Fallback to _default
         prompt_path = os.path.join(domain_dir, "sources", "_default", "prompt.txt")
         if not os.path.exists(prompt_path):
             raise FileNotFoundError(f"Prompt file not found at: {prompt_path}")
@@ -76,29 +142,202 @@ def extract_receipt_data(image_path: str, source: str, domain: str, configs_dir:
     with open(prompt_path, "r", encoding="utf-8") as f:
         prompt_text = f.read()
         
-    # 3. Load the receipt image
-    if not os.path.exists(image_path):
-        raise FileNotFoundError(f"Receipt image not found at: {image_path}")
-    image = Image.open(image_path)
+    # Wrap the cleaned schema in a dynamic array of documents schema
+    wrapped_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "extracted_documents": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        **cleaned_schema.get("properties", {}),
+                        "logical_page_number": {
+                            "type": "INTEGER",
+                            "description": "The 1-based page number index of the image in the input list (e.g. 1 for the first image, 2 for the second image)."
+                        }
+                    },
+                    "required": ["logical_page_number"] + cleaned_schema.get("required", [])
+                }
+            }
+        },
+        "required": ["extracted_documents"]
+    }
     
-    # 4. Initialize GenAI client and call the Gemini API with Structured Output
-    client = genai.Client()
+    # Append system instructions for page validation and ordering
+    system_instructions = """
     
-    try:
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[image, prompt_text],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=cleaned_schema,
-            ),
-        )
+    --- SYSTEM MULTI-DOCUMENT EXTRACTION INSTRUCTIONS ---
+    You are analyzing a sequence of input images. Each image page represents a separate, independent receipt or tax invoice.
+    Please extract the structured data for each page individually and append it to the 'extracted_documents' array.
+    
+    CRITICAL RULES:
+    1. Set 'logical_page_number' to the 1-based index of the page in the input list (e.g. 1 for the first image, 2 for the second image, etc.).
+    2. Analyze headers, footers, and page numbers of each document page. Treat each page as a separate document unless it is explicitly indicated as a continuous multi-page invoice.
+    3. Perform validation_meta checks for each page separately.
+    """
+    prompt_text += system_instructions
+
+    # 3. Load all receipt images
+    images = []
+    for path in image_paths:
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Receipt image not found at: {path}")
+        images.append(Image.open(path))
+    
+    # 4. Retrieve active credentials for this model from database
+    credentials = get_active_credentials(provider, model_name)
+    
+    # Fallback to default ENV variable if no credentials exist in database
+    if not credentials:
+        logger.warning(f"No active credentials found in DB for {provider}/{model_name}. Falling back to default environment key.")
+        ai_provider_cfg = settings.get("ai_provider", {})
+        provider_cfg = ai_provider_cfg.get(provider, {})
+        default_env_var = provider_cfg.get("api_key_env", "GEMINI_API_KEY")
+        credentials = [{
+            "credential_id": "fallback_default",
+            "provider": provider,
+            "model_name": model_name,
+            "api_key_env": default_env_var,
+            "is_active": 1,
+            "error_count": 0
+        }]
         
-        # 5. Parse and return the JSON response
-        result_text = response.text.strip()
-        extracted_data = json.loads(result_text)
-        return extracted_data
+    last_exception = None
+    for cred in credentials:
+        cred_id = cred["credential_id"]
+        env_var = cred["api_key_env"]
+        api_key = os.getenv(env_var)
         
-    except Exception as e:
-        logger.error(f"Error during Gemini extraction: {e}")
-        raise e
+        if not api_key:
+            logger.warning(f"API key environment variable '{env_var}' is not defined. Skipping credential '{cred_id}'.")
+            continue
+            
+        logger.info(f"Attempting structured extraction using credential '{cred_id}' (Key env: '{env_var}')...")
+        
+        # Initialize client with specific API key
+        client = genai.Client(api_key=api_key)
+        
+        # Auto-Retry logic (3 attempts with exponential backoff)
+        max_retries = 3
+        for attempt in range(max_retries):
+            import uuid
+            log_id = f"api_{uuid.uuid4().hex[:12]}"
+            start_time = time.time()
+            pages_desc = f"{len(image_paths)} pages"
+            
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[*images, prompt_text],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=wrapped_schema,
+                    ),
+                )
+                
+                # Success! Record last active timestamp
+                latency_ms = (time.time() - start_time) * 1000.0
+                now_str = datetime.now().isoformat()
+                log_cred_id = cred_id if cred_id != "fallback_default" else None
+                if log_cred_id:
+                    update_credential_status(log_cred_id, last_active_at=now_str, error_count=0)
+                    
+                # Read and log raw API response
+                result_text = response.text.strip()
+                logger.info(f"Raw API Response from {model_name}: {result_text}")
+                
+                # Try parsing JSON
+                try:
+                    extracted_data = json.loads(result_text)
+                except Exception as json_err:
+                    logger.error(f"JSON Parsing failed: {json_err}")
+                    if batch_id:
+                        create_api_call_log(
+                            log_id=log_id,
+                            batch_id=batch_id,
+                            credential_id=log_cred_id,
+                            provider=provider,
+                            model_name=model_name,
+                            chunk_index=chunk_index,
+                            request_pages=pages_desc,
+                            status="FAILED",
+                            input_tokens=0,
+                            output_tokens=0,
+                            latency_ms=latency_ms,
+                            error_reason=f"JSON Parsing Error: {str(json_err)}",
+                            raw_response=result_text
+                        )
+                    raise json_err
+                
+                usage = getattr(response, "usage_metadata", None)
+                input_t = getattr(usage, "prompt_token_count", 0) if usage else 0
+                output_t = getattr(usage, "candidates_token_count", 0) if usage else 0
+                
+                extracted_data["_metadata"] = {
+                    "model_used": model_name,
+                    "input_tokens": input_t,
+                    "output_tokens": output_t
+                }
+                
+                # Write SUCCESS log to SQLite
+                if batch_id:
+                    create_api_call_log(
+                        log_id=log_id,
+                        batch_id=batch_id,
+                        credential_id=log_cred_id,
+                        provider=provider,
+                        model_name=model_name,
+                        chunk_index=chunk_index,
+                        request_pages=pages_desc,
+                        status="SUCCESS",
+                        input_tokens=input_t,
+                        output_tokens=output_t,
+                        latency_ms=latency_ms,
+                        error_reason=None,
+                        raw_response=result_text
+                    )
+                
+                logger.info(f"Structured extraction completed successfully via model '{model_name}'.")
+                return extracted_data
+                
+            except Exception as e:
+                latency_ms = (time.time() - start_time) * 1000.0
+                err_msg = str(e)
+                log_cred_id = cred_id if cred_id != "fallback_default" else None
+                
+                # Write FAILED log to SQLite
+                if batch_id:
+                    create_api_call_log(
+                        log_id=log_id,
+                        batch_id=batch_id,
+                        credential_id=log_cred_id,
+                        provider=provider,
+                        model_name=model_name,
+                        chunk_index=chunk_index,
+                        request_pages=pages_desc,
+                        status="FAILED",
+                        input_tokens=0,
+                        output_tokens=0,
+                        latency_ms=latency_ms,
+                        error_reason=err_msg
+                    )
+                
+                sleep_time = 2 ** (attempt + 1)
+                if attempt < max_retries - 1:
+                    logger.warning(f"API call attempt {attempt+1}/{max_retries} failed for '{cred_id}': {e}. Retrying in {sleep_time}s...")
+                    time.sleep(sleep_time)
+                else:
+                    logger.error(f"All {max_retries} retry attempts failed for credential '{cred_id}': {e}")
+                    
+        # Increment error count and deactivate if necessary
+        if cred_id != "fallback_default":
+            new_err_count = cred.get("error_count", 0) + 1
+            is_active = 1
+            if new_err_count >= 3:
+                is_active = 0
+                logger.error(f"Credential '{cred_id}' failed 3 consecutive times. DEACTIVATING credential in database.")
+            update_credential_status(cred_id, error_count=new_err_count, is_active=is_active)
+            
+    logger.error("All available API credentials failed to extract data.")
+    raise last_exception

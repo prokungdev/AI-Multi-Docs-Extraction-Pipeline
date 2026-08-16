@@ -2,7 +2,7 @@ import os
 import json
 import sys
 import shutil
-from src.core.database import initialize_database
+from src.core.db import initialize_db_schema, seed_initial_data
 
 def validate_settings_config(settings_path: str = "configs/settings.json") -> tuple[bool, list[str]]:
     """
@@ -300,7 +300,8 @@ def initialize_storage_directories(settings_path: str = "configs/settings.json")
     
     # Initialize centralized SQLite database
     try:
-        initialize_database()
+        initialize_db_schema()
+        seed_initial_data()
     except Exception as de:
         print(f"Warning: Failed to initialize SQLite database: {de}")
             

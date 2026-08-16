@@ -60,3 +60,32 @@ def setup_logger(settings_path: str = "configs/settings.json") -> None:
         compression=compression,
         encoding="utf-8"
     )
+
+    # 5. Add Database Sink to capture application logs automatically
+    def db_sink(message):
+        try:
+            record = message.record
+            lvl = record["level"].name
+            text = record["message"]
+            module = record.get("module")
+            func = record.get("function")
+            created_at = record["time"].isoformat()
+            
+            # Local import to prevent circular dependency
+            from src.core.db import get_db_connection
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO application_logs (level, message, module, function, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (lvl, text, module, func, created_at))
+            conn.commit()
+            conn.close()
+        except Exception:
+            # Silently pass to avoid infinite loop when database logging fails
+            pass
+
+    logger.add(
+        db_sink,
+        level=level
+    )
