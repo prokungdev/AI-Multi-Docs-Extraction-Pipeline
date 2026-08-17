@@ -126,9 +126,38 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
             },
             "required": ["is_complete", "missing_pages", "logical_page_order"]
         }
+        cleaned_schema["properties"]["extraction_metadata"] = {
+            "type": "OBJECT",
+            "description": "Metadata for evaluating the quality and confidence of the extraction.",
+            "properties": {
+                "overall_confidence": {
+                    "type": "NUMBER",
+                    "description": "Overall confidence score of the extraction between 0.0 (lowest) and 1.0 (highest)."
+                },
+                "confidence_level": {
+                    "type": "STRING",
+                    "description": "Categorized confidence level based on overall_confidence. Can be HIGH, MEDIUM, or LOW."
+                },
+                "is_blurry": {
+                    "type": "BOOLEAN",
+                    "description": "True if the image is blurry, out of focus, or has low resolution making reading difficult."
+                },
+                "has_ambiguous_fields": {
+                    "type": "BOOLEAN",
+                    "description": "True if there are some ambiguous, cut off, or partially unreadable fields in the document."
+                },
+                "confidence_notes": {
+                    "type": "STRING",
+                    "description": "A brief explanation in Thai summarizing why this confidence level was assigned, e.g. 'ตัวเลขชัดเจน หัวบิลและยอดรวมอ่านได้ครบถ้วน'."
+                }
+            },
+            "required": ["overall_confidence", "confidence_level", "is_blurry", "has_ambiguous_fields", "confidence_notes"]
+        }
         if "required" in cleaned_schema and isinstance(cleaned_schema["required"], list):
             if "validation_meta" not in cleaned_schema["required"]:
                 cleaned_schema["required"].append("validation_meta")
+            if "extraction_metadata" not in cleaned_schema["required"]:
+                cleaned_schema["required"].append("extraction_metadata")
 
     # 2. Load the source-specific prompt, falling back to _default if not found
     prompt_dir = os.path.join(domain_dir, "sources", source)
@@ -175,6 +204,13 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
     1. Set 'logical_page_number' to the 1-based index of the page in the input list (e.g. 1 for the first image, 2 for the second image, etc.).
     2. Analyze headers, footers, and page numbers of each document page. Treat each page as a separate document unless it is explicitly indicated as a continuous multi-page invoice.
     3. Perform validation_meta checks for each page separately.
+    4. STRICT "DO NOT GUESS" RULE: Do not guess or speculate on unreadable, blurred, or missing characters, words, or numbers. If a field or number is partially unreadable or cut off, DO NOT guess the value. Instead, leave the field empty or null, set 'has_ambiguous_fields' to true, lower the 'overall_confidence' score accordingly, and explain it in 'confidence_notes'.
+    5. Populate the 'extraction_metadata' object:
+       - Estimate the overall_confidence of your extraction on a scale of 0.0 to 1.0.
+       - Set confidence_level to HIGH (overall_confidence >= 0.85), MEDIUM (0.6 <= overall_confidence < 0.85), or LOW (overall_confidence < 0.6).
+       - Set is_blurry to true if the document image has focus issues, motion blur, low resolution, or is hard to read.
+       - Set has_ambiguous_fields to true if any extracted values are questionable, unreadable, or left empty due to legibility.
+       - Write a brief explanation in Thai for 'confidence_notes' (e.g. "ตัวเลขชัดเจน หัวบิลและยอดรวมอ่านได้ครบถ้วน" or "ภาพเบลอเล็กน้อยทำให้อ่านยอดเงินยากลำบาก" or "ตัวเลขบางตัวถูกบดบังทำให้ไม่สามารถดึงข้อมูลได้").
     """
     prompt_text += system_instructions
 

@@ -1,0 +1,52 @@
+from typing import Dict, List, Any
+from .base import BaseOutputExporter
+from .json_adapter import JsonConfigExporter
+from .express_adapter import ExpressExpenseExporter
+
+# Global Registry mapping domain_id -> { exporter_id -> BaseOutputExporter instance }
+_REGISTRY: Dict[str, Dict[str, BaseOutputExporter]] = {
+    "expense_receipt": {
+        "google_sheet_summary": JsonConfigExporter(domain_id="expense_receipt", template_name="google_sheet_summary"),
+        "accounting_line_items": JsonConfigExporter(domain_id="expense_receipt", template_name="accounting_line_items"),
+        "express_pv": ExpressExpenseExporter(domain_id="expense_receipt")
+    }
+}
+
+def get_exporter(domain_id: str, exporter_id: str) -> BaseOutputExporter:
+    """
+    Retrieves the exporter instance for the given domain and exporter ID.
+    """
+    domain_exporters = _REGISTRY.get(domain_id, {})
+    exporter = domain_exporters.get(exporter_id)
+    if not exporter:
+        raise ValueError(f"Exporter '{exporter_id}' not found for domain '{domain_id}'")
+    return exporter
+
+def list_exporters(domain_id: str) -> List[Dict[str, Any]]:
+    """
+    Lists metadata of all registered exporters for the given domain.
+    """
+    domain_exporters = _REGISTRY.get(domain_id, {})
+    results = []
+    for exporter_id, inst in domain_exporters.items():
+        # Human-friendly Thai display names for UI
+        if exporter_id == "express_pv":
+            name = "โปรแกรม Express (บันทึกใบสำคัญจ่าย PV พร้อมรันเลขใหม่)"
+            has_custom_params = True
+        elif exporter_id == "google_sheet_summary":
+            name = "Google Sheet Summary (รายงานสรุปภาพรวม)"
+            has_custom_params = False
+        elif exporter_id == "accounting_line_items":
+            name = "Accounting Line Items (รายงานแยกรายการสินค้า)"
+            has_custom_params = False
+        else:
+            name = exporter_id.replace("_", " ").title()
+            has_custom_params = False
+            
+        results.append({
+            "exporter_id": exporter_id,
+            "name": name,
+            "handler": inst,
+            "has_custom_params": has_custom_params
+        })
+    return results
