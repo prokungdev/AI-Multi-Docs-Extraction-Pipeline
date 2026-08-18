@@ -2,11 +2,14 @@ import os
 import sys
 import json
 import shutil
+from datetime import datetime, date
+from typing import List, Dict, Any
+
 import pandas as pd
 import streamlit as st
 from PIL import Image
-from datetime import datetime, date
 from dotenv import load_dotenv
+from loguru import logger
 
 # Set python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
@@ -25,8 +28,12 @@ from src.core.initializer import (
     initialize_storage_directories
 )
 from src.core.logger import setup_logger
-from loguru import logger
-from src.core.config_loader import load_system_settings, get_active_domains_hybrid, get_active_sources_hybrid
+from src.core.config_loader import (
+    load_system_settings,
+    get_active_domains_hybrid,
+    get_active_sources_hybrid,
+    DEFAULT_STORAGE_ROOT
+)
 from src.core.db import (
     calculate_file_hash,
     check_duplicate_document,
@@ -43,30 +50,42 @@ from src.core.db import (
     update_domain_active_status,
     update_source_active_status
 )
-from main import process_document
+from src.core.pipeline import process_document
+from src.core.post_processor import post_process_document, archive_and_export_document
+from src.core.exporters import list_exporters
 
 # Page configuration
 st.set_page_config(
     page_title="AI Multi-Docs Extraction Pipeline",
+    page_icon="📄",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Load settings and environment
-load_dotenv()
-settings = load_system_settings("configs/settings.json")
-storage_root = settings.get("storage_root", "pipeline_storage")
+# Cached resources for performance
+@st.cache_resource
+def get_cached_settings() -> dict:
+    """
+    Loads and caches system settings resource.
+    """
+    load_dotenv()
+    return load_system_settings("configs/settings.json")
 
-def ensure_mock_data(domain: str):
+@st.cache_data(ttl=15)
+def get_cached_pending_documents(domain_id: str) -> List[Dict[str, Any]]:
     """
-    Ensures that mock data exists in the database if empty.
+    Caches pending documents for 15 seconds to improve UI snappiness.
     """
-    # Simply runs database and directory setup
-    initialize_storage_directories()
+    return get_pending_documents(domain_id)
 
 def main_app():
-    # Setup logger
-    setup_logger()
+    # Setup logger once per session
+    if "logger_initialized" not in st.session_state:
+        setup_logger()
+        st.session_state["logger_initialized"] = True
+        
+    settings = get_cached_settings()
+    storage_root = settings.get("storage_root", DEFAULT_STORAGE_ROOT)
     
     # 1. System configurations check
     settings_valid, settings_errors = validate_settings_config()
@@ -97,6 +116,9 @@ def main_app():
     # Sidebar: Domain Selection and Document Ingestion
     st.sidebar.header("⚙️ เมนูควบคุม (Control Panel)")
     
+    # Reviewer Name (Configurable instead of hardcoded 'admin')
+    reviewer_name = st.sidebar.text_input("👤 ชื่อผู้ตรวจสอบ (Reviewer)", value="admin")
+    
     # Check Gemini API Key
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -104,7 +126,7 @@ def main_app():
     else:
         st.sidebar.success("🔑 ตรวจพบ Gemini API Key เรียบร้อย")
         
-    # Load Active Domains dynamically from SQLite
+    # Load Active Domains dynamically from configs/settings.json
     active_domains = get_active_domains_hybrid()
     if not active_domains:
         st.error("❌ ไม่พบโดเมนที่เปิดใช้งานในระบบ แอดมินต้องเปิดใช้งานอย่างน้อย 1 โดเมนที่แท็บ Settings")
@@ -126,7 +148,12 @@ def main_app():
     if uploaded_file is not None:
         # Load output templates for select
         templates_dir = f"configs/domains/{selected_domain}/outputs"
-        templates = sorted([os.path.splitext(f)[0] for f in os.listdir(templates_dir) if f.endswith(".json")])
+        templates = []
+        if os.path.exists(templates_dir):
+            templates = sorted([os.path.splitext(f)[0] for f in os.listdir(templates_dir) if f.endswith(".json")])
+        if not templates:
+            templates = ["google_sheet_summary"]
+            
         selected_template = st.sidebar.selectbox("เลือกเทมเพลตส่งออก", templates)
         export_fmt = st.sidebar.radio("ฟอร์แมตไฟล์ปลายทาง", ["CSV", "JSON"], horizontal=True)
         
@@ -148,10 +175,10 @@ def main_app():
                         settings=settings
                     )
                     st.sidebar.success("🎉 ประมวลผลสำเร็จและเพิ่มเข้าคิวตรวจแก้เรียบร้อยแล้ว!")
+                    st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
                     st.sidebar.error(f"❌ เกิดข้อผิดพลาดในการประมวลผล: {e}")
-                    # Clean up temp file if error
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
 
@@ -164,7 +191,7 @@ def main_app():
     
     # TAB 1: REVIEW & APPROVE
     with tab_review:
-        pending_docs = get_pending_documents(selected_domain)
+        pending_docs = get_cached_pending_documents(selected_domain)
         
         if not pending_docs:
             st.info("ℹ️ ไม่มีเอกสารค้างอยู่ในคิวตรวจสอบในขณะนี้ คุณสามารถอัปโหลดไฟล์ใหม่ได้ในเมนูด้านซ้าย")
@@ -187,7 +214,7 @@ def main_app():
             # Load selected document metadata and payload
             doc = get_document_by_id(selected_doc_id)
             pages = get_document_pages(selected_doc_id)
-            if not pages:
+            if not pages and doc:
                 pages = get_batch_pages(doc["batch_id"])
                 
             if doc:
@@ -248,65 +275,72 @@ def main_app():
                         conf_val = doc.get("overall_confidence")
                         conf_str = f"{int(conf_val*100)}%" if conf_val is not None else "ไม่มีข้อมูล"
                         st.metric("ความแม่นยำของการสกัด (Confidence)", conf_str, 
-                                  delta=doc.get("confidence_level"), delta_color="normal")
+                                  help="คะแนนความมั่นใจของแบบจำลอง AI จากการสกัดหน้าเอกสารนี้")
                     with col_prio:
-                        st.metric("ลำดับความสำคัญในการตรวจ (Review Priority)", doc.get("review_priority") or "LOW")
+                        prio_val = doc.get("review_priority") or "LOW"
+                        prio_colors = {"HIGH": "🔴 เร่งด่วน (HIGH)", "MEDIUM": "🟡 ปานกลาง (MEDIUM)", "LOW": "🟢 ปกติ (LOW)"}
+                        st.metric("ลำดับความสำคัญในการตรวจ (Priority)", prio_colors.get(prio_val, prio_val))
                         
-                    if doc.get("is_blurry") == 1:
-                        st.warning("⚠️ ภาพต้นฉบับอาจจะเบลอหรือไม่ชัดเจน (Possibly blurry/low quality image)")
-                    if doc.get("has_ambiguous_fields") == 1:
-                        st.warning("⚠️ ตรวจพบฟิลด์ที่คลุมเครือหรือสูตรการคำนวณเงินไม่ตรงกัน (Ambiguous fields or math validation discrepancy)")
+                    if doc.get("is_blurry") == 1 or doc.get("has_ambiguous_fields") == 1:
+                        alerts = []
+                        if doc.get("is_blurry") == 1:
+                            alerts.append("ภาพถ่ายเบลอหรือไม่ชัดเจน")
+                        if doc.get("has_ambiguous_fields") == 1:
+                            alerts.append("มีฟิลด์ข้อมูลที่กำกวม/ไม่ชัดเจน")
+                        st.warning(f"⚠️ **ข้อควรระวัง:** {', '.join(alerts)}")
                         
-                    notes = doc.get("confidence_notes")
-                    if notes:
-                        st.info(f"**บันทึกการประเมิน:** {notes}")
+                    if doc.get("confidence_notes"):
+                        st.caption(f"📝 **หมายเหตุ AI:** {doc['confidence_notes']}")
                         
                     st.markdown("---")
                     
-                    st.markdown("##### 📌 ข้อมูลทั่วไป")
+                    # Fields Form
+                    receipt_info_obj = data.get("receipt_info", {})
+                    merchant_obj = data.get("merchant", {})
+                    customer_obj = data.get("customer", {})
                     
-                    col_doc_no, col_date = st.columns(2)
-                    with col_doc_no:
-                        doc_number = st.text_input(
-                            "เลขที่เอกสาร (Document Number)", 
-                            value=doc["doc_number"] if doc["doc_number"] else "",
-                            disabled=is_locked
-                        )
-                    with col_date:
-                        raw_date = doc["doc_date"] if doc["doc_date"] else ""
-                        try:
-                            default_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
-                        except ValueError:
-                            default_date = date.today()
+                    doc_number = st.text_input(
+                        "เลขที่เอกสาร / เลขที่ใบเสร็จ (Doc Number)", 
+                        value=doc["doc_number"] or receipt_info_obj.get("receipt_number") or data.get("doc_number", ""),
+                        disabled=is_locked
+                    )
+                    
+                    # Extract date
+                    raw_date = doc["doc_date"] or receipt_info_obj.get("transaction_date") or data.get("transaction_date", "")
+                    try:
+                        parsed_date = datetime.strptime(raw_date, "%Y-%m-%d").date()
+                    except Exception:
+                        parsed_date = date.today()
                         
-                        date_val = st.date_input(
-                            "วันที่ทำรายการ (Transaction Date)", 
-                            value=default_date,
-                            disabled=is_locked
-                        )
-                        transaction_date = date_val.strftime("%Y-%m-%d")
-                        
-                    col_merchant, col_tax = st.columns(2)
-                    with col_merchant:
+                    transaction_date_val = st.date_input(
+                        "วันที่ทำรายการ (Date)", 
+                        value=parsed_date,
+                        disabled=is_locked
+                    )
+                    transaction_date = transaction_date_val.strftime("%Y-%m-%d")
+                    
+                    col_m1, col_m2 = st.columns(2)
+                    with col_m1:
                         entity_name = st.text_input(
-                            "ชื่อร้านค้า (Merchant Name)", 
-                            value=doc["entity_name"] if doc["entity_name"] else "",
+                            "ชื่อร้านค้า / ผู้จำหน่าย (Merchant Name)", 
+                            value=doc["entity_name"] or merchant_obj.get("name") or data.get("merchant_name", ""),
                             disabled=is_locked
                         )
-                    with col_tax:
+                    with col_m2:
                         tax_id = st.text_input(
-                            "เลขผู้เสียภาษี (Tax ID)", 
-                            value=data.get("tax_id", ""),
+                            "เลขประจำตัวผู้เสียภาษี (Tax ID)", 
+                            value=merchant_obj.get("tax_id") or data.get("tax_id", ""),
                             disabled=is_locked
                         )
                         
+                    current_category = receipt_info_obj.get("expense_category") or data.get("expense_category", "Other")
+                    cat_options = ["Delivery", "Food & Beverage", "Transport", "Office Supplies", "Utilities", "Other"]
+                    cat_index = cat_options.index(current_category) if current_category in cat_options else cat_options.index("Other")
+                    
                     expense_category = st.selectbox(
                         "หมวดหมู่ค่าใช้จ่าย (Expense Category)",
-                        ["Delivery", "Food & Beverage", "Transport", "Office Supplies", "Utilities", "Other"],
-                        index=["Delivery", "Food & Beverage", "Transport", "Office Supplies", "Utilities", "Other"].index(
-                            data.get("expense_category", "Other") if data.get("expense_category", "Other") in 
-                            ["Delivery", "Food & Beverage", "Transport", "Office Supplies", "Utilities", "Other"] else "Other"
-                        ),
+                        cat_options,
+                        index=cat_index,
                         disabled=is_locked
                     )
                     
@@ -332,7 +366,7 @@ def main_app():
                     
                     # Financial Summary
                     st.markdown("##### 💰 ยอดรวมเงิน (Financial Summary)")
-                    summary = data.get("financial_summary", {})
+                    summary = data.get("totals") or data.get("financial_summary", {})
                     
                     col_sub, col_disc = st.columns(2)
                     with col_sub:
@@ -370,9 +404,10 @@ def main_app():
                             disabled=is_locked
                         )
                         
+                    current_payment_method = receipt_info_obj.get("payment_method") or data.get("payment_method", "")
                     payment_method = st.text_input(
                         "ช่องทางการชำระเงิน (Payment Method)", 
-                        value=data.get("payment_method", ""),
+                        value=current_payment_method,
                         disabled=is_locked
                     )
                     
@@ -380,7 +415,6 @@ def main_app():
                     
                     # Export options
                     st.markdown("##### 📤 การส่งออกรายงาน")
-                    from src.core.exporters import list_exporters
                     exporters_list = list_exporters(selected_domain)
                     
                     exporter_options = {exp["name"]: exp for exp in exporters_list}
@@ -400,36 +434,36 @@ def main_app():
                         except Exception:
                             pass
                             
-                        col_prefix, col_start_seq = st.columns(2)
-                        with col_prefix:
-                            voucher_prefix = st.text_input("Voucher Prefix", value="PV2608-", disabled=is_locked)
-                        with col_start_seq:
-                            start_no = st.number_input("เลขรันใบสำคัญเริ่มต้น (Start Sequence)", value=int(default_seq), min_value=1, step=1, disabled=is_locked)
+                        col_p1, col_p2 = st.columns(2)
+                        with col_p1:
+                            start_no = st.number_input("ลำดับเลขที่ใบสำคัญเริ่มต้น (Sequence No.)", min_value=1, value=default_seq, disabled=is_locked)
+                        with col_p2:
+                            voucher_prefix = st.text_input("รหัสคำนำหน้าใบสำคัญจ่าย (Voucher Prefix)", value="PV2608-", disabled=is_locked)
                             
-                    export_fmt = st.radio("ฟอร์แมตไฟล์ส่งออก", ["CSV", "JSON"], horizontal=True, disabled=is_locked)
-                    
-                    # If locked (meaning it's already APPROVED), show direct download button
-                    if is_locked:
-                        st.success("💾 เอกสารนี้ได้รับการอนุมัติเรียบร้อยแล้ว!")
+                    # Export Preview Table
+                    with st.expander("👁️ แสดงตัวอย่างข้อมูลส่งออก (Export Preview Table)", expanded=False):
                         try:
-                            handler = selected_exporter["handler"]
-                            doc_data = {
+                            # Construct unified document record for exporter transformation
+                            # Note: selected_source is not defined in this scope, assuming source from doc
+                            preview_doc = {
                                 **data,
-                                "source_id": doc["source_id"],
+                                "source_id": doc.get("source_id"),
                                 "domain_id": selected_domain,
                                 "document_id": selected_doc_id,
                                 "original_pdf_name": doc["original_pdf_name"]
                             }
-                            kwargs = {}
-                            if selected_exporter_id == "express_pv":
-                                kwargs["start_voucher_no"] = start_no
-                                kwargs["voucher_prefix"] = voucher_prefix
+                            kwargs_preview = {}
+                            if selected_exporter["has_custom_params"]:
+                                kwargs_preview = {"start_seq_no": start_no, "voucher_prefix": voucher_prefix}
                                 
-                            df_dl = handler.transform([doc_data], **kwargs)
-                            if not df_dl.empty:
-                                if export_fmt == "CSV":
-                                    encoding_dl = "cp874" if selected_exporter_id == "express_pv" else "utf-8-sig"
-                                    csv_bytes = df_dl.to_csv(index=False, encoding=encoding_dl).encode(encoding_dl, errors="ignore")
+                            df_preview = selected_exporter["handler"].transform([preview_doc], **kwargs_preview)
+                            if not df_preview.empty:
+                                st.dataframe(df_preview, use_container_width=True)
+                                
+                                # Download buttons
+                                df_dl = df_preview.copy()
+                                if selected_exporter_id != "json_dump":
+                                    csv_bytes = df_dl.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
                                     st.download_button(
                                         label=f"📥 ดาวน์โหลดไฟล์ CSV ({selected_exporter_id})",
                                         data=csv_bytes,
@@ -469,13 +503,41 @@ def main_app():
                                 net_amount != original_summary.get("net_amount")):
                                 is_edited = 1
                                 
+                            # Rebuild canonical nested objects + top-level aliases
+                            new_receipt_info = dict(receipt_info_obj)
+                            new_receipt_info.update({
+                                "receipt_number": doc_number,
+                                "transaction_date": transaction_date,
+                                "expense_category": expense_category,
+                                "payment_method": payment_method
+                            })
+                            
+                            new_merchant = dict(merchant_obj)
+                            new_merchant.update({
+                                "name": entity_name,
+                                "tax_id": tax_id
+                            })
+                            
+                            new_totals = dict(summary)
+                            new_totals.update({
+                                "subtotal": subtotal,
+                                "discount": discount,
+                                "vat_amount": vat_amount,
+                                "net_amount": net_amount
+                            })
+                            
                             final_data = {
+                                **data,
+                                "receipt_info": new_receipt_info,
+                                "merchant": new_merchant,
+                                "customer": customer_obj,
+                                "items": items_dict,
+                                "totals": new_totals,
                                 "transaction_date": transaction_date,
                                 "merchant_name": entity_name,
                                 "tax_id": tax_id,
                                 "expense_category": expense_category,
                                 "doc_number": doc_number,
-                                "items": items_dict,
                                 "financial_summary": {
                                     "subtotal": subtotal,
                                     "discount": discount,
@@ -505,11 +567,10 @@ def main_app():
                                 entity_name=entity_name,
                                 total_amount=net_amount,
                                 data_payload=json.dumps(final_data, ensure_ascii=False),
-                                confirmed_by="admin"
+                                confirmed_by=reviewer_name or "admin"
                             )
                             
                             # Call centralized archiving and exporting helper with custom exporter params
-                            from src.core.post_processor import archive_and_export_document
                             kwargs = {}
                             if selected_exporter_id == "express_pv":
                                 kwargs["start_voucher_no"] = start_no
@@ -527,6 +588,7 @@ def main_app():
                                 
                             st.success(f"💾 อนุมัติข้อมูลและต่อท้ายรายงานเรียบร้อยแล้ว!")
                             st.toast("อนุมัติข้อมูลสำเร็จ!", icon="✅")
+                            st.cache_data.clear()
                             st.rerun()
                             
                     with col_action_re:
@@ -564,7 +626,6 @@ def main_app():
                                     )
                                     
                                     # Run Post-Processing Quality Assessment & Auto-Approval
-                                    from src.core.post_processor import post_process_document
                                     post_process_document(
                                         document_id=selected_doc_id,
                                         payload=re_extracted,
@@ -577,6 +638,7 @@ def main_app():
                                         update_document_to_failed(selected_doc_id, error_reason)
                                         
                                     st.success("สกัดรูปภาพซ้ำเรียบร้อยแล้ว!")
+                                    st.cache_data.clear()
                                     st.rerun()
                                 except Exception as re_err:
                                     st.error(f"การสกัดข้อมูลซ้ำล้มเหลว: {re_err}")
@@ -688,6 +750,7 @@ def main_app():
                 if toggle_val != is_act:
                     update_domain_active_status(d["domain_id"], 1 if toggle_val else 0)
                     st.toast(f"อัปเดตโดเมน {d['domain_id']} เป็น {'เปิด' if toggle_val else 'ปิด'} เรียบร้อย", icon="⚙️")
+                    st.cache_data.clear()
                     st.rerun()
                     
         st.markdown("---")
@@ -714,6 +777,7 @@ def main_app():
                     if toggle_val != is_act:
                         update_source_active_status(s["source_id"], 1 if toggle_val else 0)
                         st.toast(f"อัปเดตร้านค้า {s['source_id']} เป็น {'เปิด' if toggle_val else 'ปิด'} เรียบร้อย", icon="⚙️")
+                        st.cache_data.clear()
                         st.rerun()
 
 if __name__ == "__main__":

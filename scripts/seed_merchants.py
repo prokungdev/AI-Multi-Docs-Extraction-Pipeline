@@ -4,7 +4,7 @@ import json
 import sqlite3
 
 # Set Python path to ensure src can be imported
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.core.db import get_db_connection, insert_relational_receipt, create_document
 from loguru import logger

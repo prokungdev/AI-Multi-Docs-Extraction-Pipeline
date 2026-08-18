@@ -7,8 +7,15 @@ class BaseOutputExporter(ABC):
     Abstract base class for all domain output exporters.
     Handles data transformations and common file exports.
     """
+    display_name: str = ""
+    has_custom_params: bool = False
+    encoding: str = "utf-8-sig"
+    delimiter: str = ","
+
     def __init__(self, domain_id: str):
         self.domain_id = domain_id
+        if not self.display_name:
+            self.display_name = self.__class__.__name__
 
     @abstractmethod
     def transform(self, approved_docs: List[Dict[str, Any]], **kwargs) -> pd.DataFrame:
@@ -18,14 +25,17 @@ class BaseOutputExporter(ABC):
         """
         pass
 
-    def export_to_csv(self, df: pd.DataFrame, output_path: str, encoding: str = "utf-8-sig", delimiter: str = ","):
+    def export_to_csv(self, df: pd.DataFrame, output_path: str, encoding: str = None, delimiter: str = None):
         """
         Exports a DataFrame to a CSV file.
         """
-        df.to_csv(output_path, index=False, encoding=encoding, sep=delimiter)
+        enc = encoding or self.encoding
+        sep = delimiter or self.delimiter
+        df.to_csv(output_path, index=False, encoding=enc, sep=sep)
 
     def export_to_excel(self, df: pd.DataFrame, output_path: str):
         """
         Exports a DataFrame to an Excel spreadsheet.
         """
         df.to_excel(output_path, index=False, engine="openpyxl")
+

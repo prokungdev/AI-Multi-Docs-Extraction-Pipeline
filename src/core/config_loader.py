@@ -1,11 +1,15 @@
 import os
 import json
+from functools import lru_cache
 from loguru import logger
 from src.core.db import get_domains, get_sources
 
+DEFAULT_STORAGE_ROOT = "pipeline_storage"
+
+@lru_cache(maxsize=4)
 def load_system_settings(settings_path: str = "configs/settings.json") -> dict:
     """
-    Loads central settings.json.
+    Loads central settings.json with caching.
     """
     if not os.path.exists(settings_path):
         logger.warning(f"Settings file not found at: {settings_path}")
@@ -17,9 +21,19 @@ def load_system_settings(settings_path: str = "configs/settings.json") -> dict:
         logger.error(f"Failed to parse settings.json: {e}")
         return {}
 
+def get_default_domain() -> str:
+    """
+    Returns the primary active domain ID from configs/settings.json.
+    Falls back to 'expense_receipt' if no active domain is configured.
+    """
+    active = get_active_domains_hybrid()
+    if active:
+        return active[0].get("domain_id", "expense_receipt")
+    return "expense_receipt"
+
 def get_active_domains_hybrid() -> list[dict]:
     """
-    Returns only domains that are active from configs/document_domains.json.
+    Returns only domains that are active from configs/settings.json.
     """
     try:
         domains = get_domains()
@@ -65,6 +79,29 @@ def is_source_active(domain_id: str, source_id: str) -> bool:
     active_sources = get_active_sources_hybrid(domain_id)
     return source_id in active_sources
 
+def load_source_rules(domain_id: str, source_id: str, configs_dir: str = "configs") -> dict:
+    """
+    Loads rules.json for a specific merchant source with fallback to _default.
+    """
+    rules_path = os.path.join(configs_dir, "domains", domain_id, "sources", source_id, "rules.json")
+    if os.path.exists(rules_path):
+        try:
+            with open(rules_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading source rules for '{source_id}' in domain '{domain_id}': {e}")
+            
+    # Fallback to _default rules
+    default_rules_path = os.path.join(configs_dir, "domains", domain_id, "sources", "_default", "rules.json")
+    if os.path.exists(default_rules_path):
+        try:
+            with open(default_rules_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading default source rules for domain '{domain_id}': {e}")
+            
+    return {}
+
 def load_source_ai_config(domain_id: str, source_id: str, settings: dict = None) -> tuple[str, str]:
     """
     Resolves the AI provider and model name for a specific source.
@@ -79,15 +116,10 @@ def load_source_ai_config(domain_id: str, source_id: str, settings: dict = None)
     model = None
     
     # 1. Try to load rules.json for this source
-    rules_path = f"configs/domains/{domain_id}/sources/{source_id}/rules.json"
-    if os.path.exists(rules_path):
-        try:
-            with open(rules_path, "r", encoding="utf-8") as f:
-                rules = json.load(f)
-                provider = rules.get("ai_provider")
-                model = rules.get("ai_model")
-        except Exception as e:
-            logger.warning(f"Failed to read rules.json at {rules_path}: {e}")
+    rules = load_source_rules(domain_id, source_id)
+    if rules:
+        provider = rules.get("ai_provider")
+        model = rules.get("ai_model")
             
     # 2. Fall back to settings.json
     ai_provider_cfg = settings.get("ai_provider", {})
@@ -96,6 +128,31 @@ def load_source_ai_config(domain_id: str, source_id: str, settings: dict = None)
     if not model:
         # Load default model name for the selected provider from settings.json
         provider_cfg = ai_provider_cfg.get(provider, {})
-        model = provider_cfg.get("model_name", "gemini-2.5-flash")
-        
     return provider, model
+
+def get_image_processing_config(settings: dict = None) -> dict:
+    """
+    Returns image processing settings (format, quality, max_dimension, dpi).
+    Defaults to JPG, quality 85, max_dimension 1800, dpi 150.
+    """
+    if settings is None:
+        settings = load_system_settings()
+    img_cfg = settings.get("image_processing", {})
+    return {
+        "supported_input_extensions": img_cfg.get("supported_input_extensions", [".pdf", ".jpg", ".jpeg", ".png", ".webp", ".tiff"]),
+        "processing_format": img_cfg.get("processing_format", "jpg").lower().replace(".", ""),
+        "jpeg_quality": int(img_cfg.get("jpeg_quality", 85)),
+        "max_dimension": int(img_cfg.get("max_dimension", 1800)),
+        "dpi": int(img_cfg.get("dpi", 150)),
+        "split_filename_pattern": img_cfg.get("split_filename_pattern") or img_cfg.get("filename_pattern", "{domain}_{source}_{original_filename}_{batch_id}_p{page_no}"),
+        "archive_filename_pattern": img_cfg.get("archive_filename_pattern", "{domain}_{source}_{doc_no}_{batch_id}_p{page_no}"),
+        "use_ai_fallback_matching": bool(img_cfg.get("use_ai_fallback_matching", True))
+    }
+
+def get_supported_extensions(settings: dict = None) -> list[str]:
+    """
+    Returns list of supported file extensions for raw inbox documents.
+    """
+    cfg = get_image_processing_config(settings)
+    return [ext.lower() for ext in cfg.get("supported_input_extensions", [])]
+

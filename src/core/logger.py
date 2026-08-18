@@ -41,14 +41,23 @@ def setup_logger(settings_path: str = "configs/settings.json") -> None:
     except Exception as e:
         print(f"Warning: Failed to initialize log DB: {e}")
     
-    # 3. Add Console Sink (Stderr) with colored tags
-    # Format: [2026-08-15 23:55:07] [INFO] Message
-    console_format = "<green>[{time:YYYY-MM-DD HH:mm:ss}]</green> <level>[{level}]</level> {message}"
+    # 3. Add Console Sink (Stderr)
+    # If running in Jupyter Notebook, VS Code Interactive, or non-TTY, disable ANSI colors
+    is_notebook = "ipykernel" in sys.modules or "IPython" in sys.modules
+    is_tty = hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+    
+    if is_notebook or not is_tty:
+        console_format = "[{time:YYYY-MM-DD HH:mm:ss}] [{level}] {message}"
+        colorize = False
+    else:
+        console_format = "<green>[{time:YYYY-MM-DD HH:mm:ss}]</green> <level>[{level}]</level> {message}"
+        colorize = True
+        
     logger.add(
         sys.stderr,
         format=console_format,
         level=level,
-        colorize=True
+        colorize=colorize
     )
     
     # 4. Add File Sink (Daily Rotation, Compression, Retention)

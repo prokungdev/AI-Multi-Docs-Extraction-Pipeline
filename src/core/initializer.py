@@ -28,22 +28,54 @@ def validate_settings_config(settings_path: str = "configs/settings.json") -> tu
         
     # 3. Check settings keys and types
     storage_root = settings.get("storage_root")
-    active_domains = settings.get("active_domains")
     pipeline_folders = settings.get("pipeline_folders")
     
     if not storage_root or not isinstance(storage_root, str):
         errors.append("Key 'storage_root' must be a non-empty string in settings.json.")
-        
-    if active_domains is None or not isinstance(active_domains, list):
-        errors.append("Key 'active_domains' must be a list in settings.json.")
-    elif len(active_domains) == 0:
-        errors.append("Key 'active_domains' list must contain at least one domain in settings.json.")
         
     if pipeline_folders is None or not isinstance(pipeline_folders, list):
         errors.append("Key 'pipeline_folders' must be a list in settings.json.")
     elif len(pipeline_folders) == 0:
         errors.append("Key 'pipeline_folders' list must contain at least one directory name in settings.json.")
         
+    # Validate domains list inside settings.json as Single Source of Truth
+    domains_data = settings.get("domains")
+    if domains_data is None or not isinstance(domains_data, list):
+        errors.append("Key 'domains' must be a list in settings.json.")
+    elif len(domains_data) == 0:
+        errors.append("Key 'domains' list must contain at least one domain object in settings.json.")
+    else:
+        active_domains = [d for d in domains_data if isinstance(d, dict) and d.get("is_active", True)]
+        if len(active_domains) == 0:
+            errors.append("No active domains configured in 'domains' list in settings.json.")
+        for d in domains_data:
+            if not isinstance(d, dict) or not d.get("domain_id"):
+                errors.append("Each item in 'domains' must be an object with a non-empty 'domain_id'.")
+
+    # Validate ai_provider config block
+    ai_provider_cfg = settings.get("ai_provider")
+    if ai_provider_cfg is None or not isinstance(ai_provider_cfg, dict):
+        errors.append("Key 'ai_provider' must be a dictionary in settings.json.")
+    else:
+        active_provider = ai_provider_cfg.get("active_provider")
+        if not active_provider or not isinstance(active_provider, str):
+            errors.append("Key 'ai_provider.active_provider' must be a non-empty string in settings.json.")
+        elif active_provider not in ai_provider_cfg or not isinstance(ai_provider_cfg[active_provider], dict):
+            errors.append(f"Active provider '{active_provider}' configuration block is missing or not a dictionary in settings.json.")
+        else:
+            provider_cfg = ai_provider_cfg[active_provider]
+            if not provider_cfg.get("model_name") or not isinstance(provider_cfg.get("model_name"), str):
+                errors.append(f"Key 'ai_provider.{active_provider}.model_name' must be a non-empty string in settings.json.")
+            if not provider_cfg.get("api_key_env") or not isinstance(provider_cfg.get("api_key_env"), str):
+                errors.append(f"Key 'ai_provider.{active_provider}.api_key_env' must be a non-empty string in settings.json.")
+            concurrency = provider_cfg.get("concurrency")
+            if concurrency is not None and (not isinstance(concurrency, int) or concurrency <= 0):
+                errors.append(f"Key 'ai_provider.{active_provider}.concurrency' must be a positive integer in settings.json.")
+                
+        max_retries = ai_provider_cfg.get("max_retries")
+        if max_retries is not None and (not isinstance(max_retries, int) or max_retries <= 0):
+            errors.append("Key 'ai_provider.max_retries' must be a positive integer in settings.json.")
+
     # Validate logging config block
     logging_cfg = settings.get("logging")
     if logging_cfg is None or not isinstance(logging_cfg, dict):
@@ -66,40 +98,41 @@ def validate_settings_config(settings_path: str = "configs/settings.json") -> tu
         if not level or not isinstance(level, str):
             errors.append("Key 'logging.level' must be a non-empty string in settings.json.")
         
-    # Validate archiving config block
-    archiving_cfg = settings.get("archiving")
-    if archiving_cfg is not None:
-        if not isinstance(archiving_cfg, dict):
-            errors.append("Key 'archiving' must be a dictionary in settings.json.")
+    # Validate image_processing config block
+    img_cfg = settings.get("image_processing")
+    if img_cfg is not None:
+        if not isinstance(img_cfg, dict):
+            errors.append("Key 'image_processing' must be a dictionary in settings.json.")
         else:
-            keep_split_pages = archiving_cfg.get("keep_split_pages")
-            split_format = archiving_cfg.get("split_format")
-            
-            if keep_split_pages is not None and not isinstance(keep_split_pages, bool):
-                errors.append("Key 'archiving.keep_split_pages' must be a boolean in settings.json.")
-            if split_format is not None:
-                if not isinstance(split_format, str):
-                    errors.append("Key 'archiving.split_format' must be a string in settings.json.")
+            supported_exts = img_cfg.get("supported_input_extensions")
+            if supported_exts is not None and (not isinstance(supported_exts, list) or len(supported_exts) == 0):
+                errors.append("Key 'image_processing.supported_input_extensions' must be a non-empty list in settings.json.")
+                
+            processing_format = img_cfg.get("processing_format")
+            if processing_format is not None and not isinstance(processing_format, str):
+                errors.append("Key 'image_processing.processing_format' must be a string in settings.json.")
+                
+            split_pattern = img_cfg.get("split_filename_pattern") or img_cfg.get("filename_pattern")
+            if split_pattern is not None:
+                if not isinstance(split_pattern, str):
+                    errors.append("Key 'image_processing.split_filename_pattern' must be a string in settings.json.")
                 else:
-                    valid_formats = ["pdf", "png", "jpg", "jpeg"]
-                    parts = [p.strip().lower() for p in split_format.split(",") if p.strip()]
-                    for part in parts:
-                        if part not in valid_formats:
-                            errors.append(f"Invalid format '{part}' in 'archiving.split_format'. Must be one of: {', '.join(valid_formats)}")
-            
-            filename_pattern = archiving_cfg.get("filename_pattern")
-            if filename_pattern is not None:
-                if not isinstance(filename_pattern, str):
-                    errors.append("Key 'archiving.filename_pattern' must be a string in settings.json.")
+                    for ph in ["{domain}", "{source}", "{page_no}"]:
+                        if ph not in split_pattern:
+                            errors.append(f"Missing placeholder '{ph}' in 'image_processing.split_filename_pattern'.")
+                            
+            archive_pattern = img_cfg.get("archive_filename_pattern")
+            if archive_pattern is not None:
+                if not isinstance(archive_pattern, str):
+                    errors.append("Key 'image_processing.archive_filename_pattern' must be a string in settings.json.")
                 else:
-                    required_placeholders = ["{domain}", "{source}", "{doc_no}", "{page_no}"]
-                    for ph in required_placeholders:
-                        if ph not in filename_pattern:
-                            errors.append(f"Missing placeholder '{ph}' in 'archiving.filename_pattern'. Must include: {', '.join(required_placeholders)}")
-            
-            use_ai_fallback_matching = archiving_cfg.get("use_ai_fallback_matching")
-            if use_ai_fallback_matching is not None and not isinstance(use_ai_fallback_matching, bool):
-                errors.append("Key 'archiving.use_ai_fallback_matching' must be a boolean in settings.json.")
+                    for ph in ["{domain}", "{source}", "{doc_no}", "{page_no}"]:
+                        if ph not in archive_pattern:
+                            errors.append(f"Missing placeholder '{ph}' in 'image_processing.archive_filename_pattern'.")
+                            
+            use_ai_fallback = img_cfg.get("use_ai_fallback_matching")
+            if use_ai_fallback is not None and not isinstance(use_ai_fallback, bool):
+                errors.append("Key 'image_processing.use_ai_fallback_matching' must be a boolean in settings.json.")
         
     return len(errors) == 0, errors
 
@@ -225,7 +258,7 @@ def validate_environment() -> list[str]:
         messages.append("[WARNING] GEMINI_API_KEY is not set. Gemini API calls will fail.")
         
     # 3. Check critical python packages
-    critical_packages = ["fitz", "pandas", "google.genai", "streamlit", "PIL"]
+    critical_packages = ["pymupdf", "pandas", "google.genai", "streamlit", "PIL", "openpyxl"]
     for pkg in critical_packages:
         try:
             __import__(pkg)
@@ -252,7 +285,13 @@ def initialize_storage_directories(settings_path: str = "configs/settings.json")
         return 0
         
     root = settings.get("storage_root", "pipeline_storage")
-    domains = settings.get("active_domains", [])
+    
+    # Load active domains from settings.json
+    domains_data = settings.get("domains", [])
+    domains = [d.get("domain_id") for d in domains_data if isinstance(d, dict) and d.get("is_active", True) and d.get("domain_id")]
+    if not domains:
+        domains = ["expense_receipt"]
+
     folders = settings.get("pipeline_folders", [])
     
     ensured_count = 0

@@ -4,10 +4,11 @@ import copy
 import time
 from datetime import datetime
 from PIL import Image
+import uuid
 from google import genai
 from google.genai import types
 from loguru import logger
-from src.core.config_loader import load_source_ai_config
+from src.core.config_loader import load_source_ai_config, load_system_settings
 from src.core.db import get_active_credentials, update_credential_status, create_api_call_log
 
 def clean_schema_for_gemini(schema: dict) -> dict:
@@ -64,15 +65,8 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
 
     # Load settings to check max_images_per_request
     settings_path = os.path.join(configs_dir, "settings.json")
-    max_images = 50
-    settings = {}
-    if os.path.exists(settings_path):
-        try:
-            with open(settings_path, "r", encoding="utf-8") as sf:
-                settings = json.load(sf)
-                max_images = settings.get("max_images_per_request", 50)
-        except Exception as se:
-            logger.warning(f"Failed to read settings.json for max_images check: {se}")
+    settings = load_system_settings(settings_path)
+    max_images = settings.get("max_images_per_request", 50)
 
     if len(image_paths) > max_images:
         error_msg = f"Number of pages ({len(image_paths)}) exceeds the maximum allowed images per request ({max_images})."
@@ -254,10 +248,9 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
         # Initialize client with specific API key
         client = genai.Client(api_key=api_key)
         
-        # Auto-Retry logic (3 attempts with exponential backoff)
-        max_retries = 3
+        # Auto-Retry logic (with exponential backoff)
+        max_retries = settings.get("ai_provider", {}).get("max_retries", 3)
         for attempt in range(max_retries):
-            import uuid
             log_id = f"api_{uuid.uuid4().hex[:12]}"
             start_time = time.time()
             pages_desc = f"{len(image_paths)} pages"
@@ -287,6 +280,7 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
                 try:
                     extracted_data = json.loads(result_text)
                 except Exception as json_err:
+                    last_exception = json_err
                     logger.error(f"JSON Parsing failed: {json_err}")
                     if batch_id:
                         create_api_call_log(
@@ -338,6 +332,7 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
                 return extracted_data
                 
             except Exception as e:
+                last_exception = e
                 latency_ms = (time.time() - start_time) * 1000.0
                 err_msg = str(e)
                 log_cred_id = cred_id if cred_id != "fallback_default" else None
