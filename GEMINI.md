@@ -23,3 +23,7 @@ This document defines the rules and conventions that AI agents and developers mu
 ### 4. Agent Behaviors & Approvals
 - **Do NOT modify any code files (.py, .json, .txt, .bat, etc.) without explicit user approval of the implementation plan.**
 - Before executing any modifying actions on the source code, the agent must present the implementation plan and wait for the user to review and explicitly approve it.
+
+### 5. Git Synchronization & Pre-Check Reminder
+- **Before presenting an implementation plan or making any code modifications, the Agent MUST check the git status (`git status` / `git fetch`) and remind/prompt the user to fetch & pull the latest code (`git pull origin main`) to prevent working on outdated branches or causing unexpected merge conflicts.**
+

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Git Pre-commit Hook: Checks if local branch is behind origin/main before allowing commit.
+
+echo "🔍 Checking Git remote status (git fetch)..."
+git fetch origin main >/dev/null 2>&1
+
+BEHIND_COUNT=$(git rev-list --count HEAD..origin/main 2>/dev/null)
+
+if [ "$BEHIND_COUNT" -gt 0 ]; then
+    echo ""
+    echo "========================================================================"
+    echo " ⚠️  WARNING: Remote repository (origin/main) has $BEHIND_COUNT new commit(s)!"
+    echo " 👉  Please run: git pull origin main before committing"
+    echo "========================================================================"
+    echo ""
+    exit 1
+fi
+
+exit 0
