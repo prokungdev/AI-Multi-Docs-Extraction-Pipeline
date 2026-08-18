@@ -33,6 +33,7 @@ from src.core.db import (
     update_document_to_failed,
     insert_relational_receipt
 )
+from src.core.post_processor import post_process_document
 
 def merge_chunk_payloads(payloads: list[dict]) -> dict:
     """
@@ -361,6 +362,19 @@ def process_document(file_path: str, domain: str, template_name: str, export_for
     if status_code == "PROCESSED":
         insert_relational_receipt(document_id, final_payload, os.path.basename(file_path))
         
+    # Run Post-Processing Quality Assessment & Auto-Approval
+    if status_code == "PROCESSED":
+        logger.info("Running Post-Processing Quality Assessment...")
+        res = post_process_document(
+            document_id=document_id,
+            payload=final_payload,
+            source_id=source,
+            domain_id=domain,
+            settings=settings
+        )
+        status_code = res["status_code"]
+        final_payload = res["updated_payload"]
+        
     logger.info(f"Registered document record '{document_id}' (Status: {status_code}) in database.")
     
     if status_code == "FAILED":
@@ -370,24 +384,35 @@ def process_document(file_path: str, domain: str, template_name: str, export_for
     # 6. Transform & Export
     logger.info("[STEP 5/5] Transforming and flattening extracted data...")
     try:
-        rows = transform_data(final_payload, template_path)
-        if rows:
-            # Export results
+        from src.core.exporters import get_exporter
+        handler = get_exporter(domain, template_name)
+        
+        doc_data = {
+            **final_payload,
+            "source_id": source,
+            "domain_id": domain,
+            "document_id": document_id,
+            "original_pdf_name": os.path.basename(file_path)
+        }
+        
+        df = handler.transform([doc_data])
+        if not df.empty:
             os.makedirs("outputs", exist_ok=True)
-            df = pd.DataFrame(rows)
-            
             output_filename = f"{domain}_{template_name}_export"
             output_base_path = os.path.join("outputs", output_filename)
             
+            # Determine encoding: Express PV uses cp874 for older Thai local software compatibility
+            encoding = "cp874" if template_name == "express_pv" else "utf-8-sig"
+            
             if export_format == "csv":
                 output_file = f"{output_base_path}.csv"
-                df.to_csv(output_file, index=False, encoding="utf-8-sig")
+                df.to_csv(output_file, index=False, encoding=encoding)
             else:
                 output_file = f"{output_base_path}.json"
                 df.to_json(output_file, orient="records", force_ascii=False, indent=2)
                 
             logger.info("Pipeline execution finished successfully!")
-            logger.info(f"Flattened data exported to: {output_file}")
+            logger.info(f"Flattened data exported to: {output_file} | Encoding: {encoding}")
     except Exception as e:
         logger.error(f"Failed to transform data: {e}")
         update_document_to_failed(document_id, f"Transformation Error: {str(e)}")

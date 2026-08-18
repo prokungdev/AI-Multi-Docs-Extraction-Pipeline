@@ -172,10 +172,15 @@ def main_app():
             st.subheader(f"📋 คิวรอการตรวจสอบและยืนยัน ({len(pending_docs)} รายการ)")
             
             # Format selectbox choices
-            doc_choices = {
-                f"{d['original_pdf_name']} (สกัดเมื่อ: {d['created_at'][:16]}) - ID: {d['document_id'][:6]}": d["document_id"]
-                for d in pending_docs
-            }
+            doc_choices = {}
+            for d in pending_docs:
+                prio = d.get("review_priority") or "LOW"
+                conf = d.get("overall_confidence")
+                conf_str = f"{int(conf*100)}%" if conf is not None else "ไม่มีข้อมูล"
+                is_blurry = " [ภาพเบลอ]" if d.get("is_blurry") == 1 else ""
+                label = f"[{prio}] {d['original_pdf_name']} (ความแม่นยำ: {conf_str}{is_blurry}) - ID: {d['document_id'][:6]}"
+                doc_choices[label] = d["document_id"]
+                
             selected_doc_label = st.selectbox("เลือกเอกสารที่ต้องการตรวจสอบ", list(doc_choices.keys()))
             selected_doc_id = doc_choices[selected_doc_label]
             
@@ -235,6 +240,28 @@ def main_app():
                 # Right Column: Data Editor form
                 with col_right:
                     st.markdown("### ✍️ แบบฟอร์มตรวจแก้ไขข้อมูล")
+                    
+                    # AI Quality Assessment Info Box
+                    st.markdown("##### 🔍 ผลการประเมินการสกัดข้อมูล (AI Quality Assessment)")
+                    col_conf, col_prio = st.columns(2)
+                    with col_conf:
+                        conf_val = doc.get("overall_confidence")
+                        conf_str = f"{int(conf_val*100)}%" if conf_val is not None else "ไม่มีข้อมูล"
+                        st.metric("ความแม่นยำของการสกัด (Confidence)", conf_str, 
+                                  delta=doc.get("confidence_level"), delta_color="normal")
+                    with col_prio:
+                        st.metric("ลำดับความสำคัญในการตรวจ (Review Priority)", doc.get("review_priority") or "LOW")
+                        
+                    if doc.get("is_blurry") == 1:
+                        st.warning("⚠️ ภาพต้นฉบับอาจจะเบลอหรือไม่ชัดเจน (Possibly blurry/low quality image)")
+                    if doc.get("has_ambiguous_fields") == 1:
+                        st.warning("⚠️ ตรวจพบฟิลด์ที่คลุมเครือหรือสูตรการคำนวณเงินไม่ตรงกัน (Ambiguous fields or math validation discrepancy)")
+                        
+                    notes = doc.get("confidence_notes")
+                    if notes:
+                        st.info(f"**บันทึกการประเมิน:** {notes}")
+                        
+                    st.markdown("---")
                     
                     st.markdown("##### 📌 ข้อมูลทั่วไป")
                     
@@ -353,14 +380,75 @@ def main_app():
                     
                     # Export options
                     st.markdown("##### 📤 การส่งออกรายงาน")
-                    col_temp, col_fmt = st.columns(2)
-                    with col_temp:
-                        templates_dir = f"configs/domains/{selected_domain}/outputs"
-                        templates = sorted([os.path.splitext(f)[0] for f in os.listdir(templates_dir) if f.endswith(".json")])
-                        selected_template = st.selectbox("เลือกเทมเพลต", templates, disabled=is_locked)
-                    with col_fmt:
-                        export_fmt = st.radio("ฟอร์แมตไฟล์ส่งออก", ["CSV", "JSON"], horizontal=True, disabled=is_locked)
-                        
+                    from src.core.exporters import list_exporters
+                    exporters_list = list_exporters(selected_domain)
+                    
+                    exporter_options = {exp["name"]: exp for exp in exporters_list}
+                    selected_exp_name = st.selectbox("เลือกรูปแบบปลายทางสำหรับการส่งออก", list(exporter_options.keys()), disabled=is_locked)
+                    selected_exporter = exporter_options[selected_exp_name]
+                    selected_exporter_id = selected_exporter["exporter_id"]
+                    
+                    # Display custom parameters for the exporter if any
+                    start_no = 1
+                    voucher_prefix = "PV2608-"
+                    
+                    if selected_exporter["has_custom_params"]:
+                        # Retrieve next running number from DB as default!
+                        default_seq = 1
+                        try:
+                            default_seq = selected_exporter["handler"].get_next_sequence_number()
+                        except Exception:
+                            pass
+                            
+                        col_prefix, col_start_seq = st.columns(2)
+                        with col_prefix:
+                            voucher_prefix = st.text_input("Voucher Prefix", value="PV2608-", disabled=is_locked)
+                        with col_start_seq:
+                            start_no = st.number_input("เลขรันใบสำคัญเริ่มต้น (Start Sequence)", value=int(default_seq), min_value=1, step=1, disabled=is_locked)
+                            
+                    export_fmt = st.radio("ฟอร์แมตไฟล์ส่งออก", ["CSV", "JSON"], horizontal=True, disabled=is_locked)
+                    
+                    # If locked (meaning it's already APPROVED), show direct download button
+                    if is_locked:
+                        st.success("💾 เอกสารนี้ได้รับการอนุมัติเรียบร้อยแล้ว!")
+                        try:
+                            handler = selected_exporter["handler"]
+                            doc_data = {
+                                **data,
+                                "source_id": doc["source_id"],
+                                "domain_id": selected_domain,
+                                "document_id": selected_doc_id,
+                                "original_pdf_name": doc["original_pdf_name"]
+                            }
+                            kwargs = {}
+                            if selected_exporter_id == "express_pv":
+                                kwargs["start_voucher_no"] = start_no
+                                kwargs["voucher_prefix"] = voucher_prefix
+                                
+                            df_dl = handler.transform([doc_data], **kwargs)
+                            if not df_dl.empty:
+                                if export_fmt == "CSV":
+                                    encoding_dl = "cp874" if selected_exporter_id == "express_pv" else "utf-8-sig"
+                                    csv_bytes = df_dl.to_csv(index=False, encoding=encoding_dl).encode(encoding_dl, errors="ignore")
+                                    st.download_button(
+                                        label=f"📥 ดาวน์โหลดไฟล์ CSV ({selected_exporter_id})",
+                                        data=csv_bytes,
+                                        file_name=f"{selected_domain}_{selected_exporter_id}_export.csv",
+                                        mime="text/csv",
+                                        use_container_width=True
+                                    )
+                                else:
+                                    json_bytes = df_dl.to_json(orient="records", force_ascii=False, indent=2).encode("utf-8")
+                                    st.download_button(
+                                        label=f"📥 ดาวน์โหลดไฟล์ JSON ({selected_exporter_id})",
+                                        data=json_bytes,
+                                        file_name=f"{selected_domain}_{selected_exporter_id}_export.json",
+                                        mime="application/json",
+                                        use_container_width=True
+                                    )
+                        except Exception as dl_err:
+                            st.error(f"ไม่สามารถจัดทำไฟล์ดาวน์โหลดได้: {dl_err}")
+                            
                     # Action buttons
                     col_action_confirm, col_action_re = st.columns(2)
                     with col_action_confirm:
@@ -420,64 +508,22 @@ def main_app():
                                 confirmed_by="admin"
                             )
                             
-                            # Transform data
-                            template_path = os.path.join(templates_dir, f"{selected_template}.json")
-                            transformed_rows = transform_data(final_data, template_path)
-                            
-                            # Write file output
-                            os.makedirs("outputs", exist_ok=True)
-                            output_file_base = os.path.join("outputs", f"{selected_domain}_{selected_template}_export")
-                            
-                            if export_fmt == "CSV":
-                                output_path = f"{output_file_base}.csv"
-                                df_new = pd.DataFrame(transformed_rows)
-                                if os.path.exists(output_path):
-                                    df_old = pd.read_csv(output_path)
-                                    df_final = pd.concat([df_old, df_new], ignore_index=True)
-                                else:
-                                    df_final = df_new
-                                df_final.to_csv(output_path, index=False, encoding="utf-8-sig")
-                            else:
-                                output_path = f"{output_file_base}.json"
-                                if os.path.exists(output_path):
-                                    with open(output_path, "r", encoding="utf-8") as rf:
-                                        list_old = json.load(rf)
-                                else:
-                                    list_old = []
-                                list_old.extend(transformed_rows)
-                                with open(output_path, "w", encoding="utf-8") as wf:
-                                    json.dump(list_old, wf, ensure_ascii=False, indent=2)
-                                    
-                            # Archiving Files
-                            archive_dir = os.path.join(domain_storage, "04_archive")
-                            current_month = datetime.now().strftime("%Y-%m")
-                            month_archive_raw = os.path.join(archive_dir, current_month, "raw")
-                            month_archive_json = os.path.join(archive_dir, current_month, "verified_json")
-                            
-                            os.makedirs(month_archive_raw, exist_ok=True)
-                            os.makedirs(month_archive_json, exist_ok=True)
-                            
-                            # Find and copy original file from inbox to archive raw
-                            inbox_dir = os.path.join(domain_storage, "01_raw_inbox")
-                            if os.path.exists(inbox_dir):
-                                for folder in os.listdir(inbox_dir):
-                                    source_folder = os.path.join(inbox_dir, folder)
-                                    if os.path.isdir(source_folder):
-                                        for f in os.listdir(source_folder):
-                                            if os.path.splitext(f)[0] == doc["original_pdf_name"].split(".")[0]:
-                                                shutil.copy(os.path.join(source_folder, f), os.path.join(month_archive_raw, f))
-                                                break
-                                                
-                            # Copy split pages and write JSON payload to archive
-                            for page in pages:
-                                if os.path.exists(page["image_path"]):
-                                    shutil.copy(page["image_path"], os.path.join(month_archive_raw, os.path.basename(page["image_path"])))
-                                    # Clean up in split pages
-                                    os.remove(page["image_path"])
-                                    
-                            # Save final JSON in archive
-                            with open(os.path.join(month_archive_json, f"{selected_doc_id}.json"), "w", encoding="utf-8") as af:
-                                json.dump(final_data, af, ensure_ascii=False, indent=2)
+                            # Call centralized archiving and exporting helper with custom exporter params
+                            from src.core.post_processor import archive_and_export_document
+                            kwargs = {}
+                            if selected_exporter_id == "express_pv":
+                                kwargs["start_voucher_no"] = start_no
+                                kwargs["voucher_prefix"] = voucher_prefix
+                                
+                            archive_and_export_document(
+                                document_id=selected_doc_id,
+                                payload=final_data,
+                                original_pdf_name=doc["original_pdf_name"],
+                                domain_id=selected_domain,
+                                source_id=doc["source_id"],
+                                settings=settings,
+                                **kwargs
+                            )
                                 
                             st.success(f"💾 อนุมัติข้อมูลและต่อท้ายรายงานเรียบร้อยแล้ว!")
                             st.toast("อนุมัติข้อมูลสำเร็จ!", icon="✅")
@@ -515,6 +561,16 @@ def main_app():
                                         entity_name=entity_name,
                                         total_amount=total_amount,
                                         is_manually_edited=0
+                                    )
+                                    
+                                    # Run Post-Processing Quality Assessment & Auto-Approval
+                                    from src.core.post_processor import post_process_document
+                                    post_process_document(
+                                        document_id=selected_doc_id,
+                                        payload=re_extracted,
+                                        source_id=doc["source_id"],
+                                        domain_id=selected_domain,
+                                        settings=settings
                                     )
                                     
                                     if not is_complete:

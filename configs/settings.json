@@ -10,6 +10,14 @@
     "04_archive"
   ],
   "max_images_per_request": 50,
+  "concurrency": {
+    "default": 4,
+    "models": {
+      "gemini-3.5-flash": 8,
+      "gemini-2.5-flash": 6,
+      "gemini-3.5-flash-free": 2
+    }
+  },
   "logging": {
     "logs_dir": "logs",
     "rotation": "00:00",

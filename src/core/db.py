@@ -248,6 +248,25 @@ def initialize_db_schema():
             )
         """)
 
+        # Check and add new quality/metadata columns to documents table
+        cursor.execute("PRAGMA table_info(documents)")
+        existing_cols = {col["name"] for col in cursor.fetchall()}
+        
+        new_cols = {
+            "overall_confidence": "REAL DEFAULT NULL",
+            "confidence_level": "TEXT DEFAULT NULL",
+            "is_blurry": "INTEGER DEFAULT 0",
+            "has_ambiguous_fields": "INTEGER DEFAULT 0",
+            "confidence_notes": "TEXT DEFAULT NULL",
+            "review_priority": "TEXT DEFAULT NULL",
+            "auto_approved": "INTEGER DEFAULT 0"
+        }
+        
+        for col_name, col_type in new_cols.items():
+            if col_name not in existing_cols:
+                logger.info(f"Adding column '{col_name}' to 'documents' table...")
+                cursor.execute(f"ALTER TABLE documents ADD COLUMN {col_name} {col_type}")
+
         conn.commit()
         logger.info("Relational SQLite schema initialized successfully.")
     except Exception as e:
@@ -411,7 +430,11 @@ def create_document(document_id: str, batch_id: str, domain_id: str, source_id: 
                     doc_number: str = None, doc_date: str = None, entity_name: str = None, 
                     total_amount: float = None, search_text: str = None, data_payload: str = None, 
                     error_reason: str = None, model_used: str = None, input_tokens: int = None,
-                    output_tokens: int = None, conn: sqlite3.Connection = None) -> bool:
+                    output_tokens: int = None, conn: sqlite3.Connection = None,
+                    overall_confidence: float = None, confidence_level: str = None,
+                    is_blurry: int = None, has_ambiguous_fields: int = None,
+                    confidence_notes: str = None, review_priority: str = None,
+                    auto_approved: int = None) -> bool:
     """
     Inserts a new document record.
     """
@@ -426,12 +449,16 @@ def create_document(document_id: str, batch_id: str, domain_id: str, source_id: 
             INSERT OR REPLACE INTO documents (
                 document_id, batch_id, domain_id, source_id, status_code, doc_number, doc_date, 
                 entity_name, total_amount, search_text, data_payload, error_reason,
-                model_used, input_tokens, output_tokens, created_at
+                model_used, input_tokens, output_tokens, overall_confidence, confidence_level,
+                is_blurry, has_ambiguous_fields, confidence_notes, review_priority, auto_approved,
+                created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (document_id, batch_id, domain_id, source_id, status_code, doc_number, doc_date,
               entity_name, total_amount, search_text, data_payload, error_reason,
-              model_used, input_tokens, output_tokens, created_at))
+              model_used, input_tokens, output_tokens, overall_confidence, confidence_level,
+              is_blurry, has_ambiguous_fields, confidence_notes, review_priority, auto_approved,
+              created_at))
         if should_close:
             conn.commit()
         return True
@@ -540,7 +567,14 @@ def get_pending_documents(domain_id: str) -> list[dict]:
             FROM documents doc
             JOIN processed_batches pb ON doc.batch_id = pb.batch_id
             WHERE doc.domain_id = ? AND doc.is_locked = 0
-            ORDER BY doc.created_at DESC
+            ORDER BY 
+                CASE doc.review_priority
+                    WHEN 'HIGH' THEN 1
+                    WHEN 'MEDIUM' THEN 2
+                    WHEN 'LOW' THEN 3
+                    ELSE 4
+                END ASC,
+                doc.created_at DESC
         """, (domain_id,))
         rows = cursor.fetchall()
         return [dict(r) for r in rows]
@@ -640,6 +674,41 @@ def update_document_payload(document_id: str, data_payload: str, status_code: st
         return False
     finally:
         if conn:
+            conn.close()
+
+def update_document_metadata(document_id: str, overall_confidence: float, confidence_level: str,
+                             is_blurry: int, has_ambiguous_fields: int, confidence_notes: str,
+                             review_priority: str, auto_approved: int, conn: sqlite3.Connection = None) -> bool:
+    """
+    Updates the evaluation metadata columns for a document.
+    """
+    should_close = False
+    if conn is None:
+        conn = get_db_connection()
+        should_close = True
+    try:
+        cursor = conn.cursor()
+        updated_at = datetime.now().isoformat()
+        cursor.execute("""
+            UPDATE documents
+            SET overall_confidence = ?,
+                confidence_level = ?,
+                is_blurry = ?,
+                has_ambiguous_fields = ?,
+                confidence_notes = ?,
+                review_priority = ?,
+                auto_approved = ?,
+                updated_at = ?
+            WHERE document_id = ?
+        """, (overall_confidence, confidence_level, is_blurry, has_ambiguous_fields, confidence_notes, review_priority, auto_approved, updated_at, document_id))
+        if should_close:
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Failed to update document metadata: {e}")
+        return False
+    finally:
+        if should_close and conn:
             conn.close()
 
 def search_documents(domain_id: str, source_id: str = None, start_date: str = None, 

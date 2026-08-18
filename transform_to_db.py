@@ -9,6 +9,7 @@ from src.core.db import (
     create_document,
     insert_relational_receipt
 )
+from src.core.post_processor import post_process_document
 from src.core.config_loader import load_system_settings
 from src.core.logger import setup_logger
 
@@ -170,6 +171,19 @@ def main():
                 # 2. Insert relational receipt
                 if status_code in ("PROCESSED", "NEEDS_REVIEW"):
                     insert_relational_receipt(doc_id, payload, pdf_name, conn=update_conn)
+                    
+                # Run Post-Processing Quality Assessment & Auto-Approval
+                if status_code == "PROCESSED":
+                    logger.info(f"Running Post-Processing Quality Assessment for page {page_number}...")
+                    res = post_process_document(
+                        document_id=doc_id,
+                        payload=payload,
+                        source_id=source,
+                        domain_id=domain,
+                        settings=settings,
+                        conn=update_conn
+                    )
+                    status_code = res["status_code"]
                     
                 # 3. Update page link and status in document_pages
                 update_cursor = update_conn.cursor()
