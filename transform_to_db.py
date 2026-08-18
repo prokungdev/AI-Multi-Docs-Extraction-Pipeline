@@ -37,7 +37,7 @@ def main():
                    pb.original_pdf_name, pb.storage_path
             FROM document_pages dp
             JOIN processed_batches pb ON dp.batch_id = pb.batch_id
-            WHERE dp.status_code = 'EXTRACTED'
+            WHERE dp.status_code IN ('EXTRACTED', 'NEEDS_REVIEW')
             ORDER BY dp.batch_id, dp.page_number ASC
         """)
         pages = cursor.fetchall()
@@ -45,7 +45,7 @@ def main():
         conn = None
         
         if not pages:
-            logger.info("No extracted pages (status: EXTRACTED) found for DB transformation.")
+            logger.info("No extracted/review-needed pages (status: EXTRACTED, NEEDS_REVIEW) found for DB transformation.")
             return
             
         logger.info(f"Found {len(pages)} page(s) to import into DB relational tables...")
@@ -109,27 +109,37 @@ def main():
             input_tokens = meta.get("input_tokens", 0)
             output_tokens = meta.get("output_tokens", 0)
             
-            doc_number = payload.get("doc_number", "")
-            doc_date = payload.get("transaction_date", "")
-            entity_name = payload.get("merchant_name", "")
+            merchant_obj = payload.get("merchant", {})
+            receipt_info = payload.get("receipt_info", {})
+            totals_obj = payload.get("totals", {}) or payload.get("financial_summary", {})
             
-            fin_summary = payload.get("financial_summary", {})
-            total_amount = fin_summary.get("net_amount", 0.0)
+            doc_number = receipt_info.get("receipt_number") or payload.get("doc_number", "")
+            doc_date = receipt_info.get("transaction_date") or payload.get("transaction_date", "")
+            entity_name = merchant_obj.get("name") or payload.get("merchant_name", "")
             
-            tax_id = payload.get("tax_id", "")
-            payment_method = payload.get("payment_method", "")
+            total_amount = totals_obj.get("net_amount", 0.0)
+            
+            tax_id = merchant_obj.get("tax_id") or payload.get("tax_id", "")
+            payment_method = receipt_info.get("payment_method") or payload.get("payment_method", "")
             search_text = f"{doc_number} {entity_name} {tax_id} {payment_method}".strip()
             
-            # Evaluate scans validation
+            # Evaluate scans validation & post-processing validation
             val_meta = payload.get("validation_meta", {})
             is_complete = val_meta.get("is_complete", True)
             missing = val_meta.get("missing_pages", [])
+            
+            post_meta = payload.get("_post_processing_meta", {})
+            requires_review = post_meta.get("requires_review", False)
+            review_reasons = post_meta.get("review_reasons", [])
             
             status_code = "PROCESSED"
             error_reason = None
             if not is_complete:
                 status_code = "FAILED"
                 error_reason = f"เอกสารสแกนมาไม่ครบถ้วน: ขาดหน้า {', '.join(map(str, missing))}"
+            elif requires_review:
+                status_code = "NEEDS_REVIEW"
+                error_reason = " | ".join(review_reasons)
                 
             # Generate unique document ID for this page
             doc_id = f"doc_{uuid.uuid4().hex[:12]}"
@@ -158,7 +168,7 @@ def main():
                 )
                 
                 # 2. Insert relational receipt
-                if status_code == "PROCESSED":
+                if status_code in ("PROCESSED", "NEEDS_REVIEW"):
                     insert_relational_receipt(doc_id, payload, pdf_name, conn=update_conn)
                     
                 # 3. Update page link and status in document_pages

@@ -1,4 +1,21 @@
 {
   "keywords": [],
-  "tax_ids": []
+  "tax_ids": [],
+  "post_processing_rules": {
+    "date_rules": {
+      "source_era": "BE"
+    },
+    "expense_rules": {
+      "expense_category_code": "GENERAL_EXPENSE",
+      "default_wht_rate": 0.0
+    },
+    "tax_rules": {
+      "is_vat_registered": false,
+      "default_vat_rate": 0.0
+    },
+    "item_rules": {
+      "default_unit": "",
+      "default_currency": ""
+    }
+  }
 }

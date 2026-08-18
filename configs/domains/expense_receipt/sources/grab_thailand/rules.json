@@ -1,5 +1,35 @@
 {
-  "keywords": ["Grab", "แกร็บ", "GrabFood", "GrabCar", "GrabExpress", "GrabTaxi"],
-  "tax_ids": ["0105556101164", "0105561081515"],
-  "file_prefixes": ["Grab_", "GrabExpress_"]
+  "keywords": [
+    "Grab",
+    "แกร็บ",
+    "GrabFood",
+    "GrabCar",
+    "GrabExpress",
+    "GrabTaxi"
+  ],
+  "tax_ids": [
+    "0105556101164",
+    "0105561081515"
+  ],
+  "file_prefixes": [
+    "Grab_",
+    "GrabExpress_"
+  ],
+  "post_processing_rules": {
+    "date_rules": {
+      "source_era": "BE"
+    },
+    "expense_rules": {
+      "expense_category_code": "TRANSPORT",
+      "default_wht_rate": 0.0
+    },
+    "tax_rules": {
+      "is_vat_registered": true,
+      "default_vat_rate": 7.0
+    },
+    "item_rules": {
+      "default_unit": "",
+      "default_currency": ""
+    }
+  }
 }

@@ -1,13 +1,15 @@
 {
   "granularity": "line_items",
   "columns": {
-    "Transaction Date": "transaction_date",
-    "Merchant Name": "merchant_name",
-    "Tax ID": "tax_id",
+    "Receipt Number": "receipt_info.receipt_number",
+    "Transaction Date": "receipt_info.transaction_date",
+    "Merchant Name": "merchant.name",
+    "Tax ID": "merchant.tax_id",
+    "Customer Name": "customer.name",
     "Item Name": "item.name",
     "Quantity": "item.qty",
     "Unit Price": "item.unit_price",
     "Total Price": "item.total_price",
-    "Net Amount": "financial_summary.net_amount"
+    "Net Amount": "totals.net_amount"
   }
 }

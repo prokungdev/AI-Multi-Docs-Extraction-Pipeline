@@ -1,24 +1,90 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ExpenseReceipt",
-  "description": "Unified schema for extracting expense receipts.",
+  "description": "Standardized schema for extracting expense receipts and tax invoices.",
   "type": "object",
   "properties": {
-    "transaction_date": {
-      "type": "string",
-      "description": "The date of the transaction in YYYY-MM-DD format (e.g., 2026-08-15)."
+    "receipt_info": {
+      "type": "object",
+      "description": "General document metadata and receipt details.",
+      "properties": {
+        "receipt_number": {
+          "type": "string",
+          "description": "The receipt or tax invoice document number (เลขที่ใบเสร็จ/ใบกำกับภาษี)."
+        },
+        "transaction_date": {
+          "type": "string",
+          "description": "The date of the transaction in YYYY-MM-DD format (e.g., 2026-08-15)."
+        },
+        "transaction_time": {
+          "type": "string",
+          "description": "The time of the transaction in HH:MM:SS format (e.g., 14:30:00)."
+        },
+        "expense_category": {
+          "type": "string",
+          "description": "The classification of the expense, such as Food & Beverage, Transport, Office Supplies, Delivery, Utilities, etc."
+        },
+        "payment_method": {
+          "type": "string",
+          "description": "Method of payment, e.g., Cash, Credit Card, Bank Transfer, ShopeePay, TrueMoney, GrabPay, QR Pay."
+        }
+      },
+      "required": [
+        "transaction_date",
+        "expense_category",
+        "payment_method"
+      ]
     },
-    "merchant_name": {
-      "type": "string",
-      "description": "The official name of the merchant or store."
+    "merchant": {
+      "type": "object",
+      "description": "Seller or merchant details.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The official name of the merchant or store."
+        },
+        "tax_id": {
+          "type": "string",
+          "description": "The merchant's 13-digit Tax ID (เลขประจำตัวผู้เสียภาษี) in Thailand, if available."
+        },
+        "branch": {
+          "type": "string",
+          "description": "The merchant's branch name or branch number (e.g., สำนักงานใหญ่ or 00001)."
+        },
+        "address": {
+          "type": "string",
+          "description": "The full address of the merchant."
+        },
+        "phone": {
+          "type": "string",
+          "description": "Contact phone number of the merchant."
+        }
+      },
+      "required": [
+        "name"
+      ]
     },
-    "tax_id": {
-      "type": "string",
-      "description": "The merchant's 13-digit Tax ID (เลขประจำตัวผู้เสียภาษี) in Thailand, if available."
-    },
-    "expense_category": {
-      "type": "string",
-      "description": "The classification of the expense, such as Food & Beverage, Transport, Office Supplies, Delivery, Utilities, etc."
+    "customer": {
+      "type": "object",
+      "description": "Buyer or customer details (if specified on tax invoice/receipt).",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Customer or buyer entity name."
+        },
+        "tax_id": {
+          "type": "string",
+          "description": "Customer 13-digit Tax ID."
+        },
+        "branch": {
+          "type": "string",
+          "description": "Customer branch name or branch number."
+        },
+        "address": {
+          "type": "string",
+          "description": "Customer address."
+        }
+      }
     },
     "items": {
       "type": "array",
@@ -31,8 +97,14 @@
             "description": "The description or name of the item."
           },
           "qty": {
-            "type": "integer",
-            "description": "Quantity purchased. Default to 1 if not specified."
+            "type": "number",
+            "default": 1.0,
+            "description": "Quantity purchased (supports decimal numbers, e.g., 1.5)."
+          },
+          "unit": {
+            "type": "string",
+            "default": "PCS",
+            "description": "Unit of measurement (e.g., PCS, KG, BOX, LOT, Hours)."
           },
           "unit_price": {
             "type": "number",
@@ -43,44 +115,58 @@
             "description": "Total price for the item (qty * unit_price)."
           }
         },
-        "required": ["name", "qty", "unit_price", "total_price"]
+        "required": [
+          "name",
+          "qty",
+          "unit_price",
+          "total_price"
+        ]
       }
     },
-    "financial_summary": {
+    "totals": {
       "type": "object",
-      "description": "Financial totals of the transaction.",
+      "description": "Financial summary and total amounts of the transaction.",
       "properties": {
+        "currency": {
+          "type": "string",
+          "default": "THB",
+          "description": "Currency code of the transaction (e.g., THB, USD, EUR)."
+        },
         "subtotal": {
           "type": "number",
           "description": "Total amount before discounts and taxes."
         },
         "discount": {
           "type": "number",
-          "description": "Total discount amount applied. Default to 0.0 if none."
+          "default": 0.0,
+          "description": "Total discount amount applied."
+        },
+        "vat_rate": {
+          "type": "number",
+          "description": "Value Added Tax (VAT) rate percentage (e.g., 7.0)."
         },
         "vat_amount": {
           "type": "number",
-          "description": "Value Added Tax (VAT) amount. Default to 0.0 if none."
+          "default": 0.0,
+          "description": "Value Added Tax (VAT) amount."
         },
         "net_amount": {
           "type": "number",
-          "description": "The final amount paid (subtotal - discount + vat_amount)."
+          "description": "The final total amount paid."
         }
       },
-      "required": ["subtotal", "discount", "vat_amount", "net_amount"]
-    },
-    "payment_method": {
-      "type": "string",
-      "description": "Method of payment, e.g., Cash, Credit Card, Bank Transfer, ShopeePay, TrueMoney, GrabPay, QR Pay."
+      "required": [
+        "subtotal",
+        "discount",
+        "vat_amount",
+        "net_amount"
+      ]
     }
   },
   "required": [
-    "transaction_date",
-    "merchant_name",
-    "tax_id",
-    "expense_category",
+    "receipt_info",
+    "merchant",
     "items",
-    "financial_summary",
-    "payment_method"
+    "totals"
   ]
 }

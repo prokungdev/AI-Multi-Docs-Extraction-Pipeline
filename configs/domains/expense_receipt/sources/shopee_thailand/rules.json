@@ -1,5 +1,33 @@
 {
-  "keywords": ["Shopee", "ช้อปปี้", "ShopeePay", "Shopee Thailand"],
-  "tax_ids": ["0105558000411", "0105560124237"],
-  "file_prefixes": ["Shopee_", "ShopeeThailand_"]
+  "keywords": [
+    "Shopee",
+    "ช้อปปี้",
+    "ShopeePay",
+    "Shopee Thailand"
+  ],
+  "tax_ids": [
+    "0105558000411",
+    "0105560124237"
+  ],
+  "file_prefixes": [
+    "Shopee_",
+    "ShopeeThailand_"
+  ],
+  "post_processing_rules": {
+    "date_rules": {
+      "source_era": "BE"
+    },
+    "expense_rules": {
+      "expense_category_code": "OFFICE_SUPPLIES",
+      "default_wht_rate": 0.0
+    },
+    "tax_rules": {
+      "is_vat_registered": true,
+      "default_vat_rate": 7.0
+    },
+    "item_rules": {
+      "default_unit": "",
+      "default_currency": ""
+    }
+  }
 }

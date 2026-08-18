@@ -1010,9 +1010,13 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
         cursor = conn.cursor()
         now_str = datetime.now().isoformat()
         
-        # 1. Extract merchant information
-        merchant_name = payload.get("merchant_name")
-        tax_id = payload.get("tax_id")
+        # 1. Extract merchant & receipt information with fallbacks
+        merchant_obj = payload.get("merchant", {})
+        receipt_info = payload.get("receipt_info", {})
+        totals_obj = payload.get("totals", {}) or payload.get("financial_summary", {})
+
+        merchant_name = merchant_obj.get("name") or payload.get("merchant_name")
+        tax_id = merchant_obj.get("tax_id") or payload.get("tax_id")
         
         if not merchant_name:
             merchant_name = "Unknown Merchant"
@@ -1043,12 +1047,15 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
             receipt_id = f"rcpt_{uuid.uuid4().hex[:12]}"
             
         # 4. Save Header
-        fin = payload.get("financial_summary", {})
-        subtotal = fin.get("subtotal", 0.0)
-        discount = fin.get("discount", 0.0)
-        vat_amount = fin.get("vat_amount", 0.0)
-        net_amount = fin.get("net_amount", 0.0)
+        subtotal = totals_obj.get("subtotal", 0.0)
+        discount = totals_obj.get("discount", 0.0)
+        vat_amount = totals_obj.get("vat_amount", 0.0)
+        net_amount = totals_obj.get("net_amount", 0.0)
         
+        transaction_date = receipt_info.get("transaction_date") or payload.get("transaction_date")
+        expense_category = receipt_info.get("expense_category") or payload.get("expense_category")
+        payment_method = receipt_info.get("payment_method") or payload.get("payment_method")
+
         cursor.execute("""
             INSERT INTO expense_receipt (
                 receipt_id, document_id, merchant_id, transaction_date, merchant_name, tax_id,
@@ -1056,9 +1063,9 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
                 source_file_name, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            receipt_id, document_id, merchant_id, payload.get("transaction_date"),
-            merchant_name, tax_id, payload.get("expense_category"), subtotal,
-            discount, vat_amount, net_amount, payload.get("payment_method"),
+            receipt_id, document_id, merchant_id, transaction_date,
+            merchant_name, tax_id, expense_category, subtotal,
+            discount, vat_amount, net_amount, payment_method,
             original_filename, now_str
         ))
         

@@ -13,6 +13,7 @@ from src.core.db import (
 from src.core.extractor import extract_document_data
 from src.core.config_loader import load_system_settings
 from src.core.logger import setup_logger
+from src.core.post_processor import apply_source_rules
 from main import merge_chunk_payloads
 from loguru import logger
 
@@ -183,6 +184,9 @@ def main():
                 os.makedirs(source_queue_dir, exist_ok=True)
                 
                 for doc_payload in all_docs:
+                    # Apply source-specific post-processing rules
+                    doc_payload, requires_review, review_reason = apply_source_rules(doc_payload, domain, source)
+
                     logical_page = doc_payload.get("logical_page_number", 1)
                     
                     page_info = db_pages.get(logical_page)
@@ -212,12 +216,20 @@ def main():
                     is_complete = val_meta.get("is_complete", True)
                     missing = val_meta.get("missing_pages", [])
                     
+                    post_meta = doc_payload.get("_post_processing_meta", {})
+                    requires_review = post_meta.get("requires_review", False)
+                    review_reasons = post_meta.get("review_reasons", [])
+                    
                     status_code = "EXTRACTED"
                     error_reason = None
                     if not is_complete:
                         status_code = "FAILED"
                         error_reason = f"เอกสารสแกนมาไม่ครบถ้วน: ขาดหน้า {', '.join(map(str, missing))}"
                         logger.error(f"Scan validation error for logical page {logical_page}: {error_reason}")
+                    elif requires_review:
+                        status_code = "NEEDS_REVIEW"
+                        error_reason = " | ".join(review_reasons)
+                        logger.warning(f"Rule validation flags review for logical page {logical_page}: {error_reason}")
                     
                     # Update status of this page in database page-by-page
                     update_conn = get_db_connection()
