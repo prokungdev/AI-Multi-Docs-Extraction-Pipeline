@@ -1,7 +1,8 @@
 @echo off
-echo ==========================================
-echo   Run_02_Split_and_Match: Splitting and Matching
-echo ==========================================
-.\.venv\Scripts\python.exe split_and_match.py
-echo ==========================================
+title Run 02 - Split and Match Merchant Sources
+echo =========================================================
+echo Step 2: Splitting PDF and Matching Sources
+echo =========================================================
+
+.venv\Scripts\python.exe main.py --step split
 pause

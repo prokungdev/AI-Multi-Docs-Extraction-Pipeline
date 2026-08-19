@@ -8,6 +8,9 @@ class ExpressExpenseExporter(BaseOutputExporter):
     Dedicated exporter for exporting approved documents to the Express accounting system format.
     Handles account code mappings, consolidated row formats, and custom voucher running numbers.
     """
+    display_name = "โปรแกรม Express (บันทึกใบสำคัญจ่าย PV พร้อมรันเลขใหม่)"
+    has_custom_params = True
+    encoding = "cp874"
     
     # Custom Account Code Mapping for Express
     ACCOUNT_MAPPING = {

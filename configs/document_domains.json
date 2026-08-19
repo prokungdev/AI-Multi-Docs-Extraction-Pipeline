@@ -1,8 +1,0 @@
-[
-  {
-    "domain_id": "expense_receipt",
-    "display_name": "ใบเสร็จค่าใช้จ่าย (Expense Receipt)",
-    "is_active": true,
-    "sort_order": 1
-  }
-]

@@ -29,24 +29,10 @@ def list_exporters(domain_id: str) -> List[Dict[str, Any]]:
     domain_exporters = _REGISTRY.get(domain_id, {})
     results = []
     for exporter_id, inst in domain_exporters.items():
-        # Human-friendly Thai display names for UI
-        if exporter_id == "express_pv":
-            name = "โปรแกรม Express (บันทึกใบสำคัญจ่าย PV พร้อมรันเลขใหม่)"
-            has_custom_params = True
-        elif exporter_id == "google_sheet_summary":
-            name = "Google Sheet Summary (รายงานสรุปภาพรวม)"
-            has_custom_params = False
-        elif exporter_id == "accounting_line_items":
-            name = "Accounting Line Items (รายงานแยกรายการสินค้า)"
-            has_custom_params = False
-        else:
-            name = exporter_id.replace("_", " ").title()
-            has_custom_params = False
-            
         results.append({
             "exporter_id": exporter_id,
-            "name": name,
+            "name": getattr(inst, "display_name", exporter_id.replace("_", " ").title()),
             "handler": inst,
-            "has_custom_params": has_custom_params
+            "has_custom_params": getattr(inst, "has_custom_params", False)
         })
     return results

@@ -83,7 +83,7 @@ class TestDatabase(unittest.TestCase):
         is_dup, meta = check_duplicate_document(file_hash)
         self.assertTrue(is_dup)
         self.assertEqual(meta["batch_id"], batch_id)
-        self.assertEqual(meta["filename"], "test_receipt.pdf")
+        self.assertEqual(meta["original_pdf_name"], "test_receipt.pdf")
         
         # 3. Create Pages
         p1 = create_page("page_1", batch_id, 1, "pipeline_storage/expense_receipt/02_split_pages/p1.png", "PENDING")
@@ -132,7 +132,23 @@ class TestDatabase(unittest.TestCase):
 
     def test_03_status_updates(self):
         """Test approval and failure transitions."""
+        batch_id = "test_batch_123"
         doc_id = "test_doc_456"
+        
+        # Ensure document exists
+        create_document(
+            document_id=doc_id,
+            batch_id=batch_id,
+            domain_id="expense_receipt",
+            source_id="spx_express",
+            status_code="PROCESSED",
+            doc_number="SPX-001",
+            doc_date="2026-08-15",
+            entity_name="SPX Express",
+            total_amount=120.0,
+            search_text="spx express tax invoice",
+            data_payload='{"net_amount": 120.0}'
+        )
         
         # Update payload (simulate human edit in Review UI)
         success = update_document_payload(

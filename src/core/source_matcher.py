@@ -1,6 +1,7 @@
 import os
 import json
-import fitz  # PyMuPDF
+import re
+import pymupdf as fitz
 from PIL import Image
 from google import genai
 from google.genai import types
@@ -80,16 +81,30 @@ def match_source_by_text(text: str, merchant_rules: dict) -> str | None:
                 
     return None
 
-def match_source_by_vision(image_path: str, merchant_rules: dict) -> str:
+def match_source_by_vision(image_path: str, merchant_rules: dict, settings: dict = None) -> str:
     """
-    Fallback classifier using Gemini 2.5 Flash. Sends the receipt image
+    Fallback classifier using Gemini Vision. Sends the receipt image
     along with candidate rules to identify the source merchant.
     
     Returns:
         The identified source name, or '_default' if undetermined.
     """
-    # Initialize the GenAI Client (requires GEMINI_API_KEY in environment)
-    client = genai.Client()
+    if settings is None:
+        from src.core.config_loader import load_system_settings
+        settings = load_system_settings()
+        
+    ai_cfg = settings.get("ai_provider", {})
+    provider = ai_cfg.get("active_provider", "gemini")
+    provider_cfg = ai_cfg.get(provider, {})
+    model_name = provider_cfg.get("model_name", "gemini-3.5-flash")
+    api_key_env = provider_cfg.get("api_key_env", "GEMINI_API_KEY")
+    api_key = os.getenv(api_key_env)
+    
+    if not api_key:
+        logger.warning(f"API key environment variable '{api_key_env}' is not set. Cannot perform vision source matching.")
+        return "_default"
+        
+    client = genai.Client(api_key=api_key)
     
     # Format candidate merchants and rules for the model prompt
     rules_summary = ""
@@ -112,7 +127,7 @@ def match_source_by_vision(image_path: str, merchant_rules: dict) -> str:
     try:
         image = Image.open(image_path)
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=model_name,
             contents=[image, prompt]
         )
         matched_source = response.text.strip().lower()
@@ -126,7 +141,7 @@ def match_source_by_vision(image_path: str, merchant_rules: dict) -> str:
         
     return "_default"
 
-def match_source(file_path: str, domain: str, first_page_image_path: str | None = None) -> str:
+def match_source(file_path: str, domain: str, first_page_image_path: str | None = None, settings: dict = None) -> str:
     """
     Matches the source of the document (PDF or Image) by first extracting digital text,
     and then falling back to Gemini Vision classification if text extraction fails.
@@ -136,10 +151,15 @@ def match_source(file_path: str, domain: str, first_page_image_path: str | None 
         domain: The domain category (e.g. 'expense_receipt').
         first_page_image_path: Optional path to the pre-rendered first page image of a PDF
                                (used for vision fallback).
+        settings: Optional system settings dictionary.
                                
     Returns:
         The matched merchant source identifier, or '_default'.
     """
+    if settings is None:
+        from src.core.config_loader import load_system_settings
+        settings = load_system_settings()
+        
     merchant_rules = load_merchant_rules(domain)
     if not merchant_rules:
         return "_default"
@@ -171,20 +191,14 @@ def match_source(file_path: str, domain: str, first_page_image_path: str | None 
         return matched_source
         
     # 3. Vision-based matching fallback (Optional based on use_ai_fallback_matching config)
-    use_ai_fallback = False
-    try:
-        if os.path.exists("configs/settings.json"):
-            with open("configs/settings.json", "r", encoding="utf-8") as sf:
-                settings = json.load(sf)
-            use_ai_fallback = settings.get("archiving", {}).get("use_ai_fallback_matching", False)
-    except Exception as se:
-        logger.warning(f"Failed to read settings.json in source_matcher: {se}")
+    img_cfg = settings.get("image_processing", {}) or settings.get("archiving", {})
+    use_ai_fallback = img_cfg.get("use_ai_fallback_matching", True)
         
     if use_ai_fallback:
         logger.info("Local matching failed. Falling back to AI Vision classification using Page 1 image...")
-        if file_path.lower().endswith((".png", ".jpg", ".jpeg")):
-            return match_source_by_vision(file_path, merchant_rules)
+        if file_path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".tiff")):
+            return match_source_by_vision(file_path, merchant_rules, settings=settings)
         elif first_page_image_path and os.path.exists(first_page_image_path):
-            return match_source_by_vision(first_page_image_path, merchant_rules)
+            return match_source_by_vision(first_page_image_path, merchant_rules, settings=settings)
             
     return "_default"

@@ -1,7 +1,8 @@
 @echo off
-echo ==========================================
-echo   Run_03_Extract_Data: Running AI OCR (JSON Export)
-echo ==========================================
-.\.venv\Scripts\python.exe extract_data.py
-echo ==========================================
+title Run 03 - AI Document Extraction
+echo =========================================================
+echo Step 3: Extracting Structured JSON Data with AI
+echo =========================================================
+
+.venv\Scripts\python.exe main.py --step extract
 pause

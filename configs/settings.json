@@ -1,23 +1,20 @@
 {
   "storage_root": "pipeline_storage",
-  "active_domains": [
-    "expense_receipt"
-  ],
   "pipeline_folders": [
     "01_raw_inbox",
     "02_split_pages",
     "03_processing_queue",
     "04_archive"
   ],
-  "max_images_per_request": 50,
-  "concurrency": {
-    "default": 4,
-    "models": {
-      "gemini-3.5-flash": 8,
-      "gemini-2.5-flash": 6,
-      "gemini-3.5-flash-free": 2
+  "domains": [
+    {
+      "domain_id": "expense_receipt",
+      "display_name": "ใบเสร็จค่าใช้จ่าย (Expense Receipt)",
+      "is_active": true,
+      "sort_order": 1
     }
-  },
+  ],
+  "max_images_per_request": 50,
   "logging": {
     "logs_dir": "logs",
     "rotation": "00:00",
@@ -25,21 +22,35 @@
     "compression": "zip",
     "level": "INFO"
   },
-  "archiving": {
-    "keep_split_pages": true,
-    "split_format": "pdf, png",
-    "filename_pattern": "{domain}_{source}_{doc_no}_{page_no}",
+  "image_processing": {
+    "supported_input_extensions": [
+      ".pdf",
+      ".jpg",
+      ".jpeg",
+      ".png",
+      ".webp",
+      ".tiff"
+    ],
+    "processing_format": "jpg",
+    "jpeg_quality": 85,
+    "max_dimension": 1800,
+    "dpi": 150,
+    "split_filename_pattern": "{domain}_{source}_{original_filename}_{batch_id}_p{page_no}",
+    "archive_filename_pattern": "{domain}_{source}_{doc_no}_{batch_id}_p{page_no}",
     "use_ai_fallback_matching": true
   },
   "ai_provider": {
     "active_provider": "gemini",
+    "max_retries": 3,
     "gemini": {
       "model_name": "gemini-3.5-flash",
-      "api_key_env": "GEMINI_API_KEY"
+      "api_key_env": "GEMINI_API_KEY",
+      "concurrency": 8
     },
     "openai": {
       "model_name": "gpt-4o",
-      "api_key_env": "OPENAI_API_KEY"
+      "api_key_env": "OPENAI_API_KEY",
+      "concurrency": 3
     }
   }
 }

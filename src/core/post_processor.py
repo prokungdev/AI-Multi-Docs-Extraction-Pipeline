@@ -19,29 +19,7 @@ from src.core.db import (
     update_document_to_approved
 )
 from src.core.transformer import transform_data
-
-def load_source_rules(domain: str, source: str, configs_dir: str = "configs") -> dict:
-    """
-    Loads rules.json for a specific merchant source.
-    """
-    rules_path = os.path.join(configs_dir, "domains", domain, "sources", source, "rules.json")
-    if os.path.exists(rules_path):
-        try:
-            with open(rules_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Error loading source rules for '{source}' in domain '{domain}': {e}")
-    
-    # Fallback to _default rules
-    default_rules_path = os.path.join(configs_dir, "domains", domain, "sources", "_default", "rules.json")
-    if os.path.exists(default_rules_path):
-        try:
-            with open(default_rules_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Error loading default source rules: {e}")
-            
-    return {}
+from src.core.config_loader import load_source_rules
 
 def normalize_date_to_ad(date_str: str, source_era: str = "BE") -> str:
     """
@@ -285,7 +263,7 @@ def post_process_document(document_id: str, payload: dict, source_id: str, domai
     confidence_notes = ext_meta.get("confidence_notes", "")
     
     # 2. Mathematical Validation Checks
-    fin = payload.get("financial_summary", {})
+    fin = payload.get("totals") or payload.get("financial_summary", {})
     subtotal = float(fin.get("subtotal", 0.0))
     discount = float(fin.get("discount", 0.0))
     vat_amount = float(fin.get("vat_amount", 0.0))

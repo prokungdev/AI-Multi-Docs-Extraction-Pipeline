@@ -1,7 +1,7 @@
 import os
 import json
 import unittest
-import fitz  # PyMuPDF
+import pymupdf as fitz
 import pandas as pd
 
 # Import modules to test
@@ -53,14 +53,67 @@ class TestPipeline(unittest.TestCase):
             print(f"[TEST TEARDOWN] Cleaned up: {cls.pdf_path}")
             
     def test_01_pdf_splitting(self):
-        """Test splitting PDF into image pages."""
+        """Test splitting PDF into optimized JPG image pages."""
         output_dir = "pipeline_storage/expense_receipt/02_split_pages"
-        image_paths = split_pdf(self.pdf_path, output_dir)
+        image_paths = split_pdf(self.pdf_path, output_dir, image_format="jpg")
         
         self.assertGreater(len(image_paths), 0)
         self.assertTrue(os.path.exists(image_paths[0]))
-        self.assertTrue(image_paths[0].endswith(".png"))
-        print(f"[TEST] PDF Splitting test passed. Generated image: {image_paths[0]}")
+        self.assertTrue(image_paths[0].endswith(".jpg"))
+        print(f"[TEST] PDF Splitting (JPG) test passed. Generated image: {image_paths[0]}")
+        
+    def test_01b_raw_image_processing(self):
+        """Test processing raw image directly with resizing and JPG optimization."""
+        from src.core.pdf_splitter import process_raw_image
+        from PIL import Image
+        
+        # Create a test high-res image
+        test_img_path = "temp_large_raw_receipt.png"
+        img = Image.new("RGB", (2400, 3200), color=(255, 255, 255))
+        img.save(test_img_path)
+        
+        output_dir = "pipeline_storage/expense_receipt/02_split_pages"
+        out_jpg = process_raw_image(test_img_path, output_dir, image_format="jpg", max_dimension=1800, quality=85)
+        
+        self.assertTrue(os.path.exists(out_jpg))
+        self.assertTrue(out_jpg.endswith(".jpg"))
+        
+        # Verify resized dimensions
+        with Image.open(out_jpg) as proc_img:
+            self.assertLessEqual(max(proc_img.size), 1800)
+            
+        if os.path.exists(test_img_path):
+            os.remove(test_img_path)
+        print(f"[TEST] Raw Image processing & resizing test passed. Output: {out_jpg}")
+
+    def test_01c_filename_pattern_formatting(self):
+        """Test formatting split page and archive filenames based on configurable patterns."""
+        from src.core.pdf_splitter import format_page_filename
+        
+        # Test split pattern
+        split_name = format_page_filename(
+            pattern="{domain}_{source}_{original_filename}_{batch_id}_p{page_no}",
+            domain="expense_receipt",
+            source="spx_express",
+            original_filename="SPXExpress_202606_000008.pdf",
+            page_no=1,
+            batch_id="452bdbcb-3099-4eb5-ab34-ac5eb60be8aa",
+            image_format="jpg"
+        )
+        self.assertEqual(split_name, "expense_receipt_spx_express_SPXExpress_202606_000008_452bdbcb_p1.jpg")
+        
+        # Test archive pattern
+        archive_name = format_page_filename(
+            pattern="{domain}_{source}_{doc_no}_{batch_id}_p{page_no}",
+            domain="expense_receipt",
+            source="spx_express",
+            doc_no="INV-20260815-001",
+            page_no=1,
+            batch_id="452bdbcb-3099-4eb5-ab34-ac5eb60be8aa",
+            image_format="jpg"
+        )
+        self.assertEqual(archive_name, "expense_receipt_spx_express_INV-20260815-001_452bdbcb_p1.jpg")
+        print(f"[TEST] Filename patterns test passed: Split='{split_name}', Archive='{archive_name}'")
         
     def test_02_source_matching(self):
         """Test matching source based on digital text rules."""
@@ -72,20 +125,25 @@ class TestPipeline(unittest.TestCase):
     def test_03_transformer_summary(self):
         """Test data transformer using the summary template (google_sheet_summary.json)."""
         mock_extracted = {
-            "transaction_date": "2026-08-15",
-            "merchant_name": "SPX Express (Thailand) Co., Ltd.",
-            "tax_id": "0105561164871",
-            "expense_category": "Delivery",
+            "receipt_info": {
+                "receipt_number": "INV-20260815-001",
+                "transaction_date": "2026-08-15",
+                "expense_category": "Delivery",
+                "payment_method": "ShopeePay"
+            },
+            "merchant": {
+                "name": "SPX Express (Thailand) Co., Ltd.",
+                "tax_id": "0105561164871"
+            },
             "items": [
                 {"name": "Shipping Fee - SPXTH987654321", "qty": 1, "unit_price": 120.0, "total_price": 120.0}
             ],
-            "financial_summary": {
+            "totals": {
                 "subtotal": 112.15,
                 "discount": 0.0,
                 "vat_amount": 7.85,
                 "net_amount": 120.0
-            },
-            "payment_method": "ShopeePay"
+            }
         }
         
         template_path = "configs/domains/expense_receipt/outputs/google_sheet_summary.json"
@@ -102,21 +160,26 @@ class TestPipeline(unittest.TestCase):
     def test_04_transformer_line_items(self):
         """Test data transformer using the line-items template (accounting_line_items.json)."""
         mock_extracted = {
-            "transaction_date": "2026-08-15",
-            "merchant_name": "SPX Express (Thailand) Co., Ltd.",
-            "tax_id": "0105561164871",
-            "expense_category": "Delivery",
+            "receipt_info": {
+                "receipt_number": "INV-20260815-001",
+                "transaction_date": "2026-08-15",
+                "expense_category": "Delivery",
+                "payment_method": "ShopeePay"
+            },
+            "merchant": {
+                "name": "SPX Express (Thailand) Co., Ltd.",
+                "tax_id": "0105561164871"
+            },
             "items": [
                 {"name": "Shipping Fee - SPXTH987654321", "qty": 1, "unit_price": 100.0, "total_price": 100.0},
                 {"name": "Packaging Material", "qty": 2, "unit_price": 10.0, "total_price": 20.0}
             ],
-            "financial_summary": {
+            "totals": {
                 "subtotal": 120.0,
                 "discount": 0.0,
                 "vat_amount": 0.0,
                 "net_amount": 120.0
-            },
-            "payment_method": "ShopeePay"
+            }
         }
         
         template_path = "configs/domains/expense_receipt/outputs/accounting_line_items.json"
@@ -142,21 +205,26 @@ class TestPipeline(unittest.TestCase):
         initialize_db_schema()
         
         mock_extracted = {
-            "transaction_date": "2026-08-15",
-            "merchant_name": "SPX Express (Thailand) Co., Ltd.",
-            "tax_id": "0105561164871",
-            "expense_category": "Delivery",
+            "receipt_info": {
+                "receipt_number": "INV-20260815-001",
+                "transaction_date": "2026-08-15",
+                "expense_category": "Delivery",
+                "payment_method": "ShopeePay"
+            },
+            "merchant": {
+                "name": "SPX Express (Thailand) Co., Ltd.",
+                "tax_id": "0105561164871"
+            },
             "items": [
                 {"name": "Shipping Fee - SPXTH987654321", "qty": 1, "unit_price": 100.0, "total_price": 100.0},
                 {"name": "Packaging Material", "qty": 2, "unit_price": 10.0, "total_price": 20.0}
             ],
-            "financial_summary": {
+            "totals": {
                 "subtotal": 120.0,
                 "discount": 0.0,
                 "vat_amount": 0.0,
                 "net_amount": 120.0
-            },
-            "payment_method": "ShopeePay"
+            }
         }
         
         doc_id = "test_doc_123"
