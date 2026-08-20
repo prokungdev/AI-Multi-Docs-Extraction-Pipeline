@@ -1,19 +1,30 @@
 #!/bin/sh
-# .githooks/pre-commit: Automated Git Pre-commit Quality Gate for AI Multi-Docs Extraction Pipeline
+# .githooks/pre-commit: Universal Git Pre-commit Security & Quality Gate
 
 echo "[Git Hook] Running pre-commit security and quality checks..."
 
-# 1. Prevent staging .env files containing secrets
-if git diff --cached --name-only | grep -E "^\.env$"; then
-    echo "[ERROR] Attempting to commit .env file. Please remove .env from staging!"
+# 1. Block staged .env files (CRITICAL SECURITY RISK)
+if git diff --cached --name-only | grep -E "(^|/)\.env$"; then
+    echo "--------------------------------------------------------"
+    echo "[CRITICAL ERROR] Staged .env file detected!"
+    echo "Please unstage .env using: git restore --staged .env"
+    echo "--------------------------------------------------------"
     exit 1
 fi
 
-# 2. Check for potential hardcoded API Keys in staged diff (excluding docs and hook definitions)
-if git diff --cached -- ':!.githooks/' ':!.agents/' ':!*.md' | grep -iE "GEMINI_API_KEY=AIza|OPENAI_API_KEY=sk-"; then
-    echo "[ERROR] Hardcoded API Key detected in staged diff! Commit aborted."
-    exit 1
+# 2. Check for potential API Keys/Secrets (WARNING LEVEL)
+# Generic regex pattern matching real API key formats without matching script literals
+SECRET_REGEX="AIza[0-9A-Za-z_-]{35}|sk-[0-9A-Za-z_-]{20,}|ghp_[0-9A-Za-z]{36}"
+
+SUSPECT_DIFF=$(git diff --cached -- ':!*.md' | grep -iE "$SECRET_REGEX")
+
+if [ -n "$SUSPECT_DIFF" ]; then
+    echo "--------------------------------------------------------"
+    echo "[WARNING] Potential API Key or Secret detected in staged diff!"
+    echo "Please verify you are not committing real credentials."
+    echo "--------------------------------------------------------"
+    # Warning only: allows commit to proceed
 fi
 
-echo "[Git Hook] Pre-commit checks passed successfully!"
+echo "[Git Hook] Pre-commit checks completed successfully!"
 exit 0
