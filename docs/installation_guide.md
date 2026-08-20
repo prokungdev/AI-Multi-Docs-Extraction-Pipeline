@@ -17,25 +17,30 @@ Before installing the project environment, ensure your system meets the followin
 
 ## ⚡ Option 1: Automated 1-Click Setup (Recommended)
 
-For Windows users, an automated setup script is provided in the project root folder.
+An automated cross-platform setup script is provided in the project root folder.
 
-### Step 1: Open Terminal / Command Prompt
-Navigate to the project root directory in PowerShell or Command Prompt.
-
-### Step 2: Run `setup_env.bat`
-Execute the automated setup batch script:
-
-```cmd
-setup_env.bat
+### Cross-Platform Command (Windows / macOS / Linux)
+```bash
+python setup_env.py
 ```
 
-or double-click `setup_env.bat` directly in Windows File Explorer.
+### OS Launcher Wrappers
+- **Windows (CMD / Double-Click)**:
+  ```cmd
+  setup_env.bat
+  ```
+- **macOS / Linux / Git Bash**:
+  ```bash
+  chmod +x setup_env.sh
+  ./setup_env.sh
+  ```
 
-**What `setup_env.bat` automatically handles:**
+**What `setup_env.py` automatically handles:**
 1. Checks for `.venv`. If missing, creates a new Python virtual environment (`python -m venv .venv`).
 2. Upgrades `pip` and installs all dependencies listed in `requirements.txt`.
 3. Checks for `.env`. If missing, creates `.env` from `.env.example`.
-4. Runs system initialization (`python main.py --step init`) to construct required pipeline storage directories and initialize the SQLite database schema.
+4. Configures Git to use version-controlled hooks (`git config core.hooksPath .githooks`).
+5. Runs system initialization (`python main.py --step init`) to construct required pipeline storage directories and initialize the SQLite database schema.
 
 ---
 

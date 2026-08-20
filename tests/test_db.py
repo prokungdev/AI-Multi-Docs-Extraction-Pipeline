@@ -37,10 +37,18 @@ class TestDatabase(unittest.TestCase):
             
     @classmethod
     def tearDownClass(cls):
-        # Clean up the test database file
+        # Clean up the test database file and dispose SQLAlchemy engine
         import os
+        from src.core.db.connection import get_engine
+        try:
+            get_engine().dispose()
+        except Exception:
+            pass
         if os.path.exists(cls.db_path):
-            os.remove(cls.db_path)
+            try:
+                os.remove(cls.db_path)
+            except Exception:
+                pass
         os.environ.pop("DB_PATH_OVERRIDE", None)
 
     def test_01_init_and_seed(self):

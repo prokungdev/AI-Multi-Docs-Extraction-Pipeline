@@ -2,7 +2,7 @@
 name: code-reviewer
 description: >-
   Audits code quality, identifies logic bugs, unhandled edge cases, performance bottlenecks, and security vulnerabilities.
-  Generates a structured Code Review Report before committing or merging.
+  Integrates python-enterprise-stack and security-auditor standards into structured Code Review Reports.
 ---
 
 # 🔍 Code Reviewer Skill
@@ -11,9 +11,17 @@ This skill guides the AI Agent to perform comprehensive automated peer reviews o
 
 ---
 
-## 🎯 1. Review Audit Dimensions
+## 🔗 1. Referenced Skill Dependencies
 
-When triggered, the AI Agent MUST evaluate the target code across five key dimensions:
+When this skill is invoked, the AI Agent MUST read and incorporate standards from the following reference skills:
+- **`python-enterprise-stack`**: Check SQLAlchemy 2.0 ORM patterns (`get_db_session`), Dual Logging (Loguru + SQLite), Pydantic v2 validation, type annotations, and English docstring conventions.
+- **`security-auditor`**: Check secret safety, OWASP risks, SQL injection, and path sanitization.
+
+---
+
+## 🎯 2. Review Audit Dimensions
+
+The AI Agent MUST evaluate the target code across seven key dimensions:
 
 1. **🛡️ Security & Secret Safety**:
    - Check for hardcoded API keys, secrets, passwords, or tokens.
@@ -21,25 +29,26 @@ When triggered, the AI Agent MUST evaluate the target code across five key dimen
 2. **🐛 Logic Correctness & Edge Cases**:
    - Check for null pointers, undefined variable references, off-by-one errors, and boundary conditions.
    - Verify that exception handling is explicit and does NOT swallow errors silently (`catch {}` or `except: pass`).
-3. **⚡ Performance & Memory Efficiency**:
+3. **💾 Database & ORM Compliance (`python-enterprise-stack`)**:
+   - Confirm DB operations use SQLAlchemy ORM models or `get_db_session()` context manager instead of raw un-parameterized SQL.
+   - Verify dynamic absolute path resolution for DB files.
+4. **⚡ Performance & Memory Efficiency**:
    - Identify redundant DB queries, N+1 query patterns, memory leaks, or unnecessary synchronous blocking calls.
-4. **🧪 Testability & Clean Architecture**:
+5. **🧪 Testability & Clean Architecture**:
    - Evaluate Single Responsibility Principle (SRP) and check if function signatures are modular and easily testable.
-5. **📐 Workspace Coding Standards**:
-   - Ensure compliance with `.agents/rules/coding-standards.md` (English comments/docstrings, standard naming conventions).
 6. **📝 Logging & Observability Audit**:
-   - Verify structured logger usage (e.g. `loguru`) instead of bare `print()` / `console.log()` statements.
-   - Confirm key function entrances and business milestones record `INFO`/`DEBUG` logs.
+   - Verify structured logger usage (`loguru`) instead of bare `print()` / `console.log()` statements.
    - Confirm exception blocks explicitly log errors with stack traces (`logger.error()`).
-7. **🩺 System Health & Readiness Audit (Recommended)**:
-   - Check if entry points or web startup handlers validate DB, environment credentials, and storage readiness before allowing user transactions.
+7. **📐 Workspace Conventions**:
+   - Confirm docstrings and comments are in **English only**.
+   - Check standard naming (`snake_case` for functions/variables, `PascalCase` for classes).
 
 ---
 
-## 🤖 2. Execution Workflow
+## 🤖 3. Execution Workflow
 
 1. **Inspect Code / Staged Diff**:
-   - Read the target source files using `view_file` or check staged changes via `git status` / `git diff`.
+   - Read the target source files using `view_file` or check staged changes via `git diff`.
 2. **Perform Multi-Dimensional Audit**:
    - Evaluate code against all 7 review dimensions above.
 3. **Generate Code Review Report**:

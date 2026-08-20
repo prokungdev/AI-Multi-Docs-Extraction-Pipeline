@@ -8,10 +8,11 @@ An enterprise-grade, end-to-end document processing pipeline powered by Google G
 
 To set up your local development environment, follow the comprehensive [**Installation & Setup Guide**](docs/installation_guide.md).
 
-### 1-Click Automated Setup (Windows)
-```cmd
-setup_env.bat
+### 1-Click Automated Setup
+```bash
+python setup_env.py
 ```
+*(On Windows, you can also double-click `setup_env.bat`, or run `./setup_env.sh` on macOS/Linux)*
 
 ### Launch Web UI
 ```cmd

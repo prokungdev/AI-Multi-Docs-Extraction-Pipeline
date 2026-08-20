@@ -4,7 +4,8 @@ import uuid
 import sqlite3
 from datetime import datetime
 from loguru import logger
-from .connection import get_db_connection
+from .connection import get_db_connection, get_db_session
+from .models import DocumentSource, ApiCredential, MerchantMaster
 
 def get_domains(settings_path: str = "configs/settings.json") -> list[dict]:
     """
@@ -33,21 +34,23 @@ def get_domains(settings_path: str = "configs/settings.json") -> list[dict]:
 
 def get_sources(domain_id: str) -> list[dict]:
     """
-    Returns list of sources for a domain from database.
+    Returns list of sources for a domain from database using SQLAlchemy ORM.
     """
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM document_sources WHERE domain_id = ?", (domain_id,))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        with get_db_session() as session:
+            sources = session.query(DocumentSource).filter(DocumentSource.domain_id == domain_id).all()
+            return [
+                {
+                    "source_id": s.source_id,
+                    "domain_id": s.domain_id,
+                    "display_name": s.display_name,
+                    "is_active": s.is_active
+                }
+                for s in sources
+            ]
     except Exception as e:
         logger.error(f"Failed to load sources for domain '{domain_id}': {e}")
-    finally:
-        if conn:
-            conn.close()
-    return []
+        return []
 
 def update_domain_active_status(domain_id: str, is_active: int, settings_path: str = "configs/settings.json") -> bool:
     """
@@ -106,26 +109,32 @@ def update_source_active_status(source_id: str, is_active: int) -> bool:
 
 def get_active_credentials(provider: str, model_name: str) -> list[dict]:
     """
-    Retrieves all active API credentials for a specific provider and model.
+    Retrieves all active API credentials for a specific provider and model using SQLAlchemy ORM.
     Sorted by last_active_at DESC (last working key first).
     """
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM api_credentials
-            WHERE provider = ? AND model_name = ? AND is_active = 1
-            ORDER BY last_active_at DESC, credential_id ASC
-        """, (provider, model_name))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        with get_db_session() as session:
+            creds = session.query(ApiCredential).filter(
+                ApiCredential.provider == provider,
+                ApiCredential.model_name == model_name,
+                ApiCredential.is_active == 1
+            ).order_by(ApiCredential.last_active_at.desc(), ApiCredential.credential_id.asc()).all()
+
+            return [
+                {
+                    "credential_id": c.credential_id,
+                    "provider": c.provider,
+                    "model_name": c.model_name,
+                    "api_key_env": c.api_key_env,
+                    "is_active": c.is_active,
+                    "last_active_at": c.last_active_at,
+                    "error_count": c.error_count
+                }
+                for c in creds
+            ]
     except Exception as e:
         logger.error(f"Failed to get active credentials: {e}")
         return []
-    finally:
-        if conn:
-            conn.close()
 
 def update_credential_status(credential_id: str, last_active_at: str = None, error_count: int = None, is_active: int = None) -> bool:
     """
