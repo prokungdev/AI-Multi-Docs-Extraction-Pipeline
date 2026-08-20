@@ -1,19 +1,19 @@
 #!/bin/sh
-# Git Pre-commit Hook: Checks if local branch is behind origin/main before allowing commit.
+# .githooks/pre-commit: Automated Git Pre-commit Quality Gate for AI Multi-Docs Extraction Pipeline
 
-echo "🔍 Checking Git remote status (git fetch)..."
-git fetch origin main >/dev/null 2>&1
+echo "[Git Hook] Running pre-commit security and quality checks..."
 
-BEHIND_COUNT=$(git rev-list --count HEAD..origin/main 2>/dev/null)
-
-if [ "$BEHIND_COUNT" -gt 0 ]; then
-    echo ""
-    echo "========================================================================"
-    echo " ⚠️  WARNING: Remote repository (origin/main) has $BEHIND_COUNT new commit(s)!"
-    echo " 👉  Please run: git pull origin main before committing"
-    echo "========================================================================"
-    echo ""
+# 1. Prevent staging .env files containing secrets
+if git diff --cached --name-only | grep -E "^\.env$"; then
+    echo "[ERROR] Attempting to commit .env file. Please remove .env from staging!"
     exit 1
 fi
 
+# 2. Check for potential hardcoded API Keys in staged diff (excluding docs and hook definitions)
+if git diff --cached -- ':!.githooks/' ':!.agents/' ':!*.md' | grep -iE "GEMINI_API_KEY=AIza|OPENAI_API_KEY=sk-"; then
+    echo "[ERROR] Hardcoded API Key detected in staged diff! Commit aborted."
+    exit 1
+fi
+
+echo "[Git Hook] Pre-commit checks passed successfully!"
 exit 0
