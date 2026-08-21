@@ -16,6 +16,14 @@ class DocumentStatus(str, Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
 
+class ReviewPriority(str, Enum):
+    """
+    Standard priority levels for document manual review queue.
+    """
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+
     def __str__(self) -> str:
         return self.value
 

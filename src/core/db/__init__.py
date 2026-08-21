@@ -33,7 +33,10 @@ from .documents import (
     update_document_to_failed,
     update_document_payload,
     update_document_metadata,
-    search_documents
+    search_documents,
+    get_unextracted_batches,
+    get_pages_by_status,
+    get_documents_for_export,
 )
 
 from .masters import (
@@ -47,13 +50,13 @@ from .masters import (
     upsert_merchant,
     match_merchant,
     delete_merchant,
-    insert_relational_receipt
+    insert_relational_receipt,
 )
 
 from .logs import (
     create_api_call_log,
     get_api_call_logs,
-    get_application_logs
+    get_application_logs,
 )
 
 __all__ = [
@@ -88,6 +91,9 @@ __all__ = [
     "update_document_payload",
     "update_document_metadata",
     "search_documents",
+    "get_unextracted_batches",
+    "get_pages_by_status",
+    "get_documents_for_export",
     # Masters
     "get_domains",
     "get_sources",
@@ -103,5 +109,6 @@ __all__ = [
     # Logs
     "create_api_call_log",
     "get_api_call_logs",
-    "get_application_logs"
+    "get_application_logs",
 ]
+

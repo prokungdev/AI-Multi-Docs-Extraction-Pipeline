@@ -573,3 +573,92 @@ def search_documents(domain_id: str, source_id: str = None, start_date: str = No
         if conn:
             conn.close()
     return []
+
+def get_unextracted_batches(status_codes: list[str] = None) -> list[dict]:
+    """
+    Fetches batches that contain pages matching specified status codes (e.g. PREPROCESSED, PENDING).
+    """
+    if status_codes is None:
+        status_codes = ["PREPROCESSED", "PENDING"]
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholders = ", ".join(["?"] * len(status_codes))
+        query = f"""
+            SELECT DISTINCT pb.batch_id, pb.original_pdf_name, pb.storage_path, pb.total_pages
+            FROM processed_batches pb
+            JOIN document_pages dp ON pb.batch_id = dp.batch_id
+            WHERE dp.status_code IN ({placeholders})
+        """
+        cursor.execute(query, tuple(status_codes))
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Failed to fetch unextracted batches: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+def get_pages_by_status(status_codes: list[str] = None) -> list[dict]:
+    """
+    Fetches document page records joined with batch info matching given status codes.
+    """
+    if status_codes is None:
+        status_codes = ["EXTRACTED"]
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholders = ", ".join(["?"] * len(status_codes))
+        query = f"""
+            SELECT dp.page_id, dp.batch_id, dp.page_number, dp.image_path, 
+                   pb.original_pdf_name, pb.storage_path
+            FROM document_pages dp
+            JOIN processed_batches pb ON dp.batch_id = pb.batch_id
+            WHERE dp.status_code IN ({placeholders})
+            ORDER BY dp.batch_id, dp.page_number ASC
+        """
+        cursor.execute(query, tuple(status_codes))
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Failed to fetch pages by status: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+def get_documents_for_export(domain_id: str, status_codes: list[str] = None) -> list[dict]:
+    """
+    Fetches approved/processed document records joined with batch info for dynamic report exporters.
+    """
+    if status_codes is None:
+        status_codes = ["APPROVED", "PROCESSED"]
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholders = ", ".join(["?"] * len(status_codes))
+        query = f"""
+            SELECT d.*, pb.original_pdf_name
+            FROM documents d
+            JOIN processed_batches pb ON d.batch_id = pb.batch_id
+            WHERE d.domain_id = ? AND d.status_code IN ({placeholders})
+            ORDER BY d.created_at ASC
+        """
+        params = [domain_id] + list(status_codes)
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Failed to fetch documents for export: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+

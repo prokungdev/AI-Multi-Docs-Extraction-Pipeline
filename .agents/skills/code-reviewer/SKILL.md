@@ -47,6 +47,11 @@ The AI Agent MUST evaluate the target code across seven key dimensions:
    - Confirm the use of generic placeholders (`mock_source`, `sample_entity`) or dynamic parameter resolution from configuration files.
 9. **🏥 System Health & Readiness Check Audit**:
    - Confirm that CLI entry points, Web UIs, or service initialization routines provide a zero-cost, lightweight health check mechanism (`run_healthcheck()`) to verify database status and API readiness prior to accepting workloads.
+10. **🏷️ Enum & Constants Compliance Audit (No Magic Strings / Numbers)**:
+    - Confirm that domain statuses, priority levels, category codes, and state machines use strongly-typed `Enum` classes instead of inline hardcoded string literals.
+    - Confirm that numerical thresholds, tolerance margins, and business rule limits use named `UPPER_SNAKE_CASE` constants or dynamic configuration settings instead of inline magic numbers.
+
+
 
 ---
 

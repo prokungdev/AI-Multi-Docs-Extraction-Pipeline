@@ -17,7 +17,12 @@ This skill documents the mandatory technology stack standards, design patterns, 
 - **Naming Conventions**:
   - `snake_case` for module names, function names, variable names, and database column names.
   - `PascalCase` for class names, Pydantic models, and SQLAlchemy ORM models.
-  - `UPPER_SNAKE_CASE` for constants and environment variable keys.
+  - `UPPER_SNAKE_CASE` for constants, threshold variables, and environment variable keys.
+- **Enum & Constants Enforcement (No Magic Strings / Numbers)**:
+  - Never hardcode status strings, priority levels, or category state literals. Always reference strongly-typed `Enum` classes.
+  - Never hardcode numeric thresholds or tolerance limits. Always define them as named `UPPER_SNAKE_CASE` constants or load dynamically from configuration settings.
+
+
 
 ---
 

@@ -50,8 +50,10 @@ from src.core.db import (
     update_domain_active_status,
     update_source_active_status
 )
-from src.core.pipeline import process_document
+from src.core.pipeline import split_and_match
 from src.core.post_processor import post_process_document, archive_and_export_document
+
+
 from src.core.exporters import list_exporters
 
 # Page configuration
@@ -165,16 +167,10 @@ def main_app():
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
                 
-            with st.spinner("กำลังประมวลผลไฟล์ (ตรวจสอบความสมบูรณ์ -> แยกหน้า -> ค้นหาร้านค้า -> สกัดข้อมูลด้วย AI)..."):
+            with st.spinner("กำลังประมวลผลไฟล์ (ตรวจสอบความสมบูรณ์ -> แยกหน้า -> ค้นหาร้านค้า)..."):
                 try:
-                    process_document(
-                        file_path=temp_path,
-                        domain=selected_domain,
-                        template_name=selected_template,
-                        export_format=export_fmt.lower(),
-                        settings=settings
-                    )
-                    st.sidebar.success("🎉 ประมวลผลสำเร็จและเพิ่มเข้าคิวตรวจแก้เรียบร้อยแล้ว!")
+                    split_and_match(domain=selected_domain, input_file=temp_path)
+                    st.sidebar.success("🎉 อัปโหลดและแยกไฟล์เรียบร้อยแล้ว!")
                     st.cache_data.clear()
                     st.rerun()
                 except Exception as e:

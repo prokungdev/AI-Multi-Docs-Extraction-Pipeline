@@ -2,14 +2,12 @@ import argparse
 import sys
 import asyncio
 from src.core.pipeline import (
-    run_init,
-    run_split_and_match,
-    run_extract,
-    async_run_extract,
-    run_validate,
-    run_transform_to_db,
-    run_export_outputs,
-    run_pipeline_all,
+    init_system,
+    split_and_match,
+    extract_documents,
+    async_extract_documents,
+    validate_documents,
+    transform_to_db,
     run_healthcheck,
     print_healthcheck_report
 )
@@ -21,17 +19,15 @@ def main():
     )
     parser.add_argument(
         "--step", "-s",
-        choices=["init", "split", "extract", "validate", "transform", "export", "all", "healthcheck"],
-        default="all",
+        choices=["init", "split", "extract", "validate", "transform", "healthcheck"],
+        default="split",
         help="Pipeline step to execute:\n"
              "  healthcheck- Verify system readiness, DB WAL mode, permissions & API credentials\n"
              "  init       - System initialization & storage directory verification (Stage 1)\n"
              "  split      - Split inbox PDFs & match merchant sources (Stage 2)\n"
              "  extract    - Run AI extraction on preprocessed images (Stage 3)\n"
              "  validate   - Apply rules, math validation & tax checks (Stage 4)\n"
-             "  transform  - Import verified records into SQLite DB (Stage 5)\n"
-             "  export     - Generate output reports in CSV/Excel/PV formats (Stage 6)\n"
-             "  all        - Run all pipeline stages end-to-end"
+             "  transform  - Import verified records into SQLite DB (Stage 5)"
     )
     parser.add_argument(
         "--domain", "-d",
@@ -43,7 +39,7 @@ def main():
         "--file", "-f",
         type=str,
         default=None,
-        help="Specific PDF file path to process (optional for split / all steps)"
+        help="Specific PDF file path to process (optional for split step)"
     )
     parser.add_argument(
         "--async-mode", "-a",
@@ -62,29 +58,23 @@ def main():
         print_healthcheck_report(results)
         sys.exit(0 if results["healthy"] else 1)
     elif step == "init":
-        success = run_init()
+        success = init_system()
         sys.exit(0 if success else 1)
     elif step == "split":
-        res = run_split_and_match(domain=domain, input_file=input_file)
+        res = split_and_match(domain=domain, input_file=input_file)
         sys.exit(0)
     elif step == "extract":
         if use_async:
-            res = asyncio.run(async_run_extract(domain=domain))
+            res = asyncio.run(async_extract_documents(domain=domain))
         else:
-            res = run_extract(domain=domain)
+            res = extract_documents(domain=domain)
         sys.exit(0 if res.get("success", True) else 1)
     elif step == "validate":
-        res = run_validate(domain=domain)
+        res = validate_documents(domain=domain)
         sys.exit(0)
     elif step == "transform":
-        res = run_transform_to_db(domain=domain)
+        res = transform_to_db(domain=domain)
         sys.exit(0)
-    elif step == "export":
-        res = run_export_outputs(domain=domain)
-        sys.exit(0)
-    elif step == "all":
-        res = run_pipeline_all(domain=domain, input_pdf=input_file)
-        sys.exit(0 if res.get("success", False) else 1)
     else:
         parser.print_help()
         sys.exit(1)
