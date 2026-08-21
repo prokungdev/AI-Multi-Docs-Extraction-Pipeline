@@ -14,7 +14,6 @@
       "sort_order": 1
     }
   ],
-  "max_images_per_request": 50,
   "logging": {
     "logs_dir": "logs",
     "rotation": "00:00",
@@ -42,15 +41,16 @@
   "ai_provider": {
     "active_provider": "gemini",
     "max_retries": 3,
+    "max_images_per_request": 50,
     "gemini": {
       "model_name": "gemini-3.5-flash",
       "api_key_env": "GEMINI_API_KEY",
-      "concurrency": 8
+      "max_concurrent_requests": 8
     },
     "openai": {
       "model_name": "gpt-4o",
       "api_key_env": "OPENAI_API_KEY",
-      "concurrency": 3
+      "max_concurrent_requests": 3
     }
   }
 }

@@ -42,6 +42,11 @@ The AI Agent MUST evaluate the target code across seven key dimensions:
 7. **📐 Workspace Conventions**:
    - Confirm docstrings and comments are in **English only**.
    - Check standard naming (`snake_case` for functions/variables, `PascalCase` for classes).
+8. **🌐 Domain-Agnostic & Decoupled Code Audit**:
+   - Verify that source code and test files DO NOT hardcode specific company/vendor brand names or environment-specific folder paths (e.g. `spx_express`).
+   - Confirm the use of generic placeholders (`mock_source`, `sample_entity`) or dynamic parameter resolution from configuration files.
+9. **🏥 System Health & Readiness Check Audit**:
+   - Confirm that CLI entry points, Web UIs, or service initialization routines provide a zero-cost, lightweight health check mechanism (`run_healthcheck()`) to verify database status and API readiness prior to accepting workloads.
 
 ---
 

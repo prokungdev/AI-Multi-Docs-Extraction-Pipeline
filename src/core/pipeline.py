@@ -19,7 +19,8 @@ from src.core.config_loader import (
     is_source_active,
     load_source_rules,
     get_image_processing_config,
-    get_supported_extensions
+    get_supported_extensions,
+    get_ai_provider_config
 )
 from src.core.db import (
     get_db_connection,
@@ -48,6 +49,7 @@ from src.core.initializer import (
 from src.core.post_processor import post_process_document, apply_source_rules
 from src.core.utils import chunk_list
 from src.core.logger import setup_logger
+from src.core.healthcheck import run_healthcheck, print_healthcheck_report
 
 # ==============================================================================
 # Helper Functions
@@ -464,7 +466,8 @@ def run_extract(domain: str = None, source: str = None) -> dict:
     load_dotenv()
     settings = load_system_settings()
     storage_root = settings.get("storage_root", "pipeline_storage")
-    max_images = settings.get("max_images_per_request", 50)
+    ai_cfg = get_ai_provider_config(settings)
+    max_images = ai_cfg.get("max_images_per_request", 50)
     if domain is None:
         domain = get_default_domain()
         
@@ -574,6 +577,124 @@ def run_extract(domain: str = None, source: str = None) -> dict:
     finally:
         if conn:
             conn.close()
+
+import asyncio
+
+async def async_run_extract(domain: str = None, source: str = None) -> dict:
+    """
+    Stage 3 (Async): Concurrent AI Document Extraction.
+    Uses asyncio.gather and Semaphore to extract structured JSON data concurrently.
+    """
+    setup_logger()
+    logger.info("=========================================================")
+    logger.info("  Stage 3 (Async Extract): Concurrent AI Extraction")
+    logger.info("=========================================================")
+    
+    load_dotenv()
+    settings = load_system_settings()
+    storage_root = settings.get("storage_root", "pipeline_storage")
+    ai_cfg = get_ai_provider_config(settings)
+    max_images = ai_cfg.get("max_images_per_request", 50)
+    max_concurrent = ai_cfg.get("max_concurrent_requests", 5)
+    
+    if domain is None:
+        domain = get_default_domain()
+        
+    domain_storage = os.path.join(storage_root, domain).replace("\\", "/")
+    queue_dir = os.path.join(domain_storage, "03_processing_queue").replace("\\", "/")
+    os.makedirs(queue_dir, exist_ok=True)
+    
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT DISTINCT pb.batch_id, pb.original_pdf_name, pb.storage_path, pb.total_pages
+            FROM processed_batches pb
+            JOIN document_pages dp ON pb.batch_id = dp.batch_id
+            WHERE dp.status_code IN ('PREPROCESSED', 'PENDING')
+        """)
+        batches = cursor.fetchall()
+        conn.close()
+        conn = None
+        
+        if not batches:
+            logger.info("No unextracted batches found to process.")
+            return {"success": True, "batches_processed": 0, "documents_extracted": 0}
+            
+        logger.info(f"Found {len(batches)} batch(es) to extract concurrently (Concurrency Limit: {max_concurrent})...")
+        
+        semaphore = asyncio.Semaphore(max_concurrent)
+        
+        async def process_single_batch(b: dict) -> bool:
+            batch_id = b["batch_id"]
+            pdf_name = b["original_pdf_name"]
+            storage_path = b["storage_path"]
+            
+            folder_name = os.path.basename(storage_path)
+            batch_source = "_default" if folder_name == "_uncategorized" else folder_name
+            if source and source != batch_source:
+                return False
+                
+            batch_conn = get_db_connection()
+            b_cursor = batch_conn.cursor()
+            b_cursor.execute("SELECT page_id, page_number, image_path FROM document_pages WHERE batch_id = ? ORDER BY page_number ASC", (batch_id,))
+            pages = b_cursor.fetchall()
+            batch_conn.close()
+            
+            if not pages:
+                return False
+                
+            image_paths = [p["image_path"] for p in pages if os.path.exists(p["image_path"])]
+            if not image_paths:
+                return False
+                
+            chunks = list(chunk_list(image_paths, max_images))
+            chunk_payloads = []
+            
+            for chunk_idx, chunk in enumerate(chunks, start=1):
+                try:
+                    payload = await async_extract_document_data(
+                        image_paths=chunk,
+                        source=batch_source,
+                        domain=domain,
+                        batch_id=batch_id,
+                        chunk_index=chunk_idx,
+                        semaphore=semaphore
+                    )
+                    chunk_payloads.append(payload)
+                except Exception as ex_err:
+                    logger.error(f"Async AI extraction failed for batch '{batch_id}' chunk {chunk_idx}: {ex_err}")
+                    return False
+                    
+            if not chunk_payloads:
+                return False
+                
+            merged_payload = merge_chunk_payloads(chunk_payloads)
+            source_queue_dir = os.path.join(queue_dir, batch_source).replace("\\", "/")
+            os.makedirs(source_queue_dir, exist_ok=True)
+            
+            for p in pages:
+                image_basename = os.path.splitext(os.path.basename(p["image_path"]))[0]
+                json_path = os.path.join(source_queue_dir, f"{image_basename}.json").replace("\\", "/")
+                with open(json_path, "w", encoding="utf-8") as qf:
+                    json.dump(merged_payload, qf, ensure_ascii=False, indent=2)
+                update_page_status(p["page_id"], "EXTRACTED")
+                
+            logger.info(f"Async AI extraction completed for batch '{batch_id}'. Status set to EXTRACTED.")
+            return True
+            
+        results = await asyncio.gather(*[process_single_batch(b) for b in batches])
+        success_batches = sum(1 for r in results if r)
+        
+        return {"success": True, "batches_processed": success_batches, "documents_extracted": success_batches}
+        
+    except Exception as e:
+        logger.error(f"Error during async AI extraction stage: {e}")
+        return {"success": False, "error": str(e)}
+    finally:
+        if conn:
+            conn.close()
+
 
 def run_validate(domain: str = None) -> dict:
     """

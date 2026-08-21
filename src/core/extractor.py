@@ -8,7 +8,7 @@ import uuid
 from google import genai
 from google.genai import types
 from loguru import logger
-from src.core.config_loader import load_source_ai_config, load_system_settings
+from src.core.config_loader import load_source_ai_config, load_system_settings, get_ai_provider_config
 from src.core.db import get_active_credentials, update_credential_status, create_api_call_log
 
 def clean_schema_for_gemini(schema: dict) -> dict:
@@ -66,7 +66,8 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
     # Load settings to check max_images_per_request
     settings_path = os.path.join(configs_dir, "settings.json")
     settings = load_system_settings(settings_path)
-    max_images = settings.get("max_images_per_request", 50)
+    ai_cfg = get_ai_provider_config(settings)
+    max_images = ai_cfg.get("max_images_per_request", 50)
 
     if len(image_paths) > max_images:
         error_msg = f"Number of pages ({len(image_paths)}) exceeds the maximum allowed images per request ({max_images})."
@@ -372,3 +373,40 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
             
     logger.error("All available API credentials failed to extract data.")
     raise last_exception
+
+
+# ==============================================================================
+# Asynchronous Concurrency Wrappers
+# ==============================================================================
+
+import asyncio
+
+async def async_extract_document_data(image_paths: str | list[str], source: str, domain: str,
+                                      configs_dir: str = "configs", batch_id: str = None,
+                                      chunk_index: int = 1, semaphore: asyncio.Semaphore = None) -> dict:
+    """
+    Asynchronously extracts structured data from image files using Gemini AI
+    while enforcing concurrency limits via asyncio.Semaphore.
+    """
+    if semaphore:
+        async with semaphore:
+            return await asyncio.to_thread(
+                extract_document_data,
+                image_paths=image_paths,
+                source=source,
+                domain=domain,
+                configs_dir=configs_dir,
+                batch_id=batch_id,
+                chunk_index=chunk_index
+            )
+    else:
+        return await asyncio.to_thread(
+            extract_document_data,
+            image_paths=image_paths,
+            source=source,
+            domain=domain,
+            configs_dir=configs_dir,
+            batch_id=batch_id,
+            chunk_index=chunk_index
+        )
+

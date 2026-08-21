@@ -230,6 +230,8 @@ class TestPipeline(unittest.TestCase):
         doc_id = "test_doc_123"
         conn = get_db_connection()
         cursor = conn.cursor()
+        cursor.execute("DELETE FROM merchant_master WHERE tax_id = '0105561164871'")
+        conn.commit()
         
         # Ensure parent batch exists
         cursor.execute("INSERT OR REPLACE INTO processed_batches (batch_id, original_pdf_name, total_pages, storage_path, file_hash, created_at) VALUES ('test_batch_123', 'test.pdf', 1, 'path', 'hash123', '2026-08-15')")
@@ -260,6 +262,16 @@ class TestPipeline(unittest.TestCase):
         
         conn.close()
         print("[TEST] Relational database insertion test passed.")
+
+    def test_06_ai_provider_config(self):
+        """Test loading centralized AI provider config."""
+        from src.core.config_loader import get_ai_provider_config
+        ai_cfg = get_ai_provider_config(self.settings)
+        
+        self.assertEqual(ai_cfg["active_provider"], "gemini")
+        self.assertEqual(ai_cfg["max_images_per_request"], 50)
+        self.assertEqual(ai_cfg["max_concurrent_requests"], 8)
+        print(f"[TEST] Centralized AI Provider Config test passed: {ai_cfg}")
 
 if __name__ == "__main__":
     unittest.main()

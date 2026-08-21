@@ -216,3 +216,38 @@ def extract_pdf_page_to_pdf(pdf_path: str, page_num: int, output_path: str) -> N
         logger.info(f"Extracted page {page_num} to '{output_path}'")
     finally:
         doc.close()
+
+# ==============================================================================
+# Asynchronous Concurrency Wrappers
+# ==============================================================================
+
+import asyncio
+
+async def async_split_pdf(pdf_path: str, output_dir: str, dpi: int = 150, image_format: str = "jpg", quality: int = 85, max_dimension: int = 1800) -> list[str]:
+    """
+    Asynchronously splits a multi-page PDF into optimized images without blocking the asyncio event loop.
+    """
+    return await asyncio.to_thread(
+        split_pdf,
+        pdf_path=pdf_path,
+        output_dir=output_dir,
+        dpi=dpi,
+        image_format=image_format,
+        quality=quality,
+        max_dimension=max_dimension
+    )
+
+async def async_process_raw_image(image_path: str, output_dir: str, output_filename: str = None, image_format: str = "jpg", quality: int = 85, max_dimension: int = 1800) -> str:
+    """
+    Asynchronously processes a raw image without blocking the asyncio event loop.
+    """
+    return await asyncio.to_thread(
+        process_raw_image,
+        image_path=image_path,
+        output_dir=output_dir,
+        output_filename=output_filename,
+        image_format=image_format,
+        quality=quality,
+        max_dimension=max_dimension
+    )
+

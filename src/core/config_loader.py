@@ -126,9 +126,31 @@ def load_source_ai_config(domain_id: str, source_id: str, settings: dict = None)
     if not provider:
         provider = ai_provider_cfg.get("active_provider", "gemini")
     if not model:
-        # Load default model name for the selected provider from settings.json
         provider_cfg = ai_provider_cfg.get(provider, {})
+        model = provider_cfg.get("model_name", "gemini-3.5-flash")
     return provider, model
+
+def get_ai_provider_config(settings: dict = None) -> dict:
+    """
+    Returns AI provider configuration dictionary including max_images_per_request,
+    max_retries, active_provider, and provider-specific settings.
+    """
+    if settings is None:
+        settings = load_system_settings()
+    ai_cfg = settings.get("ai_provider", {})
+    max_images = ai_cfg.get("max_images_per_request", settings.get("max_images_per_request", 50))
+    active_provider = ai_cfg.get("active_provider", "gemini")
+    provider_details = ai_cfg.get(active_provider, {})
+    max_concurrent = provider_details.get("max_concurrent_requests", provider_details.get("concurrency", 5))
+
+    return {
+        "active_provider": active_provider,
+        "max_retries": int(ai_cfg.get("max_retries", 3)),
+        "max_images_per_request": int(max_images),
+        "model_name": provider_details.get("model_name", "gemini-3.5-flash"),
+        "api_key_env": provider_details.get("api_key_env", "GEMINI_API_KEY"),
+        "max_concurrent_requests": int(max_concurrent)
+    }
 
 def get_image_processing_config(settings: dict = None) -> dict:
     """
@@ -155,4 +177,5 @@ def get_supported_extensions(settings: dict = None) -> list[str]:
     """
     cfg = get_image_processing_config(settings)
     return [ext.lower() for ext in cfg.get("supported_input_extensions", [])]
+
 
