@@ -1,14 +1,15 @@
-"""Document and batch database operations using SQLAlchemy 2.0 ORM."""
+"""Document and batch database operations using Pure SQLAlchemy 2.0 ORM."""
 
 import os
 import hashlib
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Tuple
 from loguru import logger
-from sqlalchemy import or_, and_, desc, asc, func
+from sqlalchemy import select, update, delete, or_, and_, desc, asc, func
 
 from .connection import get_db_session
-from .models import ProcessedBatch, DocumentPage, Document, DocumentStatus
+from .models import Company, ProcessedBatch, DocumentPage, Document, DocumentStatus
+from src.core.constants import DEFAULT_COMPANY_CODE, NO_TAX_LABEL, DEFAULT_DOC_TYPE
 
 
 def calculate_file_hash(file_path: str) -> str:
@@ -22,24 +23,29 @@ def calculate_file_hash(file_path: str) -> str:
     return sha256.hexdigest()
 
 
-def check_duplicate_document(file_hash: str) -> tuple[bool, dict | None]:
+def check_duplicate_document(file_hash: str, company_id: str = None) -> tuple[bool, dict | None]:
     """
-    Checks if a batch with the given SHA-256 hash already exists using SQLAlchemy ORM.
+    Checks if a batch with the given SHA-256 hash already exists using Pure SQLAlchemy 2.0 ORM.
+    Optionally scopes check to a specific company_id.
     Returns: (is_duplicate, batch_metadata_dict)
     """
     try:
         with get_db_session() as session:
-            batch = session.query(ProcessedBatch).filter_by(file_hash=file_hash).first()
+            stmt = select(ProcessedBatch).filter_by(file_hash=file_hash)
+            if company_id:
+                stmt = stmt.where(ProcessedBatch.company_id == company_id)
+            batch = session.scalars(stmt).first()
             if batch:
-                first_doc = session.query(Document).filter_by(batch_id=batch.batch_id).first()
+                first_doc = session.scalars(select(Document).filter_by(batch_id=batch.batch_id)).first()
                 metadata = {
                     "batch_id": batch.batch_id,
+                    "company_id": batch.company_id,
                     "original_filename": batch.original_filename,
-                    "original_pdf_name": batch.original_filename,  # backward compatibility alias
+                    "original_pdf_name": batch.original_filename,
                     "created_at": batch.created_at,
                     "status": first_doc.status_code if first_doc else "PENDING",
-                    "domain": first_doc.domain_id if first_doc else "expense_receipt",
-                    "source": first_doc.source_id if first_doc else "_default"
+                    "domain": first_doc.domain_id if first_doc else DEFAULT_DOC_TYPE,
+                    "source": first_doc.source_id if first_doc else NO_TAX_LABEL
                 }
                 return True, metadata
     except Exception as e:
@@ -48,17 +54,26 @@ def check_duplicate_document(file_hash: str) -> tuple[bool, dict | None]:
 
 
 def create_batch(batch_id: str, original_filename: str = None, total_pages: int = 1,
-                 storage_path: str = "", file_hash: str = "", original_pdf_name: str = None) -> bool:
+                 storage_path: str = "", file_hash: str = "", original_pdf_name: str = None,
+                 company_id: str = None) -> bool:
     """
-    Inserts or updates a batch record using SQLAlchemy ORM.
+    Inserts or updates a batch record using Pure SQLAlchemy 2.0 ORM.
     Supports both original_filename and legacy original_pdf_name.
     """
     filename = original_filename or original_pdf_name or "document.pdf"
     try:
         with get_db_session() as session:
+            target_cid = company_id
+            if not target_cid:
+                def_comp = session.scalars(select(Company).filter_by(company_code=DEFAULT_COMPANY_CODE)).first()
+                if def_comp:
+                    target_cid = def_comp.company_id
+
             created_at = datetime.now(timezone.utc).isoformat()
-            batch = session.query(ProcessedBatch).filter_by(batch_id=batch_id).first()
+            batch = session.scalars(select(ProcessedBatch).filter_by(batch_id=batch_id)).first()
             if batch:
+                if target_cid:
+                    batch.company_id = target_cid
                 batch.original_filename = filename
                 batch.total_pages = total_pages
                 batch.storage_path = storage_path
@@ -66,6 +81,7 @@ def create_batch(batch_id: str, original_filename: str = None, total_pages: int 
             else:
                 batch = ProcessedBatch(
                     batch_id=batch_id,
+                    company_id=target_cid,
                     original_filename=filename,
                     total_pages=total_pages,
                     storage_path=storage_path,
@@ -81,12 +97,12 @@ def create_batch(batch_id: str, original_filename: str = None, total_pages: int 
 
 def create_page(page_id: str, batch_id: str, page_number: int, image_path: str, status_code: str, error_reason: str = None) -> bool:
     """
-    Inserts or updates a page record using SQLAlchemy ORM.
+    Inserts or updates a page record using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
             created_at = datetime.now(timezone.utc).isoformat()
-            page = session.query(DocumentPage).filter_by(page_id=page_id).first()
+            page = session.scalars(select(DocumentPage).filter_by(page_id=page_id)).first()
             if page:
                 page.batch_id = batch_id
                 page.page_number = page_number
@@ -112,11 +128,11 @@ def create_page(page_id: str, batch_id: str, page_number: int, image_path: str, 
 
 def update_page(page_id: str, image_path: str = None, status_code: str = None, error_reason: str = None) -> bool:
     """
-    Updates an existing page record using SQLAlchemy ORM.
+    Updates an existing page record using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            page = session.query(DocumentPage).filter_by(page_id=page_id).first()
+            page = session.scalars(select(DocumentPage).filter_by(page_id=page_id)).first()
             if not page:
                 return False
             if image_path is not None:
@@ -133,21 +149,22 @@ def update_page(page_id: str, image_path: str = None, status_code: str = None, e
 
 def update_page_status(page_id: str, status_code: str, error_reason: str = None) -> bool:
     """
-    Convenience helper to update status and error reason of a page using SQLAlchemy ORM.
+    Convenience helper to update status and error reason of a page.
     """
     return update_page(page_id, status_code=status_code, error_reason=error_reason)
 
 
 def update_pages_status_batch(updates: List[Tuple[str, str | None, str, int]]) -> bool:
     """
-    Batch update page statuses using SQLAlchemy ORM.
+    Batch update page statuses using Pure SQLAlchemy 2.0 ORM.
     Args:
         updates: List of tuples (status_code, error_reason, batch_id, page_number)
     """
     try:
         with get_db_session() as session:
             for status_code, error_reason, batch_id, page_number in updates:
-                page = session.query(DocumentPage).filter_by(batch_id=batch_id, page_number=page_number).first()
+                stmt = select(DocumentPage).filter_by(batch_id=batch_id, page_number=page_number)
+                page = session.scalars(stmt).first()
                 if page:
                     page.status_code = status_code
                     page.error_reason = error_reason
@@ -173,6 +190,9 @@ def create_document(
     model_used: str = None,
     input_tokens: int = None,
     output_tokens: int = None,
+    cost_usd: float = 0.0,
+    cost_thb: float = 0.0,
+    is_free_tier: int = 0,
     overall_confidence: float = None,
     confidence_level: str = None,
     is_blurry: int = None,
@@ -181,19 +201,32 @@ def create_document(
     confidence_notes: str = None,
     review_priority: str = None,
     is_auto_approved: int = None,
-    auto_approved: int = None
+    auto_approved: int = None,
+    company_id: str = None
 ) -> bool:
     """
-    Inserts or updates a document record using SQLAlchemy ORM.
+    Inserts or updates a document record using Pure SQLAlchemy 2.0 ORM.
     """
     final_auto_approved = is_auto_approved if is_auto_approved is not None else (auto_approved or 0)
     final_ambiguous = is_ambiguous if is_ambiguous is not None else (has_ambiguous_fields or 0)
 
     try:
         with get_db_session() as session:
+            target_cid = company_id
+            if not target_cid:
+                batch_obj = session.scalars(select(ProcessedBatch).filter_by(batch_id=batch_id)).first()
+                if batch_obj and batch_obj.company_id:
+                    target_cid = batch_obj.company_id
+                else:
+                    def_comp = session.scalars(select(Company).filter_by(company_code=DEFAULT_COMPANY_CODE)).first()
+                    if def_comp:
+                        target_cid = def_comp.company_id
+
             created_at = datetime.now(timezone.utc).isoformat()
-            doc = session.query(Document).filter_by(document_id=document_id).first()
+            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
             if doc:
+                if target_cid:
+                    doc.company_id = target_cid
                 doc.batch_id = batch_id
                 doc.domain_id = domain_id
                 doc.source_id = source_id
@@ -208,6 +241,9 @@ def create_document(
                 doc.model_used = model_used
                 doc.input_tokens = input_tokens or 0
                 doc.output_tokens = output_tokens or 0
+                doc.cost_usd = cost_usd or 0.0
+                doc.cost_thb = cost_thb or 0.0
+                doc.is_free_tier = is_free_tier or 0
                 doc.overall_confidence = overall_confidence
                 doc.confidence_level = confidence_level
                 doc.is_blurry = is_blurry
@@ -219,6 +255,7 @@ def create_document(
             else:
                 doc = Document(
                     document_id=document_id,
+                    company_id=target_cid,
                     batch_id=batch_id,
                     domain_id=domain_id,
                     source_id=source_id,
@@ -233,6 +270,9 @@ def create_document(
                     model_used=model_used,
                     input_tokens=input_tokens or 0,
                     output_tokens=output_tokens or 0,
+                    cost_usd=cost_usd or 0.0,
+                    cost_thb=cost_thb or 0.0,
+                    is_free_tier=is_free_tier or 0,
                     overall_confidence=overall_confidence,
                     confidence_level=confidence_level,
                     is_blurry=is_blurry,
@@ -251,12 +291,12 @@ def create_document(
 
 def link_pages_to_document(document_id: str, page_ids: list[str]) -> bool:
     """
-    Links given page_ids to a document_id using SQLAlchemy ORM.
+    Links given page_ids to a document_id using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
             for pid in page_ids:
-                page = session.query(DocumentPage).filter_by(page_id=pid).first()
+                page = session.scalars(select(DocumentPage).filter_by(page_id=pid)).first()
                 if page:
                     page.document_id = document_id
             return True
@@ -267,15 +307,15 @@ def link_pages_to_document(document_id: str, page_ids: list[str]) -> bool:
 
 def get_document_by_id(document_id: str) -> dict | None:
     """
-    Retrieves full document record joined with batch info using SQLAlchemy ORM.
+    Retrieves full document record joined with batch info using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            doc = session.query(Document).filter_by(document_id=document_id).first()
+            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
             if not doc:
                 return None
             doc_dict = doc.to_dict()
-            batch = session.query(ProcessedBatch).filter_by(batch_id=doc.batch_id).first()
+            batch = session.scalars(select(ProcessedBatch).filter_by(batch_id=doc.batch_id)).first()
             if batch:
                 doc_dict["original_filename"] = batch.original_filename
                 doc_dict["original_pdf_name"] = batch.original_filename
@@ -288,11 +328,12 @@ def get_document_by_id(document_id: str) -> dict | None:
 
 def get_document_pages(document_id: str) -> list[dict]:
     """
-    Retrieves all pages associated with a specific document using SQLAlchemy ORM.
+    Retrieves all pages associated with a specific document using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            pages = session.query(DocumentPage).filter_by(document_id=document_id).order_by(DocumentPage.page_number.asc()).all()
+            stmt = select(DocumentPage).filter_by(document_id=document_id).order_by(DocumentPage.page_number.asc())
+            pages = session.scalars(stmt).all()
             return [p.to_dict() for p in pages]
     except Exception as e:
         logger.error(f"Failed to get pages for document '{document_id}': {e}")
@@ -301,40 +342,44 @@ def get_document_pages(document_id: str) -> list[dict]:
 
 def get_batch_pages(batch_id: str) -> list[dict]:
     """
-    Retrieves all pages belonging to a batch using SQLAlchemy ORM.
+    Retrieves all pages belonging to a batch using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            pages = session.query(DocumentPage).filter_by(batch_id=batch_id).order_by(DocumentPage.page_number.asc()).all()
+            stmt = select(DocumentPage).filter_by(batch_id=batch_id).order_by(DocumentPage.page_number.asc())
+            pages = session.scalars(stmt).all()
             return [p.to_dict() for p in pages]
     except Exception as e:
         logger.error(f"Failed to get pages for batch '{batch_id}': {e}")
         return []
 
 
-def get_pending_documents(domain_id: str = None, source_id: str = None) -> list[dict]:
+def get_pending_documents(domain_id: str = None, source_id: str = None, company_id: str = None) -> list[dict]:
     """
-    Retrieves documents waiting for review using SQLAlchemy ORM.
+    Retrieves documents waiting for review using Pure SQLAlchemy 2.0 ORM.
+    Optionally filters by company_id.
     """
     try:
         with get_db_session() as session:
-            query = session.query(Document, ProcessedBatch).join(
+            stmt = select(Document, ProcessedBatch).join(
                 ProcessedBatch, Document.batch_id == ProcessedBatch.batch_id
-            ).filter(
+            ).where(
                 Document.status_code.in_(["PENDING", "NEEDS_REVIEW", "PROCESSED"])
             )
 
+            if company_id:
+                stmt = stmt.where(Document.company_id == company_id)
             if domain_id:
-                query = query.filter(Document.domain_id == domain_id)
+                stmt = stmt.where(Document.domain_id == domain_id)
             if source_id:
-                query = query.filter(Document.source_id == source_id)
+                stmt = stmt.where(Document.source_id == source_id)
 
-            query = query.order_by(
+            stmt = stmt.order_by(
                 Document.review_priority.desc(),
                 Document.created_at.desc()
             )
 
-            results = query.all()
+            results = session.execute(stmt).all()
             docs = []
             for doc, batch in results:
                 d = doc.to_dict()
@@ -348,25 +393,28 @@ def get_pending_documents(domain_id: str = None, source_id: str = None) -> list[
         return []
 
 
-def get_all_documents(domain_id: str = None, source_id: str = None, status_code: str = None) -> list[dict]:
+def get_all_documents(domain_id: str = None, source_id: str = None, status_code: str = None, company_id: str = None) -> list[dict]:
     """
-    Retrieves all documents matching criteria using SQLAlchemy ORM.
+    Retrieves all documents matching criteria using Pure SQLAlchemy 2.0 ORM.
+    Optionally filters by company_id.
     """
     try:
         with get_db_session() as session:
-            query = session.query(Document, ProcessedBatch).join(
+            stmt = select(Document, ProcessedBatch).join(
                 ProcessedBatch, Document.batch_id == ProcessedBatch.batch_id
             )
 
+            if company_id:
+                stmt = stmt.where(Document.company_id == company_id)
             if domain_id:
-                query = query.filter(Document.domain_id == domain_id)
+                stmt = stmt.where(Document.domain_id == domain_id)
             if source_id:
-                query = query.filter(Document.source_id == source_id)
+                stmt = stmt.where(Document.source_id == source_id)
             if status_code:
-                query = query.filter(Document.status_code == status_code)
+                stmt = stmt.where(Document.status_code == status_code)
 
-            query = query.order_by(Document.created_at.desc())
-            results = query.all()
+            stmt = stmt.order_by(Document.created_at.desc())
+            results = session.execute(stmt).all()
             docs = []
             for doc, batch in results:
                 d = doc.to_dict()
@@ -391,11 +439,11 @@ def update_document_to_approved(
     is_manually_edited: int = 0
 ) -> bool:
     """
-    Marks a document as APPROVED and locks it using SQLAlchemy ORM.
+    Marks a document as APPROVED and locks it using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            doc = session.query(Document).filter_by(document_id=document_id).first()
+            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
             if not doc:
                 return False
             now_str = datetime.now(timezone.utc).isoformat()
@@ -423,11 +471,11 @@ def update_document_to_approved(
 
 def update_document_to_rejected(document_id: str, reason: str, confirmed_by: str = "human") -> bool:
     """
-    Marks a document as REJECTED using SQLAlchemy ORM.
+    Marks a document as REJECTED using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            doc = session.query(Document).filter_by(document_id=document_id).first()
+            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
             if not doc:
                 return False
             now_str = datetime.now(timezone.utc).isoformat()
@@ -445,15 +493,16 @@ def update_document_to_rejected(document_id: str, reason: str, confirmed_by: str
 
 def update_document_status(document_id: str, status_code: str, error_reason: str = None) -> bool:
     """
-    Updates the status code and optional error reason of a document using SQLAlchemy ORM.
+    Updates the status code and optional error reason of a document using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            doc = session.query(Document).filter_by(document_id=document_id).first()
+            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
             if not doc:
                 return False
             doc.status_code = status_code
-            doc.error_reason = error_reason
+            if error_reason is not None:
+                doc.error_reason = error_reason
             doc.updated_at = datetime.now(timezone.utc).isoformat()
             return True
     except Exception as e:
@@ -462,39 +511,43 @@ def update_document_status(document_id: str, status_code: str, error_reason: str
 
 
 def update_document_to_failed(document_id: str, error_reason: str) -> bool:
-    """
-    Sets status as FAILED and logs error reason using SQLAlchemy ORM.
-    """
-    return update_document_status(document_id, "FAILED", error_reason)
+    """Marks a document as FAILED with error reason."""
+    return update_document_status(document_id, status_code="FAILED", error_reason=error_reason)
 
 
 def update_document_payload(
     document_id: str,
-    data_payload: str,
-    status_code: str = "PROCESSED",
+    data_payload: str = None,
+    status_code: str = None,
     doc_number: str = None,
     doc_date: str = None,
     entity_name: str = None,
     total_amount: float = None,
-    is_manually_edited: int = 0
+    is_manually_edited: int = None
 ) -> bool:
     """
-    Updates the extracted payload fields using SQLAlchemy ORM.
+    Updates the JSON data payload and optional extraction metadata for a document using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            doc = session.query(Document).filter_by(document_id=document_id).first()
+            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
             if not doc:
                 return False
             now_str = datetime.now(timezone.utc).isoformat()
-            doc.status_code = status_code
-            doc.data_payload = data_payload
-            doc.doc_number = doc_number
-            doc.doc_date = doc_date
-            doc.entity_name = entity_name
-            doc.total_amount = total_amount
-            doc.is_manually_edited = is_manually_edited
-            doc.error_reason = None
+            if data_payload is not None:
+                doc.data_payload = data_payload
+            if status_code is not None:
+                doc.status_code = status_code
+            if doc_number is not None:
+                doc.doc_number = doc_number
+            if doc_date is not None:
+                doc.doc_date = doc_date
+            if entity_name is not None:
+                doc.entity_name = entity_name
+            if total_amount is not None:
+                doc.total_amount = total_amount
+            if is_manually_edited is not None:
+                doc.is_manually_edited = is_manually_edited
             doc.updated_at = now_str
             return True
     except Exception as e:
@@ -504,35 +557,51 @@ def update_document_payload(
 
 def update_document_metadata(
     document_id: str,
-    overall_confidence: float,
-    confidence_level: str,
-    is_blurry: int,
+    overall_confidence: float = None,
+    confidence_level: str = None,
+    is_blurry: int = None,
     is_ambiguous: int = None,
     has_ambiguous_fields: int = None,
     confidence_notes: str = None,
     review_priority: str = None,
     is_auto_approved: int = None,
-    auto_approved: int = None
+    auto_approved: int = None,
+    cost_usd: float = None,
+    cost_thb: float = None,
+    is_free_tier: int = None
 ) -> bool:
     """
-    Updates the evaluation metadata columns for a document using SQLAlchemy ORM.
+    Updates evaluation metadata and cost columns for a document using Pure SQLAlchemy 2.0 ORM.
     """
-    final_auto_approved = is_auto_approved if is_auto_approved is not None else (auto_approved or 0)
-    final_ambiguous = is_ambiguous if is_ambiguous is not None else (has_ambiguous_fields or 0)
+    final_auto_approved = is_auto_approved if is_auto_approved is not None else (auto_approved if auto_approved is not None else None)
+    final_ambiguous = is_ambiguous if is_ambiguous is not None else (has_ambiguous_fields if has_ambiguous_fields is not None else None)
 
     try:
         with get_db_session() as session:
-            doc = session.query(Document).filter_by(document_id=document_id).first()
+            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
             if not doc:
                 return False
             now_str = datetime.now(timezone.utc).isoformat()
-            doc.overall_confidence = overall_confidence
-            doc.confidence_level = confidence_level
-            doc.is_blurry = is_blurry
-            doc.is_ambiguous = final_ambiguous
-            doc.confidence_notes = confidence_notes
-            doc.review_priority = review_priority
-            doc.is_auto_approved = final_auto_approved
+            if overall_confidence is not None:
+                doc.overall_confidence = overall_confidence
+            if confidence_level is not None:
+                doc.confidence_level = confidence_level
+            if is_blurry is not None:
+                doc.is_blurry = is_blurry
+            if final_ambiguous is not None:
+                doc.is_ambiguous = final_ambiguous
+            if confidence_notes is not None:
+                doc.confidence_notes = confidence_notes
+            if review_priority is not None:
+                doc.review_priority = review_priority
+            if final_auto_approved is not None:
+                doc.is_auto_approved = final_auto_approved
+            if cost_usd is not None:
+                doc.cost_usd = cost_usd
+            if cost_thb is not None:
+                doc.cost_thb = cost_thb
+            if is_free_tier is not None:
+                doc.is_free_tier = is_free_tier
             doc.updated_at = now_str
             return True
     except Exception as e:
@@ -545,29 +614,34 @@ def search_documents(
     source_id: str = None,
     start_date: str = None,
     end_date: str = None,
-    keyword: str = None
+    keyword: str = None,
+    company_id: str = None
 ) -> list[dict]:
     """
-    Performs dynamic lookup of documents based on domains, sources, dates, and keywords using SQLAlchemy ORM.
+    Performs dynamic lookup of documents using Pure SQLAlchemy 2.0 ORM.
+    Optionally filters by company_id.
     """
     try:
         with get_db_session() as session:
-            query = session.query(Document, ProcessedBatch).join(
+            stmt = select(Document, ProcessedBatch).join(
                 ProcessedBatch, Document.batch_id == ProcessedBatch.batch_id
-            ).filter(Document.domain_id == domain_id)
+            ).where(Document.domain_id == domain_id)
+
+            if company_id:
+                stmt = stmt.where(Document.company_id == company_id)
 
             if source_id and source_id != "All":
-                query = query.filter(Document.source_id == source_id)
+                stmt = stmt.where(Document.source_id == source_id)
 
             if start_date:
-                query = query.filter(Document.doc_date >= start_date)
+                stmt = stmt.where(Document.doc_date >= start_date)
 
             if end_date:
-                query = query.filter(Document.doc_date <= end_date)
+                stmt = stmt.where(Document.doc_date <= end_date)
 
             if keyword:
                 like_kw = f"%{keyword}%"
-                query = query.filter(
+                stmt = stmt.where(
                     or_(
                         Document.doc_number.ilike(like_kw),
                         Document.entity_name.ilike(like_kw),
@@ -575,8 +649,8 @@ def search_documents(
                     )
                 )
 
-            query = query.order_by(Document.created_at.desc())
-            results = query.all()
+            stmt = stmt.order_by(Document.created_at.desc())
+            results = session.execute(stmt).all()
             docs = []
             for doc, batch in results:
                 d = doc.to_dict()
@@ -590,29 +664,37 @@ def search_documents(
         return []
 
 
-def get_unextracted_batches(status_codes: list[str] = None) -> list[dict]:
+def get_unextracted_batches(status_codes: list[str] = None, company_id: str = None) -> list[dict]:
     """
-    Fetches batches that contain pages matching specified status codes using SQLAlchemy ORM.
+    Fetches batches that contain pages matching specified status codes using Pure SQLAlchemy 2.0 ORM.
+    Optionally filters by company_id.
     """
     if status_codes is None:
         status_codes = ["PREPROCESSED", "PENDING"]
 
     try:
         with get_db_session() as session:
-            batches = session.query(
+            stmt = select(
                 ProcessedBatch.batch_id,
+                ProcessedBatch.company_id,
                 ProcessedBatch.original_filename,
                 ProcessedBatch.storage_path,
                 ProcessedBatch.total_pages
             ).join(
                 DocumentPage, ProcessedBatch.batch_id == DocumentPage.batch_id
-            ).filter(
+            ).where(
                 DocumentPage.status_code.in_(status_codes)
-            ).distinct().all()
+            ).distinct()
+
+            if company_id:
+                stmt = stmt.where(ProcessedBatch.company_id == company_id)
+
+            batches = session.execute(stmt).all()
 
             return [
                 {
                     "batch_id": b.batch_id,
+                    "company_id": b.company_id,
                     "original_filename": b.original_filename,
                     "original_pdf_name": b.original_filename,
                     "storage_path": b.storage_path,
@@ -625,27 +707,35 @@ def get_unextracted_batches(status_codes: list[str] = None) -> list[dict]:
         return []
 
 
-def get_pages_by_status(status_codes: list[str] = None) -> list[dict]:
+def get_pages_by_status(status_codes: list[str] = None, company_id: str = None) -> list[dict]:
     """
-    Fetches document page records joined with batch info matching given status codes using SQLAlchemy ORM.
+    Fetches document page records joined with batch info matching given status codes using Pure SQLAlchemy 2.0 ORM.
+    Optionally filters by company_id.
     """
     if status_codes is None:
         status_codes = ["EXTRACTED"]
 
     try:
         with get_db_session() as session:
-            results = session.query(
+            stmt = select(
                 DocumentPage,
                 ProcessedBatch.original_filename,
                 ProcessedBatch.storage_path
             ).join(
                 ProcessedBatch, DocumentPage.batch_id == ProcessedBatch.batch_id
-            ).filter(
+            ).where(
                 DocumentPage.status_code.in_(status_codes)
-            ).order_by(
+            )
+
+            if company_id:
+                stmt = stmt.where(ProcessedBatch.company_id == company_id)
+
+            stmt = stmt.order_by(
                 DocumentPage.batch_id.asc(),
                 DocumentPage.page_number.asc()
-            ).all()
+            )
+
+            results = session.execute(stmt).all()
 
             pages = []
             for dp, orig_name, storage_path in results:
@@ -660,26 +750,31 @@ def get_pages_by_status(status_codes: list[str] = None) -> list[dict]:
         return []
 
 
-def get_documents_for_export(domain_id: str, status_codes: list[str] = None) -> list[dict]:
+def get_documents_for_export(domain_id: str, status_codes: list[str] = None, company_id: str = None) -> list[dict]:
     """
-    Fetches approved/processed document records joined with batch info for dynamic report exporters using SQLAlchemy ORM.
+    Fetches approved/processed document records joined with batch info for report exporters using Pure SQLAlchemy 2.0 ORM.
+    Optionally filters by company_id.
     """
     if status_codes is None:
         status_codes = ["APPROVED", "PROCESSED"]
 
     try:
         with get_db_session() as session:
-            results = session.query(
+            stmt = select(
                 Document,
                 ProcessedBatch.original_filename
             ).join(
                 ProcessedBatch, Document.batch_id == ProcessedBatch.batch_id
-            ).filter(
+            ).where(
                 Document.domain_id == domain_id,
                 Document.status_code.in_(status_codes)
-            ).order_by(
-                Document.created_at.asc()
-            ).all()
+            )
+
+            if company_id:
+                stmt = stmt.where(Document.company_id == company_id)
+
+            stmt = stmt.order_by(Document.created_at.asc())
+            results = session.execute(stmt).all()
 
             docs = []
             for doc, orig_name in results:

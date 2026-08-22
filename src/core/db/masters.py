@@ -1,4 +1,4 @@
-"""Master data and merchant database operations using SQLAlchemy 2.0 ORM."""
+"""Master data and merchant database operations using Pure SQLAlchemy 2.0 ORM."""
 
 import os
 import json
@@ -6,20 +6,166 @@ import uuid
 import re
 from datetime import datetime, timezone
 from loguru import logger
-from sqlalchemy import func
+from sqlalchemy import select, delete, func
 
 from .connection import get_db_session
 from .models import (
+    Company,
     DocumentSource,
     ApiCredential,
     Merchant,
     MerchantStatus,
+    Document,
     ExpenseReceipt,
     ExpenseReceiptItem
 )
+from src.core.constants import DEFAULT_COMPANY_CODE, DEFAULT_SETTINGS_PATH
 
 
-def get_domains(settings_path: str = "configs/settings.json") -> list[dict]:
+def get_or_create_default_company() -> dict:
+    """
+    Ensures default sandbox company exists and returns its dictionary representation.
+    """
+    try:
+        with get_db_session() as session:
+            stmt = select(Company).filter_by(company_code=DEFAULT_COMPANY_CODE)
+            comp = session.scalars(stmt).first()
+            if not comp:
+                comp = Company(
+                    company_id=str(uuid.uuid4()),
+                    company_code=DEFAULT_COMPANY_CODE,
+                    company_name="บริษัท ตัวอย่างทดสอบ จำกัด (สำนักงานใหญ่)",
+                    short_name="SAMPLE",
+                    tax_id="0000000000000",
+                    branch_code="00000",
+                    is_active=1
+                )
+                session.add(comp)
+                session.flush()
+            return comp.to_dict()
+    except Exception as e:
+        logger.error(f"Failed to get or create default company: {e}")
+        return {
+            "company_id": "c0000000-0000-0000-0000-000000000000",
+            "company_code": DEFAULT_COMPANY_CODE,
+            "company_name": "บริษัท ตัวอย่างทดสอบ จำกัด (สำนักงานใหญ่)",
+            "short_name": "SAMPLE",
+            "tax_id": "0000000000000",
+            "branch_code": "00000",
+            "is_active": 1
+        }
+
+
+def create_company(company_code: str, company_name: str, short_name: str = None,
+                   tax_id: str = "0000000000000", branch_code: str = "00000",
+                   is_active: int = 1, company_id: str = None) -> dict:
+    """
+    Creates a new client company entity in the database.
+    """
+    clean_code = company_code.strip().upper()
+    cid = company_id or str(uuid.uuid4())
+    s_name = (short_name or clean_code.split("_")[-1]).strip().upper()
+    now_str = datetime.now(timezone.utc).isoformat()
+
+    try:
+        with get_db_session() as session:
+            stmt = select(Company).filter_by(company_code=clean_code)
+            existing = session.scalars(stmt).first()
+            if existing:
+                logger.warning(f"Company code '{clean_code}' already exists.")
+                return existing.to_dict()
+
+            comp = Company(
+                company_id=cid,
+                company_code=clean_code,
+                company_name=company_name.strip(),
+                short_name=s_name,
+                tax_id=tax_id.strip() if tax_id else None,
+                branch_code=branch_code.strip() if branch_code else "00000",
+                is_active=is_active,
+                created_at=now_str
+            )
+            session.add(comp)
+            session.flush()
+            logger.info(f"Created company '{clean_code}' with ID '{cid}'.")
+            return comp.to_dict()
+    except Exception as e:
+        logger.error(f"Failed to create company '{company_code}': {e}")
+        raise e
+
+
+def get_company(company_id: str) -> dict | None:
+    """
+    Retrieves a company by its UUID company_id.
+    """
+    if not company_id:
+        return None
+    try:
+        with get_db_session() as session:
+            stmt = select(Company).filter_by(company_id=company_id)
+            comp = session.scalars(stmt).first()
+            return comp.to_dict() if comp else None
+    except Exception as e:
+        logger.error(f"Failed to get company by ID '{company_id}': {e}")
+        return None
+
+
+def get_company_by_code(company_code: str) -> dict | None:
+    """
+    Retrieves a company by its business company_code (e.g. C00000_SAMPLE).
+    """
+    if not company_code:
+        return None
+    try:
+        with get_db_session() as session:
+            stmt = select(Company).where(
+                func.upper(Company.company_code) == company_code.strip().upper()
+            )
+            comp = session.scalars(stmt).first()
+            return comp.to_dict() if comp else None
+    except Exception as e:
+        logger.error(f"Failed to get company by code '{company_code}': {e}")
+        return None
+
+
+def get_all_companies(active_only: bool = False) -> list[dict]:
+    """
+    Returns list of all companies ordered by company_code.
+    """
+    try:
+        with get_db_session() as session:
+            stmt = select(Company)
+            if active_only:
+                stmt = stmt.where(Company.is_active == 1)
+            stmt = stmt.order_by(Company.company_code.asc())
+            companies = session.scalars(stmt).all()
+            return [c.to_dict() for c in companies]
+    except Exception as e:
+        logger.error(f"Failed to get all companies: {e}")
+        return []
+
+
+def update_company(company_id: str, **kwargs) -> bool:
+    """
+    Updates fields of an existing company.
+    """
+    try:
+        with get_db_session() as session:
+            stmt = select(Company).filter_by(company_id=company_id)
+            comp = session.scalars(stmt).first()
+            if not comp:
+                return False
+            for k, v in kwargs.items():
+                if hasattr(comp, k):
+                    setattr(comp, k, v)
+            comp.updated_at = datetime.now(timezone.utc).isoformat()
+            return True
+    except Exception as e:
+        logger.error(f"Failed to update company '{company_id}': {e}")
+        return False
+
+
+def get_domains(settings_path: str = DEFAULT_SETTINGS_PATH) -> list[dict]:
     """
     Returns list of doc_types/domains from configs/settings.json.
     """
@@ -50,70 +196,53 @@ def get_domains(settings_path: str = "configs/settings.json") -> list[dict]:
 
 def get_sources(domain_id: str) -> list[dict]:
     """
-    Returns list of sources for a domain from database using SQLAlchemy ORM.
+    Returns list of sources for a domain from database using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            sources = session.query(DocumentSource).filter(DocumentSource.domain_id == domain_id).all()
+            stmt = select(DocumentSource).where(DocumentSource.domain_id == domain_id)
+            sources = session.scalars(stmt).all()
             return [s.to_dict() for s in sources]
     except Exception as e:
         logger.error(f"Failed to load sources for domain '{domain_id}': {e}")
         return []
 
 
-def update_domain_active_status(domain_id: str, is_active: int, settings_path: str = "configs/settings.json") -> bool:
+def update_domain_active_status(domain_id: str, is_active: int, settings_path: str = DEFAULT_SETTINGS_PATH) -> bool:
     """
-    Toggles is_active for a domain inside configs/settings.json and clears the settings cache.
+    Updates the is_active status of a domain in settings.json.
     """
-    if not os.path.exists(settings_path):
-        logger.error(f"Settings configuration file not found at: {settings_path}")
-        return False
     try:
+        if not os.path.exists(settings_path):
+            return False
         with open(settings_path, "r", encoding="utf-8") as f:
             settings = json.load(f)
-
-        domains = settings.get("domains", [])
-        updated = False
+        domains = settings.get("doc_types") or settings.get("domains", [])
         for d in domains:
-            if d.get("domain_id") == domain_id:
-                d["is_active"] = True if is_active == 1 else False
-                updated = True
-                break
-
-        if updated:
-            with open(settings_path, "w", encoding="utf-8") as f:
-                json.dump(settings, f, ensure_ascii=False, indent=2)
-            try:
-                from src.core.config_loader import load_system_settings
-                load_system_settings.cache_clear()
-            except Exception:
-                pass
-            logger.info(f"Updated domain '{domain_id}' active status to {is_active == 1} in {settings_path}")
-            return True
-        else:
-            logger.warning(f"Domain '{domain_id}' not found in {settings_path}")
-            return False
+            if d.get("doc_type_id") == domain_id or d.get("domain_id") == domain_id:
+                d["is_active"] = bool(is_active)
+        with open(settings_path, "w", encoding="utf-8") as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+        return True
     except Exception as e:
-        logger.error(f"Failed to update domain active status in {settings_path}: {e}")
+        logger.error(f"Failed to update domain active status: {e}")
         return False
 
 
 def update_source_active_status(source_id: str, domain_id: str, is_active: int) -> bool:
     """
-    Updates the is_active status of a source in document_sources table using SQLAlchemy ORM.
+    Updates the is_active status of a source using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            src = session.query(DocumentSource).filter_by(source_id=source_id, domain_id=domain_id).first()
+            stmt = select(DocumentSource).filter_by(source_id=source_id, domain_id=domain_id)
+            src = session.scalars(stmt).first()
             if src:
                 src.is_active = is_active
-                logger.info(f"Updated source '{source_id}' ({domain_id}) active status to {is_active}")
                 return True
-            else:
-                logger.warning(f"Source '{source_id}' not found for domain '{domain_id}'")
-                return False
+            return False
     except Exception as e:
-        logger.error(f"Failed to update source active status for '{source_id}': {e}")
+        logger.error(f"Failed to update source active status: {e}")
         return False
 
 
@@ -123,12 +252,13 @@ def get_active_credentials() -> list[dict]:
     """
     try:
         with get_db_session() as session:
-            creds = session.query(ApiCredential).filter(
+            stmt = select(ApiCredential).where(
                 ApiCredential.is_active == 1
             ).order_by(
                 ApiCredential.error_count.asc(),
                 ApiCredential.last_active_at.asc()
-            ).all()
+            )
+            creds = session.scalars(stmt).all()
             return [c.to_dict() for c in creds]
     except Exception as e:
         logger.error(f"Failed to get active credentials: {e}")
@@ -137,11 +267,12 @@ def get_active_credentials() -> list[dict]:
 
 def update_credential_status(credential_id: str, last_active_at: str = None, error_count: int = None, is_active: int = None) -> bool:
     """
-    Updates status, error_count, and last_active_at timestamp for a credential using SQLAlchemy ORM.
+    Updates status, error_count, and last_active_at timestamp for a credential using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            cred = session.query(ApiCredential).filter_by(credential_id=credential_id).first()
+            stmt = select(ApiCredential).filter_by(credential_id=credential_id)
+            cred = session.scalars(stmt).first()
             if not cred:
                 return False
             if last_active_at is not None:
@@ -161,74 +292,93 @@ def sanitize_short_name(name: str) -> str:
     Sanitizes a merchant name or identifier into a filesystem-safe short_name.
     Converts to lowercase, removes stop words, replaces non-alphanumeric with underscore.
     """
-    if not name:
+    if not name or not name.strip():
         return "merchant"
-    clean = name.lower()
-    for stop_word in [
-        "บริษัท", "จำกัด", "มหาชน", "ห้างหุ้นส่วนจำกัด", "หจก", "บจก",
-        "company", "limited", "co., ltd.", "co.,ltd.", "co.,ltd", "corp", "inc"
-    ]:
-        clean = clean.replace(stop_word, " ")
-    clean = re.sub(r"[^a-zA-Z0-9_]+", "_", clean)
-    clean = re.sub(r"_+", "_", clean).strip("_")
-    if not clean:
-        clean = "merchant"
-    return clean[:40]
+
+    cleaned = name.strip()
+    prefixes = [
+        "บริษัท", "บจก.", "หจก.", "ห้างหุ้นส่วนจำกัด", "ร้าน", "บมจ.",
+        "co.,ltd.", "co., ltd.", "ltd.", "company limited", "corp.", "inc."
+    ]
+    for p in prefixes:
+        pattern = re.compile(re.escape(p), re.IGNORECASE)
+        cleaned = pattern.sub("", cleaned).strip()
+
+    cleaned = cleaned.replace(" ", "_")
+    cleaned = re.sub(r'[^a-zA-Z0-9_]', '', cleaned)
+    cleaned = re.sub(r'_+', '_', cleaned).strip('_')
+
+    if not cleaned:
+        cleaned = "merchant"
+
+    return cleaned[:35].lower()
 
 
-def get_merchants() -> list[dict]:
+def get_merchants(company_id: str = None) -> list[dict]:
     """
-    Retrieves all merchants from merchants table using SQLAlchemy ORM.
+    Retrieves all merchants from database using Pure SQLAlchemy 2.0 ORM.
+    Optionally filters by company_id.
     """
     try:
         with get_db_session() as session:
-            merchants = session.query(Merchant).order_by(Merchant.merchant_name.asc()).all()
+            stmt = select(Merchant)
+            if company_id:
+                stmt = stmt.where(Merchant.company_id == company_id)
+            stmt = stmt.order_by(Merchant.merchant_name.asc())
+            merchants = session.scalars(stmt).all()
             return [m.to_dict() for m in merchants]
     except Exception as e:
         logger.error(f"Failed to get merchants: {e}")
         return []
 
 
-def get_all_merchants() -> list[dict]:
-    """
-    Alias for get_merchants().
-    """
-    return get_merchants()
+def get_all_merchants(company_id: str = None) -> list[dict]:
+    """Alias for get_merchants()."""
+    return get_merchants(company_id=company_id)
 
 
-def get_pending_merchants() -> list[dict]:
+def get_pending_merchants(company_id: str = None) -> list[dict]:
     """
     Retrieves all merchants that are in 'PENDING' status waiting for review.
+    Optionally filters by company_id.
     """
     try:
         with get_db_session() as session:
-            merchants = session.query(Merchant).filter(
+            stmt = select(Merchant).where(
                 Merchant.status_code == MerchantStatus.PENDING.value
-            ).order_by(Merchant.created_at.desc()).all()
+            )
+            if company_id:
+                stmt = stmt.where(Merchant.company_id == company_id)
+            stmt = stmt.order_by(Merchant.created_at.desc())
+            merchants = session.scalars(stmt).all()
             return [m.to_dict() for m in merchants]
     except Exception as e:
         logger.error(f"Failed to get pending merchants: {e}")
         return []
 
 
-def get_merchant_by_tax_id(tax_id: str) -> dict | None:
+def get_merchant_by_tax_id(tax_id: str, company_id: str = None) -> dict | None:
     """
-    Finds a merchant record by its 13-digit Tax ID using SQLAlchemy ORM.
+    Finds a merchant record by its 13-digit Tax ID using Pure SQLAlchemy 2.0 ORM.
+    Optionally filters by company_id.
     """
     if not tax_id or not tax_id.strip():
         return None
     try:
         with get_db_session() as session:
-            merchant = session.query(Merchant).filter(
+            stmt = select(Merchant).where(
                 Merchant.tax_id == tax_id.strip()
-            ).first()
+            )
+            if company_id:
+                stmt = stmt.where(Merchant.company_id == company_id)
+            merchant = session.scalars(stmt).first()
             return merchant.to_dict() if merchant else None
     except Exception as e:
         logger.error(f"Failed to get merchant by tax_id '{tax_id}': {e}")
         return None
 
 
-def check_short_name_duplicate(short_name: str, exclude_merchant_id: str = None) -> bool:
+def check_short_name_duplicate(short_name: str, exclude_merchant_id: str = None, company_id: str = None) -> bool:
     """
     Checks if short_name already exists in merchants table for another merchant.
     """
@@ -236,18 +386,20 @@ def check_short_name_duplicate(short_name: str, exclude_merchant_id: str = None)
         return False
     try:
         with get_db_session() as session:
-            query = session.query(Merchant.merchant_id).filter(
+            stmt = select(Merchant.merchant_id).where(
                 func.lower(Merchant.short_name) == short_name.strip().lower()
             )
             if exclude_merchant_id:
-                query = query.filter(Merchant.merchant_id != exclude_merchant_id)
-            return query.first() is not None
+                stmt = stmt.where(Merchant.merchant_id != exclude_merchant_id)
+            if company_id:
+                stmt = stmt.where(Merchant.company_id == company_id)
+            return session.scalars(stmt).first() is not None
     except Exception as e:
         logger.error(f"Error checking duplicate short_name: {e}")
         return False
 
 
-def check_file_prefix_duplicate(file_prefix: str, exclude_merchant_id: str = None) -> bool:
+def check_file_prefix_duplicate(file_prefix: str, exclude_merchant_id: str = None, company_id: str = None) -> bool:
     """
     Checks if file_prefix already exists in merchants table for another merchant.
     """
@@ -255,18 +407,20 @@ def check_file_prefix_duplicate(file_prefix: str, exclude_merchant_id: str = Non
         return False
     try:
         with get_db_session() as session:
-            query = session.query(Merchant.merchant_id).filter(
+            stmt = select(Merchant.merchant_id).where(
                 func.lower(Merchant.file_prefix) == file_prefix.strip().lower()
             )
             if exclude_merchant_id:
-                query = query.filter(Merchant.merchant_id != exclude_merchant_id)
-            return query.first() is not None
+                stmt = stmt.where(Merchant.merchant_id != exclude_merchant_id)
+            if company_id:
+                stmt = stmt.where(Merchant.company_id == company_id)
+            return session.scalars(stmt).first() is not None
     except Exception as e:
         logger.error(f"Error checking duplicate file_prefix: {e}")
         return False
 
 
-def match_merchant_by_file_prefix(filename: str) -> dict | None:
+def match_merchant_by_file_prefix(filename: str, company_id: str = None) -> dict | None:
     """
     Matches a document filename against active merchant file_prefix rules.
     If the filename starts with or contains '{file_prefix}_', returns the matched merchant dict.
@@ -276,10 +430,13 @@ def match_merchant_by_file_prefix(filename: str) -> dict | None:
     try:
         clean_name = os.path.basename(filename).strip().lower()
         with get_db_session() as session:
-            merchants = session.query(Merchant).filter(
+            stmt = select(Merchant).where(
                 Merchant.file_prefix.isnot(None),
                 Merchant.file_prefix != ""
-            ).all()
+            )
+            if company_id:
+                stmt = stmt.where(Merchant.company_id == company_id)
+            merchants = session.scalars(stmt).all()
 
             # Sort by longest prefix first to prioritize specific matches
             sorted_merchants = sorted(
@@ -292,24 +449,24 @@ def match_merchant_by_file_prefix(filename: str) -> dict | None:
                 prefix = m.file_prefix.strip().lower()
                 if not prefix or prefix == "merchant":
                     continue
-
-                if clean_name.startswith(f"{prefix}_") or clean_name.startswith(f"{prefix}-") or clean_name.startswith(f"{prefix}."):
-                    logger.info(f"Zero-cost rule match: '{filename}' matched file_prefix '{prefix}' for merchant '{m.merchant_name}'.")
+                if clean_name.startswith(f"{prefix}_") or f"_{prefix}_" in clean_name:
                     return m.to_dict()
-
-            return None
     except Exception as e:
-        logger.error(f"Error matching merchant by file_prefix for '{filename}': {e}")
-        return None
+        logger.error(f"Error matching merchant by file prefix: {e}")
+    return None
 
 
-def get_or_create_merchant_auto(tax_id: str, merchant_name: str, suggested_short_name: str = None) -> tuple[dict, bool]:
+def get_or_create_merchant_auto(
+    tax_id: str,
+    merchant_name: str,
+    suggested_short_name: str = None,
+    domain_id: str = "expense_receipt",
+    company_id: str = None
+) -> tuple[dict, bool]:
     """
-    Gatekeeper logic for auto-registering merchants.
-    If tax_id exists, reuses existing merchant directly without duplicate suffix.
-    If new, registers in PENDING status.
+    Matches or creates a merchant in PENDING status using Pure SQLAlchemy 2.0 ORM.
     Returns:
-        tuple (merchant_dict, is_newly_created_boolean)
+        tuple (merchant_dict, is_new_created)
     """
     now_str = datetime.now(timezone.utc).isoformat()
     clean_tax_id = tax_id.strip() if tax_id and tax_id.strip() else None
@@ -317,16 +474,29 @@ def get_or_create_merchant_auto(tax_id: str, merchant_name: str, suggested_short
 
     try:
         with get_db_session() as session:
+            # Fallback to default company if company_id is None
+            target_company_id = company_id
+            if not target_company_id:
+                def_comp = session.scalars(select(Company).filter_by(company_code=DEFAULT_COMPANY_CODE)).first()
+                if def_comp:
+                    target_company_id = def_comp.company_id
+
             # 1. Match by Tax ID first
             if clean_tax_id:
-                existing = session.query(Merchant).filter_by(tax_id=clean_tax_id).first()
+                stmt_tax = select(Merchant).filter_by(tax_id=clean_tax_id)
+                if target_company_id:
+                    stmt_tax = stmt_tax.where(Merchant.company_id == target_company_id)
+                existing = session.scalars(stmt_tax).first()
                 if existing:
                     return existing.to_dict(), False
 
             # 2. Match by Merchant Name (exact case-insensitive)
-            existing = session.query(Merchant).filter(
+            stmt_name = select(Merchant).where(
                 func.lower(Merchant.merchant_name) == clean_name.lower()
-            ).first()
+            )
+            if target_company_id:
+                stmt_name = stmt_name.where(Merchant.company_id == target_company_id)
+            existing = session.scalars(stmt_name).first()
             if existing:
                 return existing.to_dict(), False
 
@@ -336,12 +506,13 @@ def get_or_create_merchant_auto(tax_id: str, merchant_name: str, suggested_short
             base_short_name = raw_short_name
             candidate_short_name = base_short_name
             counter = 2
-            while check_short_name_duplicate(candidate_short_name):
+            while check_short_name_duplicate(candidate_short_name, company_id=target_company_id):
                 candidate_short_name = f"{base_short_name}_{counter}"
                 counter += 1
 
             new_merchant = Merchant(
                 merchant_id=merchant_id,
+                company_id=target_company_id,
                 tax_id=clean_tax_id,
                 merchant_name=clean_name,
                 short_name=candidate_short_name,
@@ -361,6 +532,7 @@ def get_or_create_merchant_auto(tax_id: str, merchant_name: str, suggested_short
         logger.error(f"Failed in get_or_create_merchant_auto for '{merchant_name}': {e}")
         return {
             "merchant_id": f"merch_fallback_{uuid.uuid4().hex[:6]}",
+            "company_id": company_id,
             "tax_id": clean_tax_id,
             "merchant_name": clean_name,
             "short_name": "merchant",
@@ -374,13 +546,12 @@ def approve_merchant(merchant_id: str, short_name: str = None, file_prefix: str 
                      approved_by: str = "admin", doc_type_id: str = "expense_receipt") -> tuple[bool, str]:
     """
     Approves a merchant from PENDING to APPROVED status.
-    Returns:
-        tuple (success_boolean, message)
     """
     now_str = datetime.now(timezone.utc).isoformat()
     try:
         with get_db_session() as session:
-            merchant = session.query(Merchant).filter_by(merchant_id=merchant_id).first()
+            stmt = select(Merchant).filter_by(merchant_id=merchant_id)
+            merchant = session.scalars(stmt).first()
             if not merchant:
                 return False, f"Merchant ID '{merchant_id}' not found."
 
@@ -392,14 +563,11 @@ def approve_merchant(merchant_id: str, short_name: str = None, file_prefix: str 
             if not final_prefix:
                 final_prefix = final_short_name
 
-            if check_short_name_duplicate(final_short_name, exclude_merchant_id=merchant_id):
+            if check_short_name_duplicate(final_short_name, exclude_merchant_id=merchant_id, company_id=merchant.company_id):
                 return False, f"Short name '{final_short_name}' is already used by another merchant."
 
-            if check_file_prefix_duplicate(final_prefix, exclude_merchant_id=merchant_id):
+            if check_file_prefix_duplicate(final_prefix, exclude_merchant_id=merchant_id, company_id=merchant.company_id):
                 return False, f"File prefix '{final_prefix}' is already used by another merchant."
-
-            old_short_name = merchant.short_name
-            tax_id = merchant.tax_id or "NO_TAXID"
 
             merchant.short_name = final_short_name
             merchant.file_prefix = final_prefix
@@ -408,48 +576,22 @@ def approve_merchant(merchant_id: str, short_name: str = None, file_prefix: str 
             merchant.approved_at = now_str
             merchant.updated_at = now_str
 
-            # Update filesystem folder structure
-            try:
-                base_raw = os.path.join("storage", doc_type_id, "02_raw_data")
-                pending_folder_name = f"{tax_id}_{old_short_name}" if tax_id != "NO_TAXID" else old_short_name
-                pending_dir = os.path.join(base_raw, "PENDING", pending_folder_name)
-
-                approved_folder_name = f"{tax_id}_{final_short_name}" if tax_id != "NO_TAXID" else final_short_name
-                approved_dir = os.path.join(base_raw, approved_folder_name)
-
-                if os.path.exists(pending_dir):
-                    os.makedirs(approved_dir, exist_ok=True)
-                    for item in os.listdir(pending_dir):
-                        src_file = os.path.join(pending_dir, item)
-                        dst_file = os.path.join(approved_dir, item)
-                        if os.path.isfile(src_file):
-                            os.replace(src_file, dst_file)
-                    try:
-                        os.rmdir(pending_dir)
-                    except Exception:
-                        pass
-                else:
-                    os.makedirs(approved_dir, exist_ok=True)
-                    with open(os.path.join(approved_dir, ".gitkeep"), "w", encoding="utf-8") as gf:
-                        gf.write("# Merchant folder ready\n")
-            except Exception as fe:
-                logger.warning(f"File relocation warning on approving merchant: {fe}")
-
-            logger.info(f"Merchant '{merchant_id}' approved as '{final_short_name}' (prefix: '{final_prefix}') by '{approved_by}'.")
+            logger.info(f"Merchant '{merchant_id}' ({merchant.merchant_name}) approved with prefix '{final_prefix}'.")
             return True, f"Merchant '{merchant.merchant_name}' approved successfully."
     except Exception as e:
         logger.error(f"Failed to approve merchant '{merchant_id}': {e}")
         return False, str(e)
 
 
-def ignore_merchant(merchant_id: str, approved_by: str = "admin", doc_type_id: str = "expense_receipt") -> tuple[bool, str]:
+def ignore_merchant(merchant_id: str, approved_by: str = "admin") -> tuple[bool, str]:
     """
-    Marks a merchant as IGNORED status.
+    Marks a merchant as IGNORED.
     """
     now_str = datetime.now(timezone.utc).isoformat()
     try:
         with get_db_session() as session:
-            merchant = session.query(Merchant).filter_by(merchant_id=merchant_id).first()
+            stmt = select(Merchant).filter_by(merchant_id=merchant_id)
+            merchant = session.scalars(stmt).first()
             if not merchant:
                 return False, f"Merchant ID '{merchant_id}' not found."
 
@@ -457,33 +599,6 @@ def ignore_merchant(merchant_id: str, approved_by: str = "admin", doc_type_id: s
             merchant.approved_by = approved_by
             merchant.approved_at = now_str
             merchant.updated_at = now_str
-
-            tax_id = merchant.tax_id or "NO_TAXID"
-            short_name = merchant.short_name or "merchant"
-
-            try:
-                base_raw = os.path.join("storage", doc_type_id, "02_raw_data")
-                folder_name = f"{tax_id}_{short_name}" if tax_id != "NO_TAXID" else short_name
-                pending_dir = os.path.join(base_raw, "PENDING", folder_name)
-                ignored_dir = os.path.join(base_raw, "IGNORED", folder_name)
-
-                if os.path.exists(pending_dir):
-                    os.makedirs(ignored_dir, exist_ok=True)
-                    for item in os.listdir(pending_dir):
-                        src_file = os.path.join(pending_dir, item)
-                        dst_file = os.path.join(ignored_dir, item)
-                        if os.path.isfile(src_file):
-                            os.replace(src_file, dst_file)
-                    try:
-                        os.rmdir(pending_dir)
-                    except Exception:
-                        pass
-                else:
-                    os.makedirs(ignored_dir, exist_ok=True)
-                    with open(os.path.join(ignored_dir, ".gitkeep"), "w", encoding="utf-8") as gf:
-                        gf.write("# Merchant ignored folder\n")
-            except Exception as fe:
-                logger.warning(f"File relocation warning on ignoring merchant: {fe}")
 
             logger.info(f"Merchant '{merchant_id}' marked as IGNORED by '{approved_by}'.")
             return True, f"Merchant '{merchant.merchant_name}' set to IGNORED."
@@ -494,7 +609,7 @@ def ignore_merchant(merchant_id: str, approved_by: str = "admin", doc_type_id: s
 
 def upsert_merchant(merchant_data: dict) -> bool:
     """
-    Inserts or updates a merchant record in merchants table using SQLAlchemy ORM.
+    Inserts or updates a merchant record in merchants table using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
@@ -502,10 +617,14 @@ def upsert_merchant(merchant_data: dict) -> bool:
             if not m_id:
                 m_id = f"merch_{uuid.uuid4().hex[:8]}"
 
-            merchant = session.query(Merchant).filter_by(merchant_id=m_id).first()
+            stmt = select(Merchant).filter_by(merchant_id=m_id)
+            merchant = session.scalars(stmt).first()
             now_str = datetime.now(timezone.utc).isoformat()
+            target_cid = merchant_data.get("company_id")
 
             if merchant:
+                if target_cid:
+                    merchant.company_id = target_cid
                 merchant.tax_id = merchant_data.get("tax_id", merchant.tax_id)
                 merchant.merchant_name = merchant_data.get("merchant_name", merchant.merchant_name)
                 merchant.short_name = merchant_data.get("short_name", merchant.short_name)
@@ -517,8 +636,14 @@ def upsert_merchant(merchant_data: dict) -> bool:
                 merchant.is_vat_registered = int(merchant_data.get("is_vat_registered", merchant.is_vat_registered))
                 merchant.updated_at = now_str
             else:
+                if not target_cid:
+                    def_comp = session.scalars(select(Company).filter_by(company_code=DEFAULT_COMPANY_CODE)).first()
+                    if def_comp:
+                        target_cid = def_comp.company_id
+
                 new_m = Merchant(
                     merchant_id=m_id,
+                    company_id=target_cid,
                     tax_id=merchant_data.get("tax_id"),
                     merchant_name=merchant_data.get("merchant_name", "Unknown Merchant"),
                     short_name=merchant_data.get("short_name", "merchant"),
@@ -537,24 +662,30 @@ def upsert_merchant(merchant_data: dict) -> bool:
         return False
 
 
-def match_merchant(tax_id: str, name: str) -> str | None:
+def match_merchant(tax_id: str, name: str, company_id: str = None) -> str | None:
     """
-    Matches a merchant from merchants by tax_id first, then by merchant_name using SQLAlchemy ORM.
+    Matches a merchant from merchants by tax_id first, then by merchant_name using Pure SQLAlchemy 2.0 ORM.
     Returns merchant_id if matched, otherwise None.
     """
     try:
         with get_db_session() as session:
             # 1. Match by Tax ID (exact match)
             if tax_id and tax_id.strip():
-                merchant = session.query(Merchant).filter_by(tax_id=tax_id.strip()).first()
+                stmt = select(Merchant).filter_by(tax_id=tax_id.strip())
+                if company_id:
+                    stmt = stmt.where(Merchant.company_id == company_id)
+                merchant = session.scalars(stmt).first()
                 if merchant:
                     return merchant.merchant_id
 
             # 2. Match by Merchant Name (case-insensitive match)
             if name and name.strip():
-                merchant = session.query(Merchant).filter(
+                stmt = select(Merchant).where(
                     func.lower(Merchant.merchant_name) == name.strip().lower()
-                ).first()
+                )
+                if company_id:
+                    stmt = stmt.where(Merchant.company_id == company_id)
+                merchant = session.scalars(stmt).first()
                 if merchant:
                     return merchant.merchant_id
     except Exception as e:
@@ -564,11 +695,12 @@ def match_merchant(tax_id: str, name: str) -> str | None:
 
 def delete_merchant(merchant_id: str) -> bool:
     """
-    Deletes a merchant record from merchants using SQLAlchemy ORM.
+    Deletes a merchant record from merchants using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            merchant = session.query(Merchant).filter_by(merchant_id=merchant_id).first()
+            stmt = select(Merchant).filter_by(merchant_id=merchant_id)
+            merchant = session.scalars(stmt).first()
             if merchant:
                 session.delete(merchant)
                 return True
@@ -578,14 +710,25 @@ def delete_merchant(merchant_id: str) -> bool:
         return False
 
 
-def insert_relational_receipt(document_id: str, payload: dict, original_filename: str) -> bool:
+def insert_relational_receipt(document_id: str, payload: dict, original_filename: str, company_id: str = None) -> bool:
     """
-    Parses extracted JSON payload and inserts header and items into relational tables using SQLAlchemy ORM.
+    Parses extracted JSON payload and inserts header and items into relational tables using Pure SQLAlchemy 2.0 ORM.
     Also auto-registers new merchants in merchants table.
     """
     try:
         with get_db_session() as session:
             now_str = datetime.now(timezone.utc).isoformat()
+
+            # Target company resolution
+            target_cid = company_id
+            if not target_cid:
+                doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
+                if doc and doc.company_id:
+                    target_cid = doc.company_id
+                else:
+                    def_comp = session.scalars(select(Company).filter_by(company_code=DEFAULT_COMPANY_CODE)).first()
+                    if def_comp:
+                        target_cid = def_comp.company_id
 
             # 1. Extract merchant & receipt information with fallbacks
             merchant_obj = payload.get("merchant", {})
@@ -598,12 +741,13 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
                 tax_id = tax_id.strip()
 
             # 2. Match merchant in merchants
-            merchant_id = match_merchant(tax_id, merchant_name)
+            merchant_id = match_merchant(tax_id, merchant_name, company_id=target_cid)
             if not merchant_id:
                 merchant_id = f"mer_{uuid.uuid4().hex[:12]}"
                 short_name = sanitize_short_name(merchant_name)
                 new_m = Merchant(
                     merchant_id=merchant_id,
+                    company_id=target_cid,
                     tax_id=tax_id,
                     merchant_name=merchant_name,
                     short_name=short_name,
@@ -617,7 +761,7 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
                 session.flush()
 
             # 3. Clean up any existing receipt for this document_id (updates/re-runs)
-            existing_receipts = session.query(ExpenseReceipt).filter_by(document_id=document_id).all()
+            existing_receipts = session.scalars(select(ExpenseReceipt).filter_by(document_id=document_id)).all()
             for r in existing_receipts:
                 session.delete(r)
             session.flush()
@@ -636,6 +780,7 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
 
             receipt = ExpenseReceipt(
                 receipt_id=receipt_id,
+                company_id=target_cid,
                 document_id=document_id,
                 merchant_id=merchant_id,
                 transaction_date=transaction_date,

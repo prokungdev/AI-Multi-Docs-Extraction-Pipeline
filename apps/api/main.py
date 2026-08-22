@@ -8,7 +8,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from apps.api.routers import health
+from apps.api.routers import health, companies
 
 app = FastAPI(
     title="AI Multi-Docs Extraction Pipeline REST API",
@@ -29,6 +29,7 @@ app.add_middleware(
 
 # Mount Routers
 app.include_router(health.router, prefix="/api/v1")
+app.include_router(companies.router, prefix="/api/v1")
 
 
 @app.get("/", tags=["Root"])

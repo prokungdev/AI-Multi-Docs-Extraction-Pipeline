@@ -10,6 +10,7 @@ from google.genai import types
 from loguru import logger
 from src.core.config_loader import load_source_ai_config, load_system_settings, get_ai_provider_config
 from src.core.db import get_active_credentials, update_credential_status, create_api_call_log
+from src.core.cost_estimator import calculate_api_cost
 
 def clean_schema_for_gemini(schema: dict) -> dict:
     """
@@ -308,10 +309,22 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
                 input_t = getattr(usage, "prompt_token_count", 0) if usage else 0
                 output_t = getattr(usage, "candidates_token_count", 0) if usage else 0
                 
+                # Calculate real-time cost
+                cost_info = calculate_api_cost(
+                    provider=provider,
+                    model_name=model_name,
+                    input_tokens=input_t,
+                    output_tokens=output_t
+                )
+                
                 extracted_data["_metadata"] = {
                     "model_used": model_name,
                     "input_tokens": input_t,
-                    "output_tokens": output_t
+                    "output_tokens": output_t,
+                    "cost_usd": cost_info["cost_usd"],
+                    "nominal_value_usd": cost_info["nominal_value_usd"],
+                    "cost_thb": cost_info["cost_thb"],
+                    "is_free_tier": cost_info["is_free_tier"]
                 }
                 
                 # Write SUCCESS log to SQLite
@@ -327,6 +340,9 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
                         status="SUCCESS",
                         input_tokens=input_t,
                         output_tokens=output_t,
+                        cost_usd=cost_info["cost_usd"],
+                        nominal_value_usd=cost_info["nominal_value_usd"],
+                        is_free_tier=cost_info["is_free_tier"],
                         latency_ms=latency_ms,
                         error_reason=None,
                         raw_response=None

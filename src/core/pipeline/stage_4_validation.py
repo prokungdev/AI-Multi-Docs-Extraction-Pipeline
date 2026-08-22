@@ -2,13 +2,18 @@ import os
 import json
 from loguru import logger
 
-from src.core.config_loader import load_system_settings, get_default_domain
-from src.core.db import get_pages_by_status, update_page_status
+from src.core.config_loader import (
+    load_system_settings,
+    get_default_domain,
+    get_default_company_code,
+    get_company_pipeline_folder,
+)
+from src.core.db import get_pages_by_status, update_page_status, get_company_by_code
 from src.core.models import DocumentStatus
-from src.core.pipeline.helpers import validate_and_process_payload
+from src.core.pipeline.pipeline_helpers import validate_and_process_payload
 
 
-def validate_documents(domain: str = None) -> dict:
+def validate_documents(domain: str = None, company_code: str = None) -> dict:
     """
     Stage 4: Validation & Post-Processing.
     Applies merchant rules, Tax ID verification, date conversions (BE->AD), math checks, and sets priority.
@@ -16,30 +21,24 @@ def validate_documents(domain: str = None) -> dict:
     logger.info("Starting Stage 4 (Validate): Validation & Rule Processing")
 
     settings = load_system_settings()
-    storage_root = settings.get("storage_root", "storage")
+    comp_code = company_code or get_default_company_code()
+    comp_info = get_company_by_code(comp_code)
+    company_id = comp_info["company_id"] if comp_info else None
+
     if domain is None:
         domain = get_default_domain()
 
-    domain_storage = os.path.join(storage_root, domain).replace("\\", "/")
-    queue_dir = os.path.join(domain_storage, "04_processing").replace("\\", "/")
-
-    if not os.path.exists(queue_dir):
-        # Fallback check for legacy queue dir
-        legacy_queue = os.path.join(domain_storage, "03_processing_queue").replace("\\", "/")
-        if os.path.exists(legacy_queue):
-            queue_dir = legacy_queue
-        else:
-            logger.warning(f"Processing queue directory not found: {queue_dir}")
-            return {"validated": 0, "needs_review": 0}
+    from src.core.storage_manager import storage_manager
+    queue_dir = storage_manager.get_processing_dir(comp_code, domain)
 
     try:
-        pages = get_pages_by_status([DocumentStatus.EXTRACTED.value])
+        pages = get_pages_by_status([DocumentStatus.EXTRACTED.value], company_id=company_id)
 
         if not pages:
-            logger.info("No pages found with status 'EXTRACTED' to validate.")
+            logger.info(f"No pages found with status 'EXTRACTED' to validate for company '{comp_code}'.")
             return {"validated": 0, "needs_review": 0}
 
-        logger.info(f"Found {len(pages)} extracted page(s) to validate and process...")
+        logger.info(f"Found {len(pages)} extracted page(s) to validate for company '{comp_code}'...")
         validated_count = 0
         needs_review_count = 0
 
@@ -51,7 +50,8 @@ def validate_documents(domain: str = None) -> dict:
             storage_path = p["storage_path"]
 
             folder_name = os.path.basename(storage_path)
-            source = "_default" if folder_name == "_uncategorized" else folder_name
+            from src.core.constants import NO_TAX_LABEL
+            source = NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
 
             image_basename = os.path.splitext(os.path.basename(image_path))[0]
             json_filename = f"{image_basename}.json"

@@ -1,12 +1,44 @@
 import copy
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any, List
 from src.core.models import DocumentStatus, ReviewPriority
 from src.core.post_processor import apply_source_rules
+from src.core.storage_manager import StoragePathManager, storage_manager
+from src.core.config_loader import get_validation_thresholds
+from src.core.constants import (
+    DEFAULT_SETTINGS_PATH,
+    DEFAULT_COMPANY_CODE,
+    DEFAULT_DOC_TYPE,
+)
 
-# Validation Constants
-FINANCIAL_TOLERANCE = 0.05
-CONFIDENCE_HIGH_THRESHOLD = 0.85
-CONFIDENCE_LOW_THRESHOLD = 0.60
-CONFIDENCE_REVIEW_THRESHOLD = 0.70
+
+@dataclass
+class PipelineContext:
+    """
+    Unified Data Transfer Object passed across all Pipeline Stages.
+    Contains company scope, target doc_type, active batch tracking, and direct access to StoragePathManager.
+    """
+    company_code: str = DEFAULT_COMPANY_CODE
+    doc_type: str = DEFAULT_DOC_TYPE
+    batch_id: Optional[str] = None
+    settings_path: str = DEFAULT_SETTINGS_PATH
+    storage: StoragePathManager = field(default_factory=lambda: storage_manager)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    stats: Dict[str, int] = field(default_factory=lambda: {
+        "processed_batches": 0,
+        "extracted_docs": 0,
+        "auto_approved": 0,
+        "needs_review": 0,
+        "failed": 0
+    })
+
+    def get_stage_dir(self, stage_name: str) -> str:
+        """Helper to get any stage folder under the current context company & doc_type."""
+        return self.storage.get_stage_dir(stage_name, self.company_code, self.doc_type)
+
+    def get_output_dir(self) -> str:
+        """Helper to get 06_output folder for current context."""
+        return self.storage.get_output_dir(self.company_code, self.doc_type)
 
 
 def merge_chunk_payloads(payloads: list[dict]) -> dict:
@@ -78,11 +110,22 @@ def merge_chunk_payloads(payloads: list[dict]) -> dict:
     return merged
 
 
-def validate_and_process_payload(payload: dict, domain: str, source: str) -> tuple[dict, str, list[str]]:
+def validate_and_process_payload(
+    payload: dict,
+    domain: str,
+    source: str,
+    settings_path: str = DEFAULT_SETTINGS_PATH
+) -> tuple[dict, str, list[str]]:
     """
-    Applies source validation rules, financial math checks, and sets review priority.
+    Applies source validation rules, financial math checks, and sets review priority
+    using strictly configured thresholds from settings.json.
     """
     validation_notes = []
+    thresholds = get_validation_thresholds(settings_path)
+    financial_tolerance = float(thresholds["financial_tolerance"])
+    confidence_high = float(thresholds["confidence_high"])
+    confidence_low = float(thresholds["confidence_low"])
+    confidence_review = float(thresholds["confidence_review"])
 
     # 1. Apply Merchant Rules (Tax ID, Date BE->AD, Default Categories/Units)
     processed_payload, req_review, review_reason = apply_source_rules(payload, domain, source)
@@ -97,7 +140,7 @@ def validate_and_process_payload(payload: dict, domain: str, source: str) -> tup
     net_amount = float(fin.get("net_amount", 0.0))
 
     calculated_net = subtotal - discount + vat_amount
-    if abs(calculated_net - net_amount) > FINANCIAL_TOLERANCE:
+    if abs(calculated_net - net_amount) > financial_tolerance:
         validation_notes.append(
             f"Financial formula mismatch: Calculated ({subtotal:.2f} - {discount:.2f} + {vat_amount:.2f} = {calculated_net:.2f}) != Net ({net_amount:.2f})"
         )
@@ -105,7 +148,7 @@ def validate_and_process_payload(payload: dict, domain: str, source: str) -> tup
     items = processed_payload.get("items", [])
     if items:
         item_sum = sum(float(item.get("total_price", 0.0)) for item in items if isinstance(item, dict))
-        if item_sum > 0 and abs(item_sum - subtotal) > FINANCIAL_TOLERANCE:
+        if item_sum > 0 and abs(item_sum - subtotal) > financial_tolerance:
             validation_notes.append(
                 f"Items total price sum ({item_sum:.2f}) does not match subtotal ({subtotal:.2f})"
             )
@@ -121,15 +164,15 @@ def validate_and_process_payload(payload: dict, domain: str, source: str) -> tup
     is_complete = val_meta.get("is_complete", True)
 
     # 4. Determine Review Priority
-    if overall_confidence < CONFIDENCE_LOW_THRESHOLD or is_blurry or has_ambiguous_fields or not is_complete:
+    if overall_confidence < confidence_low or is_blurry or has_ambiguous_fields or not is_complete:
         review_priority = ReviewPriority.HIGH.value
-    elif overall_confidence < CONFIDENCE_HIGH_THRESHOLD:
+    elif overall_confidence < confidence_high:
         review_priority = ReviewPriority.MEDIUM.value
     else:
         review_priority = ReviewPriority.LOW.value
 
     # 5. Determine Final Status Code
-    if validation_notes or is_blurry or not is_complete or overall_confidence < CONFIDENCE_REVIEW_THRESHOLD:
+    if validation_notes or is_blurry or not is_complete or overall_confidence < confidence_review:
         status_code = DocumentStatus.NEEDS_REVIEW.value
     else:
         status_code = DocumentStatus.PROCESSED.value

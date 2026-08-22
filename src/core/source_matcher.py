@@ -6,6 +6,7 @@ from PIL import Image
 from google import genai
 from google.genai import types
 from loguru import logger
+from src.core.constants import NO_TAX_LABEL
 
 
 def load_merchant_rules(domain: str, configs_dir: str = "configs") -> dict:
@@ -102,7 +103,7 @@ def match_source_by_vision(image_path: str, merchant_rules: dict, settings: dict
     
     if not api_key:
         logger.warning(f"API key environment variable '{api_key_env}' is not set. Cannot perform vision source matching.")
-        return "_default"
+        return NO_TAX_LABEL
         
     client = genai.Client(api_key=api_key)
     
@@ -139,7 +140,7 @@ def match_source_by_vision(image_path: str, merchant_rules: dict, settings: dict
     except Exception as e:
         logger.error(f"Error during Gemini Vision source matching: {e}")
         
-    return "_default"
+    return NO_TAX_LABEL
 
 def match_source(file_path: str, domain: str, first_page_image_path: str | None = None, settings: dict = None) -> str:
     """
@@ -154,7 +155,7 @@ def match_source(file_path: str, domain: str, first_page_image_path: str | None 
         settings: Optional system settings dictionary.
                                
     Returns:
-        The matched merchant source identifier, or '_default'.
+        The matched merchant source identifier, or 'no_tax'.
     """
     if settings is None:
         from src.core.config_loader import load_system_settings
@@ -162,7 +163,7 @@ def match_source(file_path: str, domain: str, first_page_image_path: str | None 
         
     merchant_rules = load_merchant_rules(domain)
     if not merchant_rules:
-        return "_default"
+        return NO_TAX_LABEL
         
     filename = os.path.basename(file_path)
     
@@ -201,4 +202,4 @@ def match_source(file_path: str, domain: str, first_page_image_path: str | None 
         elif first_page_image_path and os.path.exists(first_page_image_path):
             return match_source_by_vision(first_page_image_path, merchant_rules, settings=settings)
             
-    return "_default"
+    return NO_TAX_LABEL

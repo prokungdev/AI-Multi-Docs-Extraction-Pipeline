@@ -3,12 +3,16 @@ import json
 from functools import lru_cache
 from loguru import logger
 from src.core.db import get_domains, get_sources
-
-DEFAULT_STORAGE_ROOT = "storage"
+from src.core.constants import (
+    DEFAULT_SETTINGS_PATH,
+    DEFAULT_STORAGE_ROOT,
+    DEFAULT_COMPANY_CODE,
+    DEFAULT_DOC_TYPE,
+)
 
 
 @lru_cache(maxsize=4)
-def load_system_settings(settings_path: str = "configs/settings.json") -> dict:
+def load_system_settings(settings_path: str = DEFAULT_SETTINGS_PATH) -> dict:
     """
     Loads central settings.json with caching.
     """
@@ -23,15 +27,29 @@ def load_system_settings(settings_path: str = "configs/settings.json") -> dict:
         return {}
 
 
+# Backward compatibility alias
+load_settings = load_system_settings
+
+
+def get_validation_thresholds(settings_path: str = DEFAULT_SETTINGS_PATH) -> dict:
+    """
+    Returns strict validation thresholds dictionary from settings.json.
+    Raises KeyError immediately if required section is missing.
+    """
+    settings = load_system_settings(settings_path)
+    if "validation_thresholds" not in settings:
+        raise KeyError("Required configuration 'validation_thresholds' is missing in settings.json.")
+    return settings["validation_thresholds"]
+
+
 def get_default_domain() -> str:
     """
     Returns the primary active doc_type/domain ID from configs/settings.json.
-    Falls back to 'expense_receipt' if no active doc_type is configured.
     """
     active = get_active_domains_hybrid()
     if active:
-        return active[0].get("domain_id") or active[0].get("doc_type_id", "expense_receipt")
-    return "expense_receipt"
+        return active[0].get("domain_id") or active[0].get("doc_type_id", DEFAULT_DOC_TYPE)
+    return DEFAULT_DOC_TYPE
 
 
 def get_default_doc_type() -> str:
@@ -120,11 +138,48 @@ def is_source_active(domain_id: str, source_id: str) -> bool:
     return source_id in active_sources
 
 
-def get_doc_type_config_dir(doc_type_id: str, configs_dir: str = "configs") -> str:
+def get_default_company_code() -> str:
+    """
+    Returns the default company code from settings.json or defaults to 'C00000_SAMPLE'.
+    """
+    settings = load_system_settings()
+    return settings.get("default_company_code", "C00000_SAMPLE")
+
+
+def get_company_storage_dir(company_code: str = None, storage_root: str = None) -> str:
+    """
+    Returns the root storage directory for a specific company (e.g. storage/companies/C00000_SAMPLE).
+    """
+    if storage_root is None:
+        settings = load_system_settings()
+        storage_root = settings.get("storage_root", DEFAULT_STORAGE_ROOT)
+    code = company_code or get_default_company_code()
+    return os.path.join(storage_root, "companies", code)
+
+
+def get_company_pipeline_folder(company_code: str = None, folder_name: str = "01_drop_zone", doc_type_id: str = None) -> str:
+    """
+    Returns the path to a specific pipeline folder for a company (e.g. storage/companies/C00000_SAMPLE/expense_receipt/01_drop_zone).
+    """
+    base_comp_dir = get_company_storage_dir(company_code)
+    if doc_type_id:
+        return os.path.join(base_comp_dir, doc_type_id, folder_name)
+    return os.path.join(base_comp_dir, folder_name)
+
+
+def get_doc_type_config_dir(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> str:
     """
     Locates the configuration directory for a given doc_type_id.
-    Checks configs/doc_types/{doc_type_id} first, then falls back to configs/domains/{doc_type_id}.
+    Performs layered lookup:
+      1. Checks configs/companies/{company_code}/doc_types/{doc_type_id} if company_code is provided.
+      2. Falls back to configs/doc_types/{doc_type_id} (system standard).
+      3. Falls back to configs/domains/{doc_type_id} (legacy standard).
     """
+    if company_code:
+        company_specific = os.path.join(configs_dir, "companies", company_code, "doc_types", doc_type_id)
+        if os.path.exists(company_specific):
+            return company_specific
+
     primary = os.path.join(configs_dir, "doc_types", doc_type_id)
     if os.path.exists(primary):
         return primary
@@ -134,11 +189,11 @@ def get_doc_type_config_dir(doc_type_id: str, configs_dir: str = "configs") -> s
     return primary
 
 
-def load_doc_type_schema(doc_type_id: str, configs_dir: str = "configs") -> dict:
+def load_doc_type_schema(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> dict:
     """
-    Loads extract-schema.json (or schema.json fallback) for a doc_type.
+    Loads extract-schema.json (or schema.json fallback) for a doc_type with company layered fallback.
     """
-    cfg_dir = get_doc_type_config_dir(doc_type_id, configs_dir)
+    cfg_dir = get_doc_type_config_dir(doc_type_id, company_code=company_code, configs_dir=configs_dir)
     for candidate in ["extract-schema.json", "schema.json"]:
         schema_path = os.path.join(cfg_dir, candidate)
         if os.path.exists(schema_path):
@@ -146,15 +201,15 @@ def load_doc_type_schema(doc_type_id: str, configs_dir: str = "configs") -> dict
                 with open(schema_path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
-                logger.error(f"Error loading schema for '{doc_type_id}': {e}")
+                logger.error(f"Error loading schema for '{doc_type_id}' (company '{company_code}'): {e}")
     return {}
 
 
-def load_doc_type_prompt(doc_type_id: str, configs_dir: str = "configs") -> str:
+def load_doc_type_prompt(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> str:
     """
-    Loads extract-prompt.txt (or prompt.txt fallback) for a doc_type.
+    Loads extract-prompt.txt (or prompt.txt fallback) for a doc_type with company layered fallback.
     """
-    cfg_dir = get_doc_type_config_dir(doc_type_id, configs_dir)
+    cfg_dir = get_doc_type_config_dir(doc_type_id, company_code=company_code, configs_dir=configs_dir)
     for candidate in ["extract-prompt.txt", "prompt.txt"]:
         prompt_path = os.path.join(cfg_dir, candidate)
         if os.path.exists(prompt_path):
@@ -162,30 +217,30 @@ def load_doc_type_prompt(doc_type_id: str, configs_dir: str = "configs") -> str:
                 with open(prompt_path, "r", encoding="utf-8") as f:
                     return f.read().strip()
             except Exception as e:
-                logger.error(f"Error loading prompt for '{doc_type_id}': {e}")
+                logger.error(f"Error loading prompt for '{doc_type_id}' (company '{company_code}'): {e}")
     return ""
 
 
-def load_doc_type_classify_prompt(doc_type_id: str, configs_dir: str = "configs") -> str:
+def load_doc_type_classify_prompt(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> str:
     """
-    Loads classify-prompt.txt for a doc_type.
+    Loads classify-prompt.txt for a doc_type with company layered fallback.
     """
-    cfg_dir = get_doc_type_config_dir(doc_type_id, configs_dir)
+    cfg_dir = get_doc_type_config_dir(doc_type_id, company_code=company_code, configs_dir=configs_dir)
     prompt_path = os.path.join(cfg_dir, "classify-prompt.txt")
     if os.path.exists(prompt_path):
         try:
             with open(prompt_path, "r", encoding="utf-8") as f:
                 return f.read().strip()
         except Exception as e:
-            logger.error(f"Error loading classify prompt for '{doc_type_id}': {e}")
+            logger.error(f"Error loading classify prompt for '{doc_type_id}' (company '{company_code}'): {e}")
     return ""
 
 
-def load_doc_type_rules(doc_type_id: str, configs_dir: str = "configs") -> dict:
+def load_doc_type_rules(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> dict:
     """
-    Loads extract-rules.json (or rules.json fallback) for a doc_type.
+    Loads extract-rules.json (or rules.json fallback) for a doc_type with company layered fallback.
     """
-    cfg_dir = get_doc_type_config_dir(doc_type_id, configs_dir)
+    cfg_dir = get_doc_type_config_dir(doc_type_id, company_code=company_code, configs_dir=configs_dir)
     for candidate in ["extract-rules.json", "rules.json"]:
         rules_path = os.path.join(cfg_dir, candidate)
         if os.path.exists(rules_path):
@@ -193,15 +248,15 @@ def load_doc_type_rules(doc_type_id: str, configs_dir: str = "configs") -> dict:
                 with open(rules_path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
-                logger.error(f"Error loading rules for '{doc_type_id}': {e}")
+                logger.error(f"Error loading rules for '{doc_type_id}' (company '{company_code}'): {e}")
     return {}
 
 
-def load_source_rules(domain_id: str, source_id: str = "_default", configs_dir: str = "configs") -> dict:
+def load_source_rules(domain_id: str, source_id: str = "_default", company_code: str = None, configs_dir: str = "configs") -> dict:
     """
     Loads rules for a doc_type/domain (backward compatibility layer).
     """
-    return load_doc_type_rules(domain_id, configs_dir)
+    return load_doc_type_rules(domain_id, company_code=company_code, configs_dir=configs_dir)
 
 
 def load_source_ai_config(domain_id: str, source_id: str = "_default", settings: dict = None) -> tuple[str, str]:
@@ -263,8 +318,8 @@ def get_image_processing_config(settings: dict = None) -> dict:
         "jpeg_quality": int(img_cfg.get("jpeg_quality", 85)),
         "max_dimension": int(img_cfg.get("max_dimension", 1800)),
         "dpi": int(img_cfg.get("dpi", 150)),
-        "split_filename_pattern": img_cfg.get("split_filename_pattern") or img_cfg.get("filename_pattern", "{domain}_{source}_{original_filename}_{batch_id}_p{page_no}"),
-        "archive_filename_pattern": img_cfg.get("archive_filename_pattern", "{domain}_{source}_{doc_no}_{batch_id}_p{page_no}"),
+        "split_filename_pattern": img_cfg.get("split_filename_pattern") or img_cfg.get("filename_pattern", "{doc_type}_{tax_id}_{original_filename}_{batch_id}_p{page_no}"),
+        "archive_filename_pattern": img_cfg.get("archive_filename_pattern", "{doc_type}_{tax_id}_{doc_no}_{batch_id}_p{page_no}"),
         "use_ai_fallback_matching": bool(img_cfg.get("use_ai_fallback_matching", True))
     }
 

@@ -1,6 +1,7 @@
 import argparse
 import sys
 import asyncio
+from src.core.config_loader import get_default_company_code
 from src.core.pipeline import (
     init_system,
     split_and_match,
@@ -30,6 +31,12 @@ def main():
              "  transform  - Import verified records into SQLite DB (Stage 5)"
     )
     parser.add_argument(
+        "--company-code", "-c",
+        type=str,
+        default=None,
+        help="Target client company code (e.g. 'C00000_SAMPLE', 'C00001_TRD'). Defaults to configured default company."
+    )
+    parser.add_argument(
         "--domain", "-d",
         type=str,
         default=None,
@@ -49,6 +56,7 @@ def main():
     
     args = parser.parse_args()
     step = args.step
+    company_code = args.company_code or get_default_company_code()
     domain = args.domain
     input_file = args.file
     use_async = args.async_mode
@@ -61,19 +69,19 @@ def main():
         success = init_system()
         sys.exit(0 if success else 1)
     elif step == "split":
-        res = split_and_match(domain=domain, input_file=input_file)
+        res = split_and_match(domain=domain, input_file=input_file, company_code=company_code)
         sys.exit(0)
     elif step == "extract":
         if use_async:
-            res = asyncio.run(async_extract_documents(domain=domain))
+            res = asyncio.run(async_extract_documents(domain=domain, company_code=company_code))
         else:
-            res = extract_documents(domain=domain)
+            res = extract_documents(domain=domain, company_code=company_code)
         sys.exit(0 if res.get("success", True) else 1)
     elif step == "validate":
-        res = validate_documents(domain=domain)
+        res = validate_documents(domain=domain, company_code=company_code)
         sys.exit(0)
     elif step == "transform":
-        res = transform_to_db(domain=domain)
+        res = transform_to_db(domain=domain, company_code=company_code)
         sys.exit(0)
     else:
         parser.print_help()

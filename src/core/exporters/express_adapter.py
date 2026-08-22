@@ -17,7 +17,7 @@ class ExpressExpenseExporter(BaseOutputExporter):
 
     # Default fallback account code mapping
     DEFAULT_ACCOUNT_MAPPING = {
-        "_DEFAULT": {"acc_code": "5999-99", "desc": "Miscellaneous Expense"}
+        "NO_TAXID": {"acc_code": "5999-99", "desc": "Miscellaneous Expense"}
     }
 
     def get_next_sequence_number(self) -> int:
@@ -57,11 +57,11 @@ class ExpressExpenseExporter(BaseOutputExporter):
         rows = []
         for idx, doc in enumerate(approved_docs):
             voucher_no = self.generate_running_number(prefix, idx, start_no)
-            source_id = doc.get("source_id", "_DEFAULT")
+            source_id = doc.get("source_id", "NO_TAXID")
 
             mapping = self.DEFAULT_ACCOUNT_MAPPING.get(
                 source_id,
-                self.DEFAULT_ACCOUNT_MAPPING["_DEFAULT"]
+                self.DEFAULT_ACCOUNT_MAPPING["NO_TAXID"]
             )
 
             # Resolve financial values

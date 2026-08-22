@@ -32,6 +32,9 @@ from src.core.config_loader import (
     load_system_settings,
     get_active_domains_hybrid,
     get_active_sources_hybrid,
+    get_default_company_code,
+    get_company_storage_dir,
+    get_company_pipeline_folder,
     DEFAULT_STORAGE_ROOT
 )
 from src.core.db import (
@@ -53,10 +56,14 @@ from src.core.db import (
     get_all_merchants,
     approve_merchant,
     ignore_merchant,
-    upsert_merchant
+    upsert_merchant,
+    get_all_companies,
+    get_company,
+    get_company_by_code,
+    create_company,
+    update_company,
 )
-from src.core.pipeline import split_and_match
-from src.core.pipeline.split_stage import release_pending_merchant_files
+from src.core.pipeline import split_and_match, release_pending_merchant_files
 from src.core.post_processor import post_process_document, archive_and_export_document
 
 
@@ -80,11 +87,11 @@ def get_cached_settings() -> dict:
     return load_system_settings("configs/settings.json")
 
 @st.cache_data(ttl=15)
-def get_cached_pending_documents(domain_id: str) -> List[Dict[str, Any]]:
+def get_cached_pending_documents(domain_id: str, company_id: str = None) -> List[Dict[str, Any]]:
     """
     Caches pending documents for 15 seconds to improve UI snappiness.
     """
-    return get_pending_documents(domain_id)
+    return get_pending_documents(domain_id, company_id=company_id)
 
 def main_app():
     # Setup logger once per session
@@ -121,8 +128,24 @@ def main_app():
     
     st.title("📄 AI-Multi-Docs-Extraction-Pipeline Dashboard")
     
-    # Sidebar: Domain Selection and Document Ingestion
+    # Sidebar: Company Selection, Domain Selection and Document Ingestion
     st.sidebar.header("⚙️ เมนูควบคุม (Control Panel)")
+    
+    # Company Selection
+    all_companies = get_all_companies(active_only=True)
+    if not all_companies:
+        from src.core.db import get_or_create_default_company
+        default_c = get_or_create_default_company()
+        all_companies = [default_c]
+        
+    company_options = {f"{c['company_code']} - {c['company_name']}": c for c in all_companies}
+    selected_company_label = st.sidebar.selectbox(
+        "🏢 เลือกลูกค้า / บริษัท (Company)",
+        list(company_options.keys())
+    )
+    selected_company = company_options[selected_company_label]
+    selected_company_code = selected_company["company_code"]
+    selected_company_id = selected_company["company_id"]
     
     # Reviewer Name (Configurable instead of hardcoded 'admin')
     reviewer_name = st.sidebar.text_input("👤 ชื่อผู้ตรวจสอบ (Reviewer)", value="admin")
@@ -144,12 +167,10 @@ def main_app():
     selected_domain_name = st.sidebar.selectbox("เลือกโดเมนเอกสาร (Domain)", list(domain_options.keys()))
     selected_domain = domain_options[selected_domain_name]
     
-    domain_storage = os.path.join(storage_root, selected_domain)
-    
     # Document upload block
     st.sidebar.subheader("📥 อัปโหลดเอกสารใหม่ (Upload Document)")
     uploaded_file = st.sidebar.file_uploader(
-        "อัปโหลดไฟล์ PDF หรือรูปภาพใบเสร็จ", 
+        f"อัปโหลดไฟล์สำหรับ {selected_company_code}", 
         type=["pdf", "png", "jpg", "jpeg"]
     )
     
@@ -166,17 +187,17 @@ def main_app():
         export_fmt = st.sidebar.radio("ฟอร์แมตไฟล์ปลายทาง", ["CSV", "JSON"], horizontal=True)
         
         if st.sidebar.button("🚀 ประมวลผลเอกสารด้วย AI"):
-            inbox_upload = os.path.join(domain_storage, "01_drop_zone", "Upload")
+            inbox_upload = get_company_pipeline_folder(selected_company_code, "01_drop_zone", "Upload")
             os.makedirs(inbox_upload, exist_ok=True)
             
             temp_path = os.path.join(inbox_upload, uploaded_file.name).replace("\\", "/")
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
                 
-            with st.spinner("กำลังประมวลผลไฟล์ (ตรวจสอบความสมบูรณ์ -> แยกหน้า -> ค้นหาร้านค้า)..."):
+            with st.spinner(f"กำลังประมวลผลไฟล์สำหรับ {selected_company_code} (ตรวจสอบความสมบูรณ์ -> แยกหน้า -> ค้นหาร้านค้า)..."):
                 try:
-                    split_and_match(domain=selected_domain, input_file=temp_path)
-                    st.sidebar.success("🎉 อัปโหลดและแยกไฟล์เรียบร้อยแล้ว!")
+                    split_and_match(domain=selected_domain, input_file=temp_path, company_code=selected_company_code)
+                    st.sidebar.success(f"🎉 อัปโหลดและแยกไฟล์ของบริษัท {selected_company_code} เรียบร้อยแล้ว!")
                     st.cache_data.clear()
                     st.rerun()
                 except Exception as e:
@@ -194,7 +215,7 @@ def main_app():
     
     # TAB 1: REVIEW & APPROVE
     with tab_review:
-        pending_docs = get_cached_pending_documents(selected_domain)
+        pending_docs = get_cached_pending_documents(selected_domain, company_id=selected_company_id)
         
         if not pending_docs:
             st.info("ℹ️ ไม่มีเอกสารค้างอยู่ในคิวตรวจสอบในขณะนี้ คุณสามารถอัปโหลดไฟล์ใหม่ได้ในเมนูด้านซ้าย")
@@ -271,18 +292,26 @@ def main_app():
                 with col_right:
                     st.markdown("### ✍️ แบบฟอร์มตรวจแก้ไขข้อมูล")
                     
-                    # AI Quality Assessment Info Box
-                    st.markdown("##### 🔍 ผลการประเมินการสกัดข้อมูล (AI Quality Assessment)")
-                    col_conf, col_prio = st.columns(2)
+                    # AI Quality & Cost Assessment Info Box
+                    st.markdown("##### 🔍 ผลการประเมินและการใช้จ่าย (AI Quality & Cost Metering)")
+                    col_conf, col_prio, col_cost = st.columns(3)
                     with col_conf:
                         conf_val = doc.get("overall_confidence")
                         conf_str = f"{int(conf_val*100)}%" if conf_val is not None else "ไม่มีข้อมูล"
-                        st.metric("ความแม่นยำของการสกัด (Confidence)", conf_str, 
+                        st.metric("ความแม่นยำ (Confidence)", conf_str, 
                                   help="คะแนนความมั่นใจของแบบจำลอง AI จากการสกัดหน้าเอกสารนี้")
                     with col_prio:
                         prio_val = doc.get("review_priority") or "LOW"
                         prio_colors = {"HIGH": "🔴 เร่งด่วน (HIGH)", "MEDIUM": "🟡 ปานกลาง (MEDIUM)", "LOW": "🟢 ปกติ (LOW)"}
-                        st.metric("ลำดับความสำคัญในการตรวจ (Priority)", prio_colors.get(prio_val, prio_val))
+                        st.metric("ลำดับความสำคัญ (Priority)", prio_colors.get(prio_val, prio_val))
+                    with col_cost:
+                        c_usd = doc.get("cost_usd", 0.0) or 0.0
+                        c_thb = doc.get("cost_thb", 0.0) or 0.0
+                        is_free = doc.get("is_free_tier", 0)
+                        tier_label = "🆓 Free Tier" if is_free else f"${c_usd:.4f}"
+                        sub_label = f"~{c_thb:.3f} THB" if not is_free else "0.00 THB"
+                        st.metric("ต้นทุน AI (Cost)", tier_label, delta=sub_label, delta_color="off",
+                                  help="ต้นทุนค่าธรรมเนียม AI ประเมินจริงตามจำนวน Token ที่ประมวลผล")
                         
                     if doc.get("is_blurry") == 1 or doc.get("has_ambiguous_fields") == 1:
                         alerts = []
@@ -648,16 +677,16 @@ def main_app():
                                     
     # TAB 2: MERCHANT GATEKEEPER & APPROVAL
     with tab_merchants:
-        st.subheader("🏪 ศูนย์ตรวจสอบและอนุมัติร้านค้าใหม่ (Merchant Gatekeeper)")
+        st.subheader(f"🏪 ศูนย์ตรวจสอบและอนุมัติร้านค้าใหม่ (Merchant Gatekeeper) - บริษัท {selected_company_code}")
         st.markdown(
             "ร้านค้าใหม่ที่มี Tax ID ที่ระบบยังไม่เคยรู้จักจะถูกตั้งสถานะเป็น **`PENDING`** "
-            "และเอกสารจะถูก **พักการทำงาน (Hold)** ไว้ใน `02_raw_data/PENDING/` จนกว่าแอดมินจะกดอนุมัติที่นี่"
+            f"และเอกสารจะถูก **พักการทำงาน (Hold)** ไว้ใน `storage/companies/{selected_company_code}/02_raw_data/PENDING/` จนกว่าแอดมินจะกดอนุมัติที่นี่"
         )
         
-        pending_merchants = get_pending_merchants()
+        pending_merchants = get_pending_merchants(company_id=selected_company_id)
         
         if not pending_merchants:
-            st.success("🎉 ไม่มีร้านค้าใหม่ค้างรอการอนุมัติในขณะนี้ ทุกร้านค้าได้รับการตรวจสอบเรียบร้อยแล้ว")
+            st.success(f"🎉 ไม่มีร้านค้าใหม่ค้างรอการอนุมัติสำหรับบริษัท {selected_company_code} ในขณะนี้")
         else:
             st.warning(f"⚠️ พบร้านค้าใหม่รอการอนุมัติ {len(pending_merchants)} รายการ")
             
@@ -689,8 +718,8 @@ def main_app():
                         
                         # Real-time uniqueness alert
                         from src.core.db import check_short_name_duplicate, check_file_prefix_duplicate
-                        is_short_dup = check_short_name_duplicate(edit_short_name, exclude_merchant_id=m_id)
-                        is_pfx_dup = check_file_prefix_duplicate(edit_file_prefix, exclude_merchant_id=m_id)
+                        is_short_dup = check_short_name_duplicate(edit_short_name, exclude_merchant_id=m_id, company_id=selected_company_id)
+                        is_pfx_dup = check_file_prefix_duplicate(edit_file_prefix, exclude_merchant_id=m_id, company_id=selected_company_id)
                         
                         if is_short_dup:
                             st.error(f"❌ ชื่อย่อ `{edit_short_name}` ซ้ำกับร้านอื่นในระบบ กรุณาแก้ไขให้ไม่ซ้ำ")
@@ -711,7 +740,7 @@ def main_app():
                                     file_prefix=edit_file_prefix
                                 )
                                 if ok:
-                                    released = release_pending_merchant_files(selected_domain, tax_id_val, edit_short_name)
+                                    released = release_pending_merchant_files(selected_domain, tax_id_val, edit_short_name, company_code=selected_company_code)
                                     st.success(f"🎉 อนุมัติร้านค้า '{m_name}' สำเร็จ! ปล่อยเอกสาร {len(released)} รายการเข้าสู่คิวประมวลผลต่อแล้ว")
                                     st.toast("อนุมัติร้านค้าและปล่อยเอกสารเรียบร้อย!", icon="🚀")
                                     st.cache_data.clear()
@@ -727,8 +756,8 @@ def main_app():
                                 st.rerun()
 
         st.divider()
-        st.subheader("📋 รายชื่อร้านค้าทั้งหมดในระบบ (Master Merchant Directory)")
-        all_merchants = get_all_merchants()
+        st.subheader(f"📋 รายชื่อร้านค้าทั้งหมดของบริษัท {selected_company_code} (Merchant Directory)")
+        all_merchants = get_all_merchants(company_id=selected_company_id)
         if all_merchants:
             df_m = pd.DataFrame(all_merchants)
             cols_to_show = [c for c in ["merchant_id", "tax_id", "merchant_name", "short_name", "status", "approved_by", "created_at"] if c in df_m.columns]
@@ -736,7 +765,7 @@ def main_app():
 
     # TAB 3: SEARCH & HISTORY
     with tab_search:
-        st.subheader("📊 ค้นหาประวัติเอกสารย้อนหลัง (Search & Historical Dashboard)")
+        st.subheader(f"📊 ค้นหาประวัติเอกสารย้อนหลัง (Search & History) - บริษัท {selected_company_code}")
         
         # Filter layout
         col_f1, col_f2, col_f3, col_f4 = st.columns(4)
@@ -757,7 +786,8 @@ def main_app():
             source_id=search_source if search_source != "All" else None,
             start_date=start_date_val.strftime("%Y-%m-%d"),
             end_date=end_date_val.strftime("%Y-%m-%d"),
-            keyword=search_kw if search_kw else None
+            keyword=search_kw if search_kw else None,
+            company_id=selected_company_id
         )
         
         if not results:
@@ -822,12 +852,68 @@ def main_app():
                     else:
                         st.info("ไม่มีรูปภาพสแกนสำหรับเอกสารนี้")
                         
-    # TAB 3: ADMIN SETTINGS
+    # TAB 4: ADMIN SETTINGS
     with tab_settings:
-        st.subheader("⚙️ ระบบเปิด/ปิดการใช้งานและตั้งค่าแอดมิน (Admin & Toggle Settings)")
+        st.subheader("⚙️ ระบบเปิด/ปิดการใช้งานและตั้งค่าแอดมิน (Admin & Multi-Company Settings)")
         
-        # 1. Manage domains
-        st.markdown("#### 📂 1. จัดการการเปิดใช้งานโดเมนเอกสาร (Manage Domains)")
+        # 1. Manage Companies
+        st.markdown("#### 🏢 1. จัดการข้อมูลบริษัทลูกค้า (Client Companies Management)")
+        comps = get_all_companies(active_only=False)
+        
+        # Form to add new company
+        with st.expander("➕ เพิ่มบริษัทลูกค้าใหม่ (Register New Company)", expanded=False):
+            with st.form("add_company_form", clear_on_submit=True):
+                c_code_input = st.text_input("รหัสบริษัท (Company Code e.g. C00001_TRD)*").strip()
+                c_name_input = st.text_input("ชื่อบริษัทเต็ม (Full Legal Name)*").strip()
+                c_short_input = st.text_input("ชื่อย่อบริษัท (Short Name e.g. TRD)").strip()
+                c_tax_input = st.text_input("เลขประจำตัวผู้เสียภาษี 13 หลัก (Tax ID)").strip()
+                c_branch_input = st.text_input("รหัสสาขา 5 หลัก (Branch Code)", value="00000").strip()
+                
+                submitted_company = st.form_submit_button("บันทึกและสร้างโฟลเดอร์จัดเก็บ")
+                if submitted_company:
+                    if not c_code_input or not c_name_input:
+                        st.error("กรุณากรอกรหัสบริษัทและชื่อบริษัทให้ครบถ้วน")
+                    else:
+                        existing_comp = get_company_by_code(c_code_input)
+                        if existing_comp:
+                            st.error(f"รหัสบริษัท '{c_code_input}' มีอยู่ในระบบแล้ว")
+                        else:
+                            created_id = create_company(
+                                company_code=c_code_input,
+                                company_name=c_name_input,
+                                short_name=c_short_input or None,
+                                tax_id=c_tax_input or None,
+                                branch_code=c_branch_input or "00000",
+                            )
+                            if created_id:
+                                initialize_storage_directories()
+                                st.success(f"🎉 สร้างบริษัท '{c_code_input}' และโฟลเดอร์จัดเก็บเรียบร้อยแล้ว!")
+                                st.cache_data.clear()
+                                st.rerun()
+                            else:
+                                st.error("ไม่สามารถสร้างบริษัทได้")
+
+        # Company list table & toggle
+        if comps:
+            for comp_item in comps:
+                col_c1, col_c2, col_c3 = st.columns([3, 2, 1])
+                with col_c1:
+                    st.markdown(f"**{comp_item['company_code']}** - {comp_item['company_name']}")
+                with col_c2:
+                    st.caption(f"Tax ID: `{comp_item.get('tax_id') or 'N/A'}` | สาขา: `{comp_item.get('branch_code') or '00000'}`")
+                with col_c3:
+                    is_active_c = comp_item.get("is_active", 1) == 1
+                    tog_c = st.checkbox("เปิดใช้งาน", value=is_active_c, key=f"comp_tog_{comp_item['company_id']}")
+                    if tog_c != is_active_c:
+                        update_company(comp_item["company_id"], is_active=1 if tog_c else 0)
+                        st.toast(f"อัปเดตสถานะบริษัท {comp_item['company_code']} เรียบร้อย", icon="🏢")
+                        st.cache_data.clear()
+                        st.rerun()
+
+        st.markdown("---")
+
+        # 2. Manage domains
+        st.markdown("#### 📂 2. จัดการการเปิดใช้งานโดเมนเอกสาร (Manage Domains)")
         all_domains = get_domains()
         
         # Draw columns/grid for domains
@@ -846,8 +932,8 @@ def main_app():
                     
         st.markdown("---")
         
-        # 2. Manage sources for selected domain
-        st.markdown(f"#### 🛍️ 2. จัดการร้านค้า/ผู้ให้บริการ (Manage Sources) สำหรับ: {selected_domain_name}")
+        # 3. Manage sources for selected domain
+        st.markdown(f"#### 🛍️ 3. จัดการร้านค้า/ผู้ให้บริการ (Manage Sources) สำหรับ: {selected_domain_name}")
         all_sources = get_sources(selected_domain)
         
         if not all_sources:

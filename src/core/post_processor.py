@@ -141,26 +141,20 @@ def archive_and_export_document(document_id: str, payload: dict, original_pdf_na
                                 domain_id: str, source_id: str, settings: dict, conn=None, **kwargs) -> bool:
     """
     Performs file archiving and report exporting for an approved document.
-    Copies raw file and split pages to 04_archive, deletes pages from 02_split_pages,
-    and updates flattened outputs.
+    Copies raw file and split pages to 05_archive, and updates flattened outputs in 06_output.
     """
-    storage_root = settings.get("storage_root", "storage")
-    domain_storage = os.path.join(storage_root, domain_id).replace("\\", "/")
+    from src.core.storage_manager import storage_manager
+    comp_code = kwargs.get("company_code") or "C00000_SAMPLE"
     
     # 1. Archiving Files
-    archive_dir = os.path.join(domain_storage, "05_archive").replace("\\", "/")
     current_month = datetime.now().strftime("%Y-%m")
-    month_archive_raw = os.path.join(archive_dir, current_month, "raw").replace("\\", "/")
-    month_archive_json = os.path.join(archive_dir, current_month, "verified_json").replace("\\", "/")
+    month_archive_raw = storage_manager.get_archive_dir(comp_code, domain_id, year_month=current_month, sub="raw")
+    month_archive_json = storage_manager.get_archive_dir(comp_code, domain_id, year_month=current_month, sub="verified_json")
     
-    os.makedirs(month_archive_raw, exist_ok=True)
-    os.makedirs(month_archive_json, exist_ok=True)
-    
-    # Find and copy original file from 02_raw_data, 01_drop_zone, or 01_raw_inbox to archive raw
+    # Find and copy original file from raw_data or drop_zone
     raw_dirs = [
-        os.path.join(domain_storage, "02_raw_data").replace("\\", "/"),
-        os.path.join(domain_storage, "01_drop_zone").replace("\\", "/"),
-        os.path.join(domain_storage, "01_raw_inbox").replace("\\", "/")
+        storage_manager.get_raw_data_dir(comp_code, domain_id),
+        storage_manager.get_drop_zone_dir(comp_code, domain_id),
     ]
     for r_dir in raw_dirs:
         if os.path.exists(r_dir):
@@ -172,31 +166,25 @@ def archive_and_export_document(document_id: str, payload: dict, original_pdf_na
                         shutil.copy(src_f, dst_f)
                         break
                         
-    # Copy split pages and write JSON payload to archive
+    # Copy split pages
     pages = get_document_pages(document_id)
     for page in pages:
         img_path = page["image_path"]
         if os.path.exists(img_path):
             shutil.copy(img_path, os.path.join(month_archive_raw, os.path.basename(img_path)).replace("\\", "/"))
-            try:
-                os.remove(img_path)
-            except Exception as re_err:
-                logger.warning(f"Failed to remove split page image {img_path}: {re_err}")
-                
-    # Save final JSON in archive
+            
+    # Write verified JSON payload to archive
     archive_json_path = os.path.join(month_archive_json, f"{document_id}.json").replace("\\", "/")
-    with open(archive_json_path, "w", encoding="utf-8") as af:
-        json.dump(payload, af, ensure_ascii=False, indent=2)
+    with open(archive_json_path, "w", encoding="utf-8") as jf:
+        json.dump(payload, jf, ensure_ascii=False, indent=2)
         
-    # 2. Export outputs for all registered exporters in the domain
+    # 2. Append to Registered Domain Exporters (Output to 06_output)
     try:
-        from src.core.exporters import list_exporters
-        exporters_list = list_exporters(domain_id)
+        from src.core.exporters import get_domain_exporters
+        exporters_list = get_domain_exporters(domain_id)
         
-        # Prepare merged document dictionary containing payload and metadata
         doc_data = {
-            **payload,
-            "source_id": source_id,
+            "payload": payload,
             "domain_id": domain_id,
             "document_id": document_id,
             "original_pdf_name": original_pdf_name
@@ -212,37 +200,9 @@ def archive_and_export_document(document_id: str, payload: dict, original_pdf_na
                 if df_new.empty:
                     continue
                     
-                os.makedirs("outputs", exist_ok=True)
-                output_file_base = os.path.join("outputs", f"{domain_id}_{exporter_id}_export").replace("\\", "/")
-                
-                # Determine encoding: Express PV uses cp874 for older Thai local software compatibility
-                encoding = "cp874" if exporter_id == "express_pv" else "utf-8-sig"
-                
-                # Write CSV
-                csv_path = f"{output_file_base}.csv"
-                if os.path.exists(csv_path):
-                    try:
-                        df_old = pd.read_csv(csv_path, encoding=encoding)
-                        df_final = pd.concat([df_old, df_new], ignore_index=True)
-                    except Exception:
-                        df_final = df_new
-                else:
-                    df_final = df_new
-                df_final.to_csv(csv_path, index=False, encoding=encoding)
-                
-                # Write JSON
-                json_path = f"{output_file_base}.json"
-                if os.path.exists(json_path):
-                    try:
-                        with open(json_path, "r", encoding="utf-8") as rf:
-                            list_old = json.load(rf)
-                    except Exception:
-                        list_old = []
-                else:
-                    list_old = []
-                list_old.extend(df_new.to_dict(orient="records"))
-                with open(json_path, "w", encoding="utf-8") as wf:
-                    json.dump(list_old, wf, ensure_ascii=False, indent=2)
+                output_dir = storage_manager.get_output_dir(comp_code, domain_id)
+                output_file_base = os.path.join(output_dir, f"{domain_id}_{exporter_id}_export").replace("\\", "/")
+                handler.export([doc_data], output_file_base, **kwargs)
             except Exception as te:
                 logger.error(f"Failed to auto-export for exporter {exporter_id}: {te}")
     except Exception as re_err:

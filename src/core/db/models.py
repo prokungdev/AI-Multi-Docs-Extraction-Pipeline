@@ -38,6 +38,27 @@ class DictSerializableMixin:
         return result
 
 
+class Company(Base, DictSerializableMixin):
+    """Standardized client company entity model for multi-company isolation."""
+    __tablename__ = "companies"
+
+    company_id = Column(String(36), primary_key=True)
+    company_code = Column(String(50), unique=True, nullable=False, index=True)
+    company_name = Column(String(255), nullable=False)
+    short_name = Column(String(50), nullable=False)
+    tax_id = Column(String(13), nullable=True, index=True)
+    branch_code = Column(String(5), nullable=False, default="00000")
+    is_active = Column(Integer, default=1)
+    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at = Column(String(50), nullable=True)
+
+    batches = relationship("ProcessedBatch", back_populates="company", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="company", cascade="all, delete-orphan")
+    merchants = relationship("Merchant", back_populates="company", cascade="all, delete-orphan")
+    expense_receipts = relationship("ExpenseReceipt", back_populates="company", cascade="all, delete-orphan")
+    api_call_logs = relationship("ApiCallLog", back_populates="company")
+
+
 class DocumentStatus(Base, DictSerializableMixin):
     """Document processing status reference model."""
     __tablename__ = "document_statuses"
@@ -62,12 +83,14 @@ class ProcessedBatch(Base, DictSerializableMixin):
     __tablename__ = "processed_batches"
 
     batch_id = Column(String(100), primary_key=True)
+    company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=True, index=True)
     original_filename = Column(String(255), nullable=False)
     total_pages = Column(Integer, nullable=False)
     storage_path = Column(String(500), nullable=False)
     file_hash = Column(String(64), unique=True, nullable=False)
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
 
+    company = relationship("Company", back_populates="batches")
     documents = relationship("Document", back_populates="batch", cascade="all, delete-orphan")
     pages = relationship("DocumentPage", back_populates="batch", cascade="all, delete-orphan")
 
@@ -77,6 +100,7 @@ class Document(Base, DictSerializableMixin):
     __tablename__ = "documents"
 
     document_id = Column(String(100), primary_key=True)
+    company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=True, index=True)
     batch_id = Column(String(100), ForeignKey("processed_batches.batch_id", ondelete="CASCADE"), nullable=False)
     domain_id = Column(String(100), nullable=False)
     source_id = Column(String(100), nullable=False)
@@ -95,6 +119,9 @@ class Document(Base, DictSerializableMixin):
     model_used = Column(String(100), nullable=True)
     input_tokens = Column(Integer, default=0, server_default="0")
     output_tokens = Column(Integer, default=0, server_default="0")
+    cost_usd = Column(Float, default=0.0, server_default="0.0")
+    cost_thb = Column(Float, default=0.0, server_default="0.0")
+    is_free_tier = Column(Integer, default=0, server_default="0")
     overall_confidence = Column(Float, nullable=True)
     confidence_level = Column(String(50), nullable=True)
     is_blurry = Column(Integer, nullable=True)
@@ -105,6 +132,7 @@ class Document(Base, DictSerializableMixin):
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at = Column(String(50), nullable=True)
 
+    company = relationship("Company", back_populates="documents")
     batch = relationship("ProcessedBatch", back_populates="documents")
     status = relationship("DocumentStatus")
     pages = relationship("DocumentPage", back_populates="document")
@@ -134,6 +162,7 @@ class Merchant(Base, DictSerializableMixin):
     __tablename__ = "merchants"
 
     merchant_id = Column(String(100), primary_key=True)
+    company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=True, index=True)
     tax_id = Column(String(50), nullable=True)
     merchant_name = Column(String(200), nullable=False)
     short_name = Column(String(100), nullable=False, default="merchant")
@@ -146,13 +175,14 @@ class Merchant(Base, DictSerializableMixin):
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at = Column(String(50), nullable=True)
 
+    company = relationship("Company", back_populates="merchants")
     receipts = relationship("ExpenseReceipt", back_populates="merchant")
 
     __table_args__ = (
-        Index("idx_merchants_tax_id", "tax_id"),
-        Index("idx_merchants_name", "merchant_name"),
-        Index("idx_merchants_short_name", "short_name"),
-        Index("idx_merchants_file_prefix", "file_prefix"),
+        Index("idx_merchants_company_tax_id", "company_id", "tax_id"),
+        Index("idx_merchants_company_name", "company_id", "merchant_name"),
+        Index("idx_merchants_company_short_name", "company_id", "short_name"),
+        Index("idx_merchants_company_file_prefix", "company_id", "file_prefix"),
         Index("idx_merchants_status_code", "status_code"),
     )
 
@@ -166,6 +196,7 @@ class ExpenseReceipt(Base, DictSerializableMixin):
     __tablename__ = "expense_receipts"
 
     receipt_id = Column(String(100), primary_key=True)
+    company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=True, index=True)
     document_id = Column(String(100), ForeignKey("documents.document_id", ondelete="CASCADE"), nullable=False)
     merchant_id = Column(String(100), ForeignKey("merchants.merchant_id"), nullable=False)
     transaction_date = Column(String(50), nullable=True)
@@ -181,6 +212,7 @@ class ExpenseReceipt(Base, DictSerializableMixin):
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at = Column(String(50), nullable=True)
 
+    company = relationship("Company", back_populates="expense_receipts")
     document = relationship("Document", back_populates="expense_receipts")
     merchant = relationship("Merchant", back_populates="receipts")
     items = relationship("ExpenseReceiptItem", back_populates="receipt", cascade="all, delete-orphan")
@@ -220,6 +252,7 @@ class ApiCallLog(Base, DictSerializableMixin):
     __tablename__ = "api_call_logs"
 
     log_id = Column(String(100), primary_key=True)
+    company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="SET NULL"), nullable=True, index=True)
     batch_id = Column(String(100), nullable=True)
     credential_id = Column(String(100), nullable=True)
     provider = Column(String(50), nullable=False)
@@ -229,10 +262,15 @@ class ApiCallLog(Base, DictSerializableMixin):
     status_code = Column(String(50), nullable=False)
     input_tokens = Column(Integer, default=0)
     output_tokens = Column(Integer, default=0)
+    cost_usd = Column(Float, default=0.0, server_default="0.0")
+    nominal_value_usd = Column(Float, default=0.0, server_default="0.0")
+    is_free_tier = Column(Integer, default=0, server_default="0")
     latency_ms = Column(Float, nullable=True)
     error_reason = Column(Text, nullable=True)
     raw_response = Column(Text, nullable=True)
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
+
+    company = relationship("Company", back_populates="api_call_logs")
 
 
 class ApplicationLog(Base, DictSerializableMixin):

@@ -11,8 +11,9 @@ from src.core.config_loader import (
     load_system_settings,
     load_doc_type_prompt,
     get_ai_provider_config,
-    get_doc_type_config_dir
+    get_doc_type_config_dir,
 )
+from src.core.storage_manager import storage_manager
 from src.core.db import (
     get_or_create_merchant_auto,
     get_merchant_by_tax_id,
@@ -21,7 +22,11 @@ from src.core.db import (
 )
 
 
-def fast_filename_prefix_match(file_path: str, domain: str = "expense_receipt") -> dict | None:
+def fast_filename_prefix_match(
+    file_path: str,
+    domain: str = "expense_receipt",
+    company_code: Optional[str] = None
+) -> dict | None:
     """
     Checks if filename matches any approved merchant file_prefix or tax_id.
     If matched, bypasses AI classification entirely (Zero AI Token Cost).
@@ -31,11 +36,6 @@ def fast_filename_prefix_match(file_path: str, domain: str = "expense_receipt") 
     if not matched_merchant:
         return None
 
-    settings = load_system_settings()
-    storage_root = settings.get("storage_root", "storage")
-    domain_storage = os.path.join(storage_root, domain).replace("\\", "/")
-    raw_data_base = os.path.join(domain_storage, "02_raw_data").replace("\\", "/")
-
     status = matched_merchant.get("status_code") or matched_merchant.get("status", "APPROVED")
     tax_id = matched_merchant.get("tax_id") or "NO_TAXID"
     short_name = matched_merchant.get("short_name") or "merchant"
@@ -43,14 +43,14 @@ def fast_filename_prefix_match(file_path: str, domain: str = "expense_receipt") 
     folder_identifier = f"{tax_id}_{short_name}" if tax_id != "NO_TAXID" else "NO_TAXID"
 
     if status == "PENDING":
-        target_folder = os.path.join(raw_data_base, "PENDING", folder_identifier).replace("\\", "/")
+        target_folder = storage_manager.get_raw_data_dir(company_code, domain, status="PENDING", merchant_folder=folder_identifier)
         pipeline_action = "HOLD"
     elif status == "IGNORED":
-        target_folder = os.path.join(raw_data_base, "IGNORED", folder_identifier).replace("\\", "/")
+        target_folder = storage_manager.get_raw_data_dir(company_code, domain, status="IGNORED", merchant_folder=folder_identifier)
         pipeline_action = "IGNORE"
     else:
         # APPROVED
-        target_folder = os.path.join(raw_data_base, folder_identifier).replace("\\", "/")
+        target_folder = storage_manager.get_raw_data_dir(company_code, domain, merchant_folder=folder_identifier)
         pipeline_action = "PROCEED"
 
     os.makedirs(target_folder, exist_ok=True)
@@ -136,6 +136,7 @@ def offline_text_classifier(file_path: str) -> dict:
 def classify_drop_zone_document(
     file_path: str,
     domain: str = "expense_receipt",
+    company_code: Optional[str] = None,
     configs_dir: str = "configs"
 ) -> dict:
     """
@@ -144,30 +145,23 @@ def classify_drop_zone_document(
     and returns routing instructions and pipeline action (PROCEED, HOLD, IGNORE).
     """
     # 0. Check Zero-Cost Rule Match via file_prefix or Tax ID in filename
-    fast_match = fast_filename_prefix_match(file_path, domain=domain)
+    fast_match = fast_filename_prefix_match(file_path, domain=domain, company_code=company_code)
     if fast_match:
         return fast_match
 
-    logger.info(f"Classifying drop zone document: '{os.path.basename(file_path)}' (DocType: '{domain}')")
-    
-    settings = load_system_settings()
-    storage_root = settings.get("storage_root", "storage")
-    domain_storage = os.path.join(storage_root, domain).replace("\\", "/")
-    raw_data_base = os.path.join(domain_storage, "02_raw_data").replace("\\", "/")
+    comp = company_code or "C00000_SAMPLE"
+    preprocess_dir = storage_manager.get_preprocess_dir(comp, domain)
 
     # 1. Render Page 1 only
-    temp_p1_path = render_page_one(file_path, output_dir=os.path.join(domain_storage, "03_preprocess"))
+    temp_p1_path = render_page_one(file_path, output_dir=preprocess_dir)
     
     classification_result = None
     api_key = os.getenv("GEMINI_API_KEY")
 
-    # 2. Fast AI classification via Gemini (if key available)
+    # 2. Fast AI classification via AIService (if key available)
     if api_key:
         try:
-            from google import genai
-            from google.genai import types
-
-            client = genai.Client(api_key=api_key)
+            from src.core.ai_service import ai_service
             cfg_dir = get_doc_type_config_dir(domain, configs_dir)
             classify_prompt_path = os.path.join(cfg_dir, "classify-prompt.txt")
             
@@ -188,20 +182,12 @@ def classify_drop_zone_document(
             }
 
             img = Image.open(temp_p1_path)
-            ai_cfg = get_ai_provider_config(settings)
-            model_name = ai_cfg.get("model_name", "gemini-3.5-flash")
-
-            response = client.models.generate_content(
-                model=model_name,
-                contents=[prompt_text, img],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=classify_schema,
-                    temperature=0.1
-                )
+            classification_result, meta = ai_service.extract_structured_json(
+                prompt=prompt_text,
+                images=[img],
+                response_schema=classify_schema,
+                temperature=0.1
             )
-            raw_text = response.text.strip()
-            classification_result = json.loads(raw_text)
             logger.info(f"AI Fast Classifier result: {classification_result}")
         except Exception as e:
             logger.warning(f"AI classification failed, falling back to offline scan: {e}")
@@ -235,22 +221,22 @@ def classify_drop_zone_document(
         folder_identifier = f"{tax_id}_{short_name}"
 
         if status == "PENDING":
-            target_folder = os.path.join(raw_data_base, "PENDING", folder_identifier).replace("\\", "/")
+            target_folder = storage_manager.get_raw_data_dir(company_code, domain, status="PENDING", merchant_folder=folder_identifier)
             pipeline_action = "HOLD"
             logger.warning(f"Merchant '{merchant_name}' is in PENDING status. File held for review in '{target_folder}'.")
         elif status == "IGNORED":
-            target_folder = os.path.join(raw_data_base, "IGNORED", folder_identifier).replace("\\", "/")
+            target_folder = storage_manager.get_raw_data_dir(company_code, domain, status="IGNORED", merchant_folder=folder_identifier)
             pipeline_action = "IGNORE"
             logger.info(f"Merchant '{merchant_name}' is in IGNORED status. File moved to '{target_folder}'.")
         else:
             # APPROVED
-            target_folder = os.path.join(raw_data_base, folder_identifier).replace("\\", "/")
+            target_folder = storage_manager.get_raw_data_dir(company_code, domain, merchant_folder=folder_identifier)
             pipeline_action = "PROCEED"
             logger.info(f"Merchant '{merchant_name}' is APPROVED. File ready in '{target_folder}'.")
     else:
         # No 13-digit Tax ID found -> slip / cash bill
         merchant = {"merchant_id": "merch_notax", "tax_id": "NO_TAXID", "status_code": "APPROVED", "short_name": "no_taxid"}
-        target_folder = os.path.join(raw_data_base, "NO_TAXID").replace("\\", "/")
+        target_folder = storage_manager.get_raw_data_dir(company_code, domain, merchant_folder="NO_TAXID")
         pipeline_action = "PROCEED"
         folder_identifier = "NO_TAXID"
         logger.info(f"No valid Tax ID detected for '{os.path.basename(file_path)}'. Routing to NO_TAXID folder.")

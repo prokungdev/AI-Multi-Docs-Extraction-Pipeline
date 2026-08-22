@@ -13,12 +13,17 @@ from typing import Generator
 from loguru import logger
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
+from src.core.constants import (
+    DEFAULT_SETTINGS_PATH,
+    DEFAULT_STORAGE_ROOT,
+    DEFAULT_DATABASE_FILENAME,
+)
 
 # Project root directory (4 levels up from src/core/db/connection.py)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
-def get_database_config(settings_path: str = "configs/settings.json") -> dict:
+def get_database_config(settings_path: str = DEFAULT_SETTINGS_PATH) -> dict:
     """
     Loads the database configuration block from settings.json.
     """
@@ -33,7 +38,7 @@ def get_database_config(settings_path: str = "configs/settings.json") -> dict:
     return {}
 
 
-def get_database_url(settings_path: str = "configs/settings.json") -> str:
+def get_database_url(settings_path: str = DEFAULT_SETTINGS_PATH) -> str:
     """
     Resolves database connection URL dynamically.
     Priority:
@@ -73,14 +78,15 @@ def get_database_url(settings_path: str = "configs/settings.json") -> str:
 
     # SQLite resolution (Default)
     sqlite_cfg = db_cfg.get("sqlite", {})
-    db_filename = sqlite_cfg.get("db_filename", "pipeline.db")
+    db_filename = sqlite_cfg.get("db_filename", "database/pipeline.db")
     abs_storage_dir = PROJECT_ROOT / storage_root if not os.path.isabs(storage_root) else Path(storage_root)
-    os.makedirs(abs_storage_dir, exist_ok=True)
-    db_path = str((abs_storage_dir / db_filename).resolve()).replace("\\", "/")
+    full_db_path = (abs_storage_dir / db_filename).resolve()
+    os.makedirs(full_db_path.parent, exist_ok=True)
+    db_path = str(full_db_path).replace("\\", "/")
     return f"sqlite:///{db_path}"
 
 
-def get_engine(settings_path: str = "configs/settings.json"):
+def get_engine(settings_path: str = DEFAULT_SETTINGS_PATH):
     """
     Returns a configured Engine instance with connection pooling based on the resolved driver.
     """
@@ -135,7 +141,16 @@ def get_db_session() -> Generator[Session, None, None]:
         session.close()
 
 
-def get_db_connection(settings_path: str = "configs/settings.json") -> sqlite3.Connection:
+def get_db_session_dep() -> Generator[Session, None, None]:
+    """
+    FastAPI Dependency for transactional SQLAlchemy ORM sessions.
+    Automatically commits on success, rolls back on exception, and ensures safe cleanup.
+    """
+    with get_db_session() as session:
+        yield session
+
+
+def get_db_connection(settings_path: str = DEFAULT_SETTINGS_PATH) -> sqlite3.Connection:
     """
     Legacy helper: Establishes a raw connection to the centralized SQLite database.
     """
@@ -143,8 +158,9 @@ def get_db_connection(settings_path: str = "configs/settings.json") -> sqlite3.C
     if db_url.startswith("sqlite:///"):
         raw_path = db_url.replace("sqlite:///", "")
     else:
-        raw_path = "storage/pipeline.db"
+        raw_path = "storage/database/pipeline.db"
 
+    os.makedirs(os.path.dirname(raw_path), exist_ok=True)
     conn = sqlite3.connect(raw_path, timeout=30.0)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -152,7 +168,7 @@ def get_db_connection(settings_path: str = "configs/settings.json") -> sqlite3.C
     return conn
 
 
-def get_log_db_connection(settings_path: str = "configs/settings.json") -> sqlite3.Connection:
+def get_log_db_connection(settings_path: str = DEFAULT_SETTINGS_PATH) -> sqlite3.Connection:
     """
     Establishes a connection to the separate logs SQLite database (logs/logs.db).
     """
@@ -178,7 +194,7 @@ def get_log_db_connection(settings_path: str = "configs/settings.json") -> sqlit
 
 
 @contextmanager
-def get_db_connection_ctx(settings_path: str = "configs/settings.json") -> Generator[sqlite3.Connection, None, None]:
+def get_db_connection_ctx(settings_path: str = DEFAULT_SETTINGS_PATH) -> Generator[sqlite3.Connection, None, None]:
     """
     Context manager for database connections that automatically handles closing.
     """
@@ -190,7 +206,7 @@ def get_db_connection_ctx(settings_path: str = "configs/settings.json") -> Gener
 
 
 @contextmanager
-def get_log_db_connection_ctx(settings_path: str = "configs/settings.json") -> Generator[sqlite3.Connection, None, None]:
+def get_log_db_connection_ctx(settings_path: str = DEFAULT_SETTINGS_PATH) -> Generator[sqlite3.Connection, None, None]:
     """
     Context manager for log database connections that automatically handles closing.
     """

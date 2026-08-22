@@ -1,0 +1,43 @@
+# AI Search Ignore List (.geminiignore)
+
+# Virtual Environments & Packages
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+
+# Testing & Coverage Caches
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+
+# Jupyter & Notebook Checkpoints
+.ipynb_checkpoints/
+
+# Pipeline Temporary & Staged Data (Massive File Trees)
+storage/companies/*/expense_receipt/02_raw_data/
+storage/companies/*/expense_receipt/03_preprocess/
+storage/companies/*/expense_receipt/04_processing/
+storage/companies/*/expense_receipt/05_archive/
+storage/database/*.db
+storage/database/*.db-journal
+storage/**/*.db
+
+# Output Artifacts & Exports
+outputs/
+logs/*.log
+
+# IDE & Editor Configs
+.idea/
+.vscode/
+
+# Web / Node / Mobile dependencies
+node_modules/
+.next/
+out/
+.turbo/
+.dart_tool/

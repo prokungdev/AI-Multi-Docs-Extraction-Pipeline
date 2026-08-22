@@ -1,0 +1,254 @@
+import os
+import shutil
+import unittest
+import uuid
+from fastapi.testclient import TestClient
+
+from apps.api.main import app
+from src.core.healthcheck import (
+    run_healthcheck,
+    check_database_status,
+    check_api_ready,
+)
+from src.core.config_loader import load_system_settings, get_company_storage_dir
+from src.core.db.connection import get_db_session
+from src.core.db.models import Company
+
+
+class TestHealthcheckServices(unittest.TestCase):
+    """
+    Test suite for System Healthcheck and Readiness diagnostics.
+    """
+
+    def setUp(self):
+        self.settings = load_system_settings()
+
+    def test_01_database_status_check(self):
+        """Test database connection status check."""
+        ok, msg = check_database_status()
+        self.assertTrue(ok)
+        self.assertIn("Connected", msg)
+
+    def test_02_api_ready_check(self):
+        """Test AI API readiness check."""
+        ok, msg, remedies = check_api_ready(self.settings)
+        self.assertTrue(ok)
+        self.assertEqual(len(remedies), 0)
+
+    def test_03_full_run_healthcheck(self):
+        """Test lightweight run_healthcheck execution payload."""
+        results = run_healthcheck()
+        self.assertIn("healthy", results)
+        self.assertIn("status", results)
+        self.assertIn("checks", results)
+        self.assertIn("database", results["checks"])
+        self.assertIn("api_ready", results["checks"])
+        self.assertTrue(results["healthy"])
+        self.assertEqual(results["status"], "OK")
+
+
+class TestFastAPIRestAPI(unittest.TestCase):
+    """
+    Test suite for FastAPI REST API endpoints and Multi-Company lifecycle.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(app)
+
+    def test_root_endpoint(self):
+        """Verify root endpoint returns service metadata and links."""
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data.get("status"), "online")
+        self.assertEqual(data.get("docs_url"), "/docs")
+        self.assertEqual(data.get("health_check"), "/api/v1/health")
+
+    def test_swagger_docs_accessible(self):
+        """Verify Swagger UI documentation page is accessible."""
+        response = self.client.get("/docs")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers.get("content-type", ""))
+
+    def test_health_endpoint(self):
+        """Verify /api/v1/health endpoint connects to Core Healthcheck and DB."""
+        response = self.client.get("/api/v1/health")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("healthy", data)
+        self.assertIn("checks", data)
+        self.assertIn("database", data["checks"])
+        self.assertTrue(data["checks"]["database"]["ok"])
+
+    def test_nonexistent_route_404(self):
+        """Verify undefined routes return 404 Not Found."""
+        response = self.client.get("/api/v1/undefined-endpoint")
+        self.assertEqual(response.status_code, 404)
+
+    def test_companies_crud_lifecycle(self):
+        """Verify company listing, creation, retrieval, and updating via REST API."""
+        # 1. List companies
+        list_res = self.client.get("/api/v1/companies")
+        self.assertEqual(list_res.status_code, 200)
+        companies = list_res.json()
+        self.assertIsInstance(companies, list)
+
+        # 2. Create new company
+        test_suffix = uuid.uuid4().hex[:6].upper()
+        test_code = f"C_{test_suffix}"
+        new_payload = {
+            "company_code": test_code,
+            "company_name": f"Test Company {test_suffix} Ltd",
+            "short_name": f"TestCo_{test_suffix}",
+            "tax_id": "0105559999999",
+            "branch_code": "00000"
+        }
+        create_res = self.client.post("/api/v1/companies", json=new_payload)
+        self.assertEqual(create_res.status_code, 201)
+        created_data = create_res.json()
+        self.assertEqual(created_data["company_code"], test_code)
+        self.assertEqual(created_data["company_name"], f"Test Company {test_suffix} Ltd")
+
+        # 3. Retrieve company by code
+        get_res = self.client.get(f"/api/v1/companies/{test_code}")
+        self.assertEqual(get_res.status_code, 200)
+        comp_data = get_res.json()
+        self.assertEqual(comp_data["company_code"], test_code)
+        comp_id = comp_data["company_id"]
+
+        # 4. Update company details
+        patch_res = self.client.patch(
+            f"/api/v1/companies/{comp_id}",
+            json={"short_name": f"TestCo_{test_suffix}_Updated"}
+        )
+        self.assertEqual(patch_res.status_code, 200)
+        updated_data = patch_res.json()
+        self.assertEqual(updated_data["short_name"], f"TestCo_{test_suffix}_Updated")
+
+        # 5. Clean up test storage directory immediately
+        test_dir = get_company_storage_dir(test_code)
+        if os.path.exists(test_dir):
+            shutil.rmtree(test_dir, ignore_errors=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        """
+        Clean up any lingering test company directories and DB records.
+        """
+        # Clean from DB
+        try:
+            with get_db_session() as session:
+                test_comps = session.query(Company).filter(
+                    (Company.company_code.like("C\\_%", escape="\\")) | (Company.company_code == "C99999_TEST")
+                ).all()
+                for c in test_comps:
+                    session.delete(c)
+        except Exception:
+            pass
+
+        # Clean from disk
+        comp_root = os.path.join("storage", "companies")
+        if os.path.exists(comp_root):
+            for entry in os.listdir(comp_root):
+                if (entry.startswith("C_") and entry != "C00000_SAMPLE") or entry == "C99999_TEST":
+                    dir_to_clean = os.path.join(comp_root, entry)
+                    try:
+                        shutil.rmtree(dir_to_clean, ignore_errors=True)
+                    except Exception:
+                        pass
+
+
+class TestSystemConfigurationValidation(unittest.TestCase):
+    """
+    Test suite for Strict Fail-Fast Validation of settings.json schema & thresholds.
+    """
+
+    def setUp(self):
+        import json
+        import tempfile
+        self.temp_dir = tempfile.gettempdir()
+        self.valid_settings_path = "configs/settings.json"
+        with open(self.valid_settings_path, "r", encoding="utf-8") as f:
+            self.valid_dict = json.load(f)
+
+    def _write_temp_settings(self, data: dict) -> str:
+        import json
+        import tempfile
+        tmp_path = os.path.join(self.temp_dir, f"test_settings_{uuid.uuid4().hex[:8]}.json")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        return tmp_path
+
+    def test_01_valid_production_settings(self):
+        """Test that production settings.json is 100% valid."""
+        from src.core.initializer import validate_settings_config
+        is_valid, errors = validate_settings_config(self.valid_settings_path)
+        self.assertTrue(is_valid, f"Expected production settings to be valid, got errors: {errors}")
+        self.assertEqual(len(errors), 0)
+
+    def test_02_missing_thresholds_fails(self):
+        """Test that missing validation_thresholds fails immediately."""
+        from src.core.initializer import validate_settings_config
+        import copy
+        bad_dict = copy.deepcopy(self.valid_dict)
+        del bad_dict["validation_thresholds"]
+        tmp_path = self._write_temp_settings(bad_dict)
+        try:
+            is_valid, errors = validate_settings_config(tmp_path)
+            self.assertFalse(is_valid)
+            self.assertTrue(any("validation_thresholds" in e for e in errors))
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def test_03_invalid_dpi_range_fails(self):
+        """Test that DPI outside 72-600 fails immediately."""
+        from src.core.initializer import validate_settings_config
+        import copy
+        bad_dict = copy.deepcopy(self.valid_dict)
+        bad_dict["image_processing"]["dpi"] = 10
+        tmp_path = self._write_temp_settings(bad_dict)
+        try:
+            is_valid, errors = validate_settings_config(tmp_path)
+            self.assertFalse(is_valid)
+            self.assertTrue(any("DPI must be between 72 and 600" in e for e in errors))
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def test_04_missing_pattern_placeholder_fails(self):
+        """Test that filename pattern missing {page_no} fails."""
+        from src.core.initializer import validate_settings_config
+        import copy
+        bad_dict = copy.deepcopy(self.valid_dict)
+        bad_dict["image_processing"]["split_filename_pattern"] = "{doc_type}_{tax_id}_static"
+        tmp_path = self._write_temp_settings(bad_dict)
+        try:
+            is_valid, errors = validate_settings_config(tmp_path)
+            self.assertFalse(is_valid)
+            self.assertTrue(any("page_no" in e for e in errors))
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def test_05_missing_active_domains_fails(self):
+        """Test that missing active domains fails."""
+        from src.core.initializer import validate_settings_config
+        import copy
+        bad_dict = copy.deepcopy(self.valid_dict)
+        for d in bad_dict["domains"]:
+            d["is_active"] = False
+        tmp_path = self._write_temp_settings(bad_dict)
+        try:
+            is_valid, errors = validate_settings_config(tmp_path)
+            self.assertFalse(is_valid)
+            self.assertTrue(any("No active domains configured" in e for e in errors))
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+
+if __name__ == "__main__":
+    unittest.main()
+

@@ -27,15 +27,15 @@ def reset_pipeline_data(
         db_res = reset_pipeline_database(clear_documents_only=True)
         res["database_reset"] = db_res.get("success", False)
 
-    # 2. Clean temporary pipeline storage
+    # 2. Clean temporary pipeline storage across companies
     if clear_storage_temp:
-        domain_storage = os.path.join(storage_root, domain).replace("\\", "/")
-        folders_to_clean = [
-            os.path.join(domain_storage, "03_preprocess"),
-            os.path.join(domain_storage, "04_processing"),
-            os.path.join(domain_storage, "02_split_pages"),
-            os.path.join(domain_storage, "03_processing_queue"),
-        ]
+        from src.core.storage_manager import storage_manager
+        comp_root = os.path.join(storage_manager.root, "companies").replace("\\", "/")
+        folders_to_clean = []
+        if os.path.exists(comp_root):
+            for c in os.listdir(comp_root):
+                folders_to_clean.append(storage_manager.get_preprocess_dir(c, domain))
+                folders_to_clean.append(storage_manager.get_processing_dir(c, domain))
 
         deleted_count = 0
         for folder in folders_to_clean:
@@ -51,6 +51,6 @@ def reset_pipeline_data(
 
         res["storage_cleaned"] = True
         res["deleted_files_count"] = deleted_count
-        logger.info(f"Cleaned {deleted_count} temporary files from preprocess and processing queue.")
+        logger.info(f"Cleaned {deleted_count} temporary files from preprocess and processing queues.")
 
     return res

@@ -1,6 +1,7 @@
 from .connection import (
     get_engine,
     get_db_session,
+    get_db_session_dep,
     get_database_url,
     get_db_connection,
     get_log_db_connection,
@@ -10,6 +11,7 @@ from .connection import (
 
 from .models import (
     Base,
+    Company,
     MerchantStatus,
     DocumentStatus,
     DocumentSource,
@@ -60,6 +62,12 @@ from .documents import (
 )
 
 from .masters import (
+    get_or_create_default_company,
+    create_company,
+    get_company,
+    get_company_by_code,
+    get_all_companies,
+    update_company,
     get_domains,
     get_sources,
     update_domain_active_status,
@@ -99,6 +107,7 @@ __all__ = [
     "get_db_connection_ctx",
     "get_log_db_connection_ctx",
     "Base",
+    "Company",
     "MerchantStatus",
     "DocumentStatus",
     "DocumentSource",
@@ -141,7 +150,13 @@ __all__ = [
     "get_unextracted_batches",
     "get_pages_by_status",
     "get_documents_for_export",
-    # Masters
+    # Company & Masters
+    "get_or_create_default_company",
+    "create_company",
+    "get_company",
+    "get_company_by_code",
+    "get_all_companies",
+    "update_company",
     "get_domains",
     "get_sources",
     "update_domain_active_status",

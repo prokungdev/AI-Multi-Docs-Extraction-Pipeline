@@ -15,8 +15,10 @@ def sanitize_filename_part(text: str) -> str:
     return clean or "unnamed"
 
 def format_page_filename(
-    pattern: str = "{domain}_{source}_{original_filename}_{batch_id}_p{page_no}",
+    pattern: str = "{doc_type}_{tax_id}_{original_filename}_{batch_id}_p{page_no}",
     domain: str = "expense_receipt",
+    doc_type: str = None,
+    tax_id: str = "",
     source: str = "_uncategorized",
     original_filename: str = "document",
     page_no: int = 1,
@@ -26,20 +28,31 @@ def format_page_filename(
 ) -> str:
     """
     Formats split page filename based on configurable pattern.
-    Supported placeholders: {domain}, {source}, {original_filename}, {original_name},
+    Supported placeholders: {doc_type}, {domain}, {tax_id}, {source}, {original_filename}, {original_name},
     {page_no}, {batch_id}, {short_batch_id}, {doc_no}.
+    If tax_id is not provided or empty, it defaults to 'no_tax'.
     """
     ext = image_format.lower().replace(".", "")
     orig_base = os.path.splitext(os.path.basename(original_filename))[0] if original_filename else "document"
     clean_orig = sanitize_filename_part(orig_base)
-    clean_domain = sanitize_filename_part(domain)
+    effective_doc_type = doc_type or domain or "expense_receipt"
+    clean_doc_type = sanitize_filename_part(effective_doc_type)
+    
+    # Process tax_id with 'no_tax' fallback
+    if tax_id and str(tax_id).strip():
+        clean_tax_id = sanitize_filename_part(str(tax_id).strip())
+    else:
+        clean_tax_id = "no_tax"
+        
     clean_source = sanitize_filename_part(source)
     short_batch = batch_id[:8].replace("-", "") if batch_id else ""
     
     # Fill format template safely
     try:
         formatted = pattern.format(
-            domain=clean_domain,
+            doc_type=clean_doc_type,
+            domain=clean_doc_type,
+            tax_id=clean_tax_id,
             source=clean_source,
             original_filename=clean_orig,
             original_name=clean_orig,
@@ -50,7 +63,7 @@ def format_page_filename(
         )
     except Exception as fe:
         logger.warning(f"Error formatting filename pattern '{pattern}': {fe}. Using fallback format.")
-        formatted = f"{clean_domain}_{clean_source}_{clean_orig}_{short_batch}_p{page_no}"
+        formatted = f"{clean_doc_type}_{clean_tax_id}_{clean_orig}_{short_batch}_p{page_no}"
         
     clean_filename = sanitize_filename_part(formatted)
     return f"{clean_filename}.{ext}"

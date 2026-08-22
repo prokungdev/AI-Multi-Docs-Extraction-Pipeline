@@ -1,11 +1,13 @@
 {
   "storage_root": "storage",
+  "default_company_code": "C00000_SAMPLE",
   "pipeline_folders": [
     "01_drop_zone",
     "02_raw_data",
     "03_preprocess",
     "04_processing",
-    "05_archive"
+    "05_archive",
+    "06_output"
   ],
   "doc_types": [
     {
@@ -19,12 +21,6 @@
       "display_name": "ใบกำกับภาษีเต็มรูป (Tax Invoice)",
       "is_active": true,
       "sort_order": 2
-    },
-    {
-      "doc_type_id": "withholding_tax",
-      "display_name": "หนังสือรับรองการหักภาษี ณ ที่จ่าย 50 ทวิ (Withholding Tax)",
-      "is_active": true,
-      "sort_order": 3
     }
   ],
   "domains": [
@@ -39,12 +35,6 @@
       "display_name": "ใบกำกับภาษีเต็มรูป (Tax Invoice)",
       "is_active": true,
       "sort_order": 2
-    },
-    {
-      "domain_id": "withholding_tax",
-      "display_name": "หนังสือรับรองการหักภาษี ณ ที่จ่าย 50 ทวิ (Withholding Tax)",
-      "is_active": true,
-      "sort_order": 3
     }
   ],
   "logging": {
@@ -67,30 +57,48 @@
     "jpeg_quality": 85,
     "max_dimension": 1800,
     "dpi": 150,
-    "split_filename_pattern": "{domain}_{source}_{original_filename}_{batch_id}_p{page_no}",
-    "archive_filename_pattern": "{domain}_{source}_{doc_no}_{batch_id}_p{page_no}",
+    "split_filename_pattern": "{doc_type}_{tax_id}_{original_filename}_{batch_id}_p{page_no}",
+    "archive_filename_pattern": "{doc_type}_{tax_id}_{doc_no}_{batch_id}_p{page_no}",
     "use_ai_fallback_matching": true
+  },
+  "validation_thresholds": {
+    "confidence_high": 0.85,
+    "confidence_low": 0.60,
+    "confidence_review": 0.70,
+    "financial_tolerance": 0.05
   },
   "ai_provider": {
     "active_provider": "gemini",
+    "billing_tier": "free",
     "max_retries": 3,
     "max_images_per_request": 50,
     "gemini": {
       "model_name": "gemini-3.5-flash",
-      "api_key_env": "GEMINI_API_KEY",
+      "api_key_env": "GEMINI_API_KEY_FREE",
+      "billing_tier": "free",
       "max_concurrent_requests": 8
     },
     "openai": {
       "model_name": "gpt-4o",
       "api_key_env": "OPENAI_API_KEY",
+      "billing_tier": "paid",
       "max_concurrent_requests": 3
+    }
+  },
+  "ai_pricing": {
+    "exchange_rate_thb": 36.0,
+    "models": {
+      "gemini-3.5-flash": {
+        "input_per_million": 0.075,
+        "output_per_million": 0.3
+      }
     }
   },
   "database": {
     "active_driver": "sqlite",
     "echo_sql": false,
     "sqlite": {
-      "db_filename": "pipeline.db"
+      "db_filename": "database/pipeline.db"
     },
     "postgresql": {
       "url_env": "DATABASE_URL",
