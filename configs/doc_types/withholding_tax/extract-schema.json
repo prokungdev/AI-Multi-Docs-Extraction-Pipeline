@@ -1,0 +1,138 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WithholdingTaxCertificate",
+  "description": "Standardized schema for extracting 50 Tawi Withholding Tax Certificates (หนังสือรับรองการหักภาษี ณ ที่จ่าย).",
+  "type": "object",
+  "properties": {
+    "certificate_info": {
+      "type": "object",
+      "description": "Certificate metadata.",
+      "properties": {
+        "doc_number": {
+          "type": "string",
+          "description": "Book and Certificate number (เล่มที่/เลขที่หนังสือรับรอง)."
+        },
+        "issue_date": {
+          "type": "string",
+          "description": "Date of certificate issuance in YYYY-MM-DD format."
+        },
+        "tax_form_type": {
+          "type": "string",
+          "description": "Tax filing form type: ภ.ง.ด. 1ก, ภ.ง.ด. 2, ภ.ง.ด. 3, ภ.ง.ด. 53, ภ.ง.ด. 54"
+        }
+      },
+      "required": [
+        "issue_date",
+        "tax_form_type"
+      ]
+    },
+    "payer": {
+      "type": "object",
+      "description": "Payer / Withholding agent details (ผู้จ่ายเงิน / ผู้มีหน้าที่หักภาษี ณ ที่จ่าย).",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Payer company/individual name."
+        },
+        "tax_id": {
+          "type": "string",
+          "description": "Payer 13-digit Tax ID."
+        },
+        "address": {
+          "type": "string",
+          "description": "Payer registered address."
+        }
+      },
+      "required": [
+        "name",
+        "tax_id"
+      ]
+    },
+    "payee": {
+      "type": "object",
+      "description": "Payee / Income earner details (ผู้รับเงิน / ผู้ถูกหักภาษี ณ ที่จ่าย).",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Payee company/individual name."
+        },
+        "tax_id": {
+          "type": "string",
+          "description": "Payee 13-digit Tax ID or National ID."
+        },
+        "address": {
+          "type": "string",
+          "description": "Payee registered address."
+        }
+      },
+      "required": [
+        "name",
+        "tax_id"
+      ]
+    },
+    "income_items": {
+      "type": "array",
+      "description": "List of income entries and taxes withheld.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "income_type": {
+            "type": "string",
+            "description": "Description of assessable income (e.g. ค่าบริการ, ค่าจ้างทำของ, ค่าเช่า, ค่าโฆษณา, ค่าขนส่ง)."
+          },
+          "payment_date": {
+            "type": "string",
+            "description": "Date of payment in YYYY-MM-DD format."
+          },
+          "gross_amount": {
+            "type": "number",
+            "description": "Gross amount paid before withholding tax (จำนวนเงินที่จ่าย)."
+          },
+          "tax_rate": {
+            "type": "number",
+            "description": "Withholding tax percentage rate (e.g. 1.0, 2.0, 3.0, 5.0)."
+          },
+          "tax_withheld_amount": {
+            "type": "number",
+            "description": "Amount of tax deducted and withheld (ภาษีที่หักและนำส่งไว้)."
+          }
+        },
+        "required": [
+          "income_type",
+          "gross_amount",
+          "tax_rate",
+          "tax_withheld_amount"
+        ]
+      }
+    },
+    "summary": {
+      "type": "object",
+      "description": "Total summary of payment and tax withheld.",
+      "properties": {
+        "total_gross_amount": {
+          "type": "number",
+          "description": "Total gross income amount (รวมเงินที่จ่าย)."
+        },
+        "total_tax_withheld": {
+          "type": "number",
+          "description": "Total tax withheld amount (รวมภาษีที่หักและนำส่งไว้ทั้งสิ้น)."
+        },
+        "tax_withholding_condition": {
+          "type": "string",
+          "description": "Withholding condition: หัก ณ ที่จ่าย, ออกให้ตลอดไป, ออกให้ครั้งเดียว"
+        }
+      },
+      "required": [
+        "total_gross_amount",
+        "total_tax_withheld"
+      ]
+    }
+  },
+  "required": [
+    "certificate_info",
+    "payer",
+    "payee",
+    "income_items",
+    "summary"
+  ]
+}

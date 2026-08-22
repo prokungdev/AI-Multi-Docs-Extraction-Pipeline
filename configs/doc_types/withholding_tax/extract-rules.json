@@ -1,0 +1,15 @@
+{
+  "doc_type_id": "withholding_tax",
+  "display_name": "หนังสือรับรองการหักภาษี ณ ที่จ่าย 50 ทวิ (Withholding Tax)",
+  "validation_rules": {
+    "require_payer_tax_id": true,
+    "require_payee_tax_id": true,
+    "payer_tax_id_length": 13,
+    "validate_withholding_calculation": true,
+    "tolerance": 0.05
+  },
+  "default_settings": {
+    "currency": "THB",
+    "default_tax_form": "ภ.ง.ด. 53"
+  }
+}

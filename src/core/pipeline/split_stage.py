@@ -31,7 +31,7 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
         input_file = input_pdf
 
     settings = load_system_settings()
-    storage_root = settings.get("storage_root", "pipeline_storage")
+    storage_root = settings.get("storage_root", "storage")
     if domain is None:
         domain = get_default_domain()
 
@@ -46,13 +46,15 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
     )
 
     domain_storage = os.path.join(storage_root, domain).replace("\\", "/")
-    inbox_dir = os.path.join(domain_storage, "01_raw_inbox").replace("\\", "/")
-    split_dir = os.path.join(domain_storage, "02_split_pages").replace("\\", "/")
+    drop_zone_dir = os.path.join(domain_storage, "01_drop_zone").replace("\\", "/")
+    raw_data_dir = os.path.join(domain_storage, "02_raw_data").replace("\\", "/")
+    split_dir = os.path.join(domain_storage, "03_preprocess").replace("\\", "/")
 
-    os.makedirs(inbox_dir, exist_ok=True)
+    os.makedirs(drop_zone_dir, exist_ok=True)
+    os.makedirs(raw_data_dir, exist_ok=True)
     os.makedirs(split_dir, exist_ok=True)
 
-    # Identify files to process
+    # Identify files to process (Scan 01_drop_zone, 02_raw_data, and legacy 01_raw_inbox)
     files_to_process = []
     if input_file:
         if os.path.exists(input_file):
@@ -60,15 +62,28 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
         else:
             logger.error(f"Input file not found: {input_file}")
             return []
-    else:
-        for root_dir, _, files in os.walk(inbox_dir):
-            for file in files:
-                file_ext = os.path.splitext(file)[1].lower()
-                if file_ext in supported_exts and not file.startswith("."):
-                    files_to_process.append(os.path.join(root_dir, file).replace("\\", "/"))
+        scan_dirs = [drop_zone_dir]
+        # Only scan approved subfolders in raw_data (exclude PENDING and IGNORED)
+        if os.path.exists(raw_data_dir):
+            for entry in os.listdir(raw_data_dir):
+                entry_path = os.path.join(raw_data_dir, entry).replace("\\", "/")
+                if os.path.isdir(entry_path) and entry not in ["PENDING", "IGNORED"]:
+                    scan_dirs.append(entry_path)
+
+        for s_dir in scan_dirs:
+            if os.path.exists(s_dir):
+                for root_dir, _, files in os.walk(s_dir):
+                    # Skip PENDING and IGNORED directories during recursive walk
+                    norm_root = root_dir.replace("\\", "/")
+                    if "/PENDING" in norm_root or "/IGNORED" in norm_root:
+                        continue
+                    for file in files:
+                        file_ext = os.path.splitext(file)[1].lower()
+                        if file_ext in supported_exts and not file.startswith("."):
+                            files_to_process.append(os.path.join(root_dir, file).replace("\\", "/"))
 
     if not files_to_process:
-        logger.info(f"No valid document files {supported_exts} found in raw inbox to process.")
+        logger.info(f"No valid document files {supported_exts} found in drop zone or approved raw data.")
         return []
 
     logger.info(f"Found {len(files_to_process)} document file(s) to process.")
@@ -90,22 +105,31 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
             )
             continue
 
-        # 2. Match Source
-        matched_source = match_source(file_path, domain=domain, settings=settings)
-        logger.info(f"Matched source: '{matched_source}'")
+        # 2. Fast AI Classifier & Gatekeeper Routing for Drop Zone files
+        dest_file_path = file_path
+        if "01_drop_zone" in file_path or "01_raw_inbox" in file_path:
+            from src.core.classifier import classify_drop_zone_document
+            cls_res = classify_drop_zone_document(file_path, domain=domain, configs_dir="configs")
+            target_folder = cls_res["target_folder"]
+            pipeline_action = cls_res["pipeline_action"]
+            
+            dest_file_path = os.path.join(target_folder, filename).replace("\\", "/")
+            if os.path.abspath(file_path) != os.path.abspath(dest_file_path):
+                shutil.move(file_path, dest_file_path)
+                
+            matched_source = cls_res.get("folder_identifier", "_default")
 
-        # Check source active state
-        if not is_source_active(domain, matched_source):
-            logger.warning(f"Source '{matched_source}' is currently DEACTIVATED in DB. Routing to '_uncategorized'.")
-            matched_source = "_uncategorized"
-
-        # 3. Resolve destination folder and move original file
-        dest_folder = os.path.join(inbox_dir, matched_source).replace("\\", "/")
-        os.makedirs(dest_folder, exist_ok=True)
-        dest_file_path = os.path.join(dest_folder, filename).replace("\\", "/")
-
-        if os.path.abspath(file_path) != os.path.abspath(dest_file_path):
-            shutil.move(file_path, dest_file_path)
+            if pipeline_action == "HOLD":
+                logger.warning(f"File '{filename}' held in '{target_folder}' awaiting merchant approval.")
+                continue
+            elif pipeline_action == "IGNORE":
+                logger.info(f"File '{filename}' belongs to IGNORED merchant. Moving to '{target_folder}' and skipping.")
+                continue
+        else:
+            # Already in 02_raw_data/{tax_id}_{short_name} or NO_TAXID
+            matched_source = match_source(dest_file_path, domain=domain, settings=settings)
+            if not is_source_active(domain, matched_source):
+                matched_source = "_default"
 
         # 4. Process Pages (PDF Splitting or Direct Image Processing)
         batch_id = str(uuid.uuid4())
@@ -216,4 +240,42 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
             }
         )
 
+    return results
+
+
+def release_pending_merchant_files(domain: str, tax_id: str, short_name: str) -> list[dict]:
+    """
+    Releases all held files for an approved merchant from 02_raw_data/PENDING/{tax_id}_{short_name}
+    to 02_raw_data/{tax_id}_{short_name} and runs split_and_match on them.
+    """
+    settings = load_system_settings()
+    storage_root = settings.get("storage_root", "storage")
+    domain_storage = os.path.join(storage_root, domain).replace("\\", "/")
+    
+    folder_name = f"{tax_id}_{short_name}"
+    pending_folder = os.path.join(domain_storage, "02_raw_data", "PENDING", folder_name).replace("\\", "/")
+    approved_folder = os.path.join(domain_storage, "02_raw_data", folder_name).replace("\\", "/")
+    
+    if not os.path.exists(pending_folder):
+        logger.info(f"No pending folder found at '{pending_folder}'.")
+        return []
+        
+    os.makedirs(approved_folder, exist_ok=True)
+    moved_files = []
+    
+    for f in os.listdir(pending_folder):
+        if not f.startswith("."):
+            src_f = os.path.join(pending_folder, f).replace("\\", "/")
+            dst_f = os.path.join(approved_folder, f).replace("\\", "/")
+            shutil.move(src_f, dst_f)
+            moved_files.append(dst_f)
+            
+    logger.info(f"Moved {len(moved_files)} pending files for merchant '{folder_name}' to approved raw data.")
+    
+    # Trigger split on moved files
+    results = []
+    for mf in moved_files:
+        res = split_and_match(domain=domain, input_file=mf)
+        results.extend(res)
+        
     return results

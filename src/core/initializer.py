@@ -140,29 +140,35 @@ def validate_settings_config(settings_path: str = "configs/settings.json") -> tu
 
 def validate_domain_config(domain: str, configs_dir: str = "configs") -> tuple[bool, list[str]]:
     """
-    Validates schema.json, merchant rules, prompts, and output templates for a specific domain.
+    Validates extract-schema.json, extract-prompt.txt, and extract-rules.json for a specific doc_type/domain.
     
     Returns:
         A tuple of (is_valid, error_messages).
     """
     errors = []
-    domain_dir = os.path.join(configs_dir, "domains", domain)
     
-    # 1. Check if domain directory exists
-    if not os.path.exists(domain_dir):
-        errors.append(f"Domain config directory not found at: {domain_dir}")
+    # Locate doc_type config directory
+    doc_type_dir = os.path.join(configs_dir, "doc_types", domain)
+    if not os.path.exists(doc_type_dir):
+        doc_type_dir = os.path.join(configs_dir, "domains", domain)
+    
+    # 1. Check if doc_type directory exists
+    if not os.path.exists(doc_type_dir):
+        errors.append(f"DocType config directory not found at: {doc_type_dir}")
         return False, errors
         
-    # 2. Validate schema.json
-    schema_path = os.path.join(domain_dir, "schema.json")
+    # 2. Validate schema.json / extract-schema.json
+    schema_path = os.path.join(doc_type_dir, "extract-schema.json")
     if not os.path.exists(schema_path):
-        errors.append(f"[{domain}] schema.json is missing.")
+        schema_path = os.path.join(doc_type_dir, "schema.json")
+
+    if not os.path.exists(schema_path):
+        errors.append(f"[{domain}] extract-schema.json (or schema.json) is missing.")
     else:
         try:
             with open(schema_path, "r", encoding="utf-8") as f:
                 schema = json.load(f)
             
-            # Simple validation on schema fields
             if schema.get("type") != "object":
                 errors.append(f"[{domain}] schema.json root type must be 'object'.")
             if not isinstance(schema.get("properties"), dict):
@@ -170,66 +176,25 @@ def validate_domain_config(domain: str, configs_dir: str = "configs") -> tuple[b
         except json.JSONDecodeError as e:
             errors.append(f"[{domain}] schema.json is not valid JSON: {e}")
             
-    # 3. Validate sources/ directory
-    sources_dir = os.path.join(domain_dir, "sources")
-    if not os.path.exists(sources_dir):
-        errors.append(f"[{domain}] 'sources/' folder is missing.")
-    else:
-        # Check for _default
-        default_dir = os.path.join(sources_dir, "_default")
-        if not os.path.exists(default_dir):
-            errors.append(f"[{domain}] Default fallback source 'sources/_default/' is missing.")
+    # 3. Validate prompt.txt / extract-prompt.txt
+    prompt_path = os.path.join(doc_type_dir, "extract-prompt.txt")
+    if not os.path.exists(prompt_path):
+        prompt_path = os.path.join(doc_type_dir, "prompt.txt")
+
+    if not os.path.exists(prompt_path):
+        errors.append(f"[{domain}] extract-prompt.txt (or prompt.txt) is missing.")
             
-        # Loop through all sources folders
-        for entry in os.listdir(sources_dir):
-            entry_path = os.path.join(sources_dir, entry)
-            if os.path.isdir(entry_path):
-                rules_path = os.path.join(entry_path, "rules.json")
-                prompt_path = os.path.join(entry_path, "prompt.txt")
-                
-                if not os.path.exists(prompt_path):
-                    errors.append(f"[{domain}] Source '{entry}' is missing prompt.txt.")
-                    
-                if not os.path.exists(rules_path):
-                    errors.append(f"[{domain}] Source '{entry}' is missing rules.json.")
-                else:
-                    try:
-                        with open(rules_path, "r", encoding="utf-8") as f:
-                            rules = json.load(f)
-                            
-                        # _default doesn't require matching rules keywords/tax_ids, but other sources do
-                        if entry != "_default":
-                            if not isinstance(rules.get("keywords"), list):
-                                errors.append(f"[{domain}] Source '{entry}' rules.json 'keywords' must be a list.")
-                            if not isinstance(rules.get("tax_ids"), list):
-                                errors.append(f"[{domain}] Source '{entry}' rules.json 'tax_ids' must be a list.")
-                    except json.JSONDecodeError as e:
-                        errors.append(f"[{domain}] Source '{entry}' rules.json is not valid JSON: {e}")
-                        
-    # 4. Validate outputs/ directory
-    outputs_dir = os.path.join(domain_dir, "outputs")
-    if not os.path.exists(outputs_dir):
-        errors.append(f"[{domain}] 'outputs/' conversion folder is missing.")
-    else:
-        templates = [f for f in os.listdir(outputs_dir) if f.endswith(".json")]
-        if not templates:
-            errors.append(f"[{domain}] 'outputs/' must contain at least one JSON mapping template.")
-            
-        for template in templates:
-            template_path = os.path.join(outputs_dir, template)
-            try:
-                with open(template_path, "r", encoding="utf-8") as f:
-                    tpl = json.load(f)
-                
-                granularity = tpl.get("granularity")
-                columns = tpl.get("columns")
-                
-                if granularity not in ("summary", "line_items"):
-                    errors.append(f"[{domain}] Template '{template}' granularity must be 'summary' or 'line_items'.")
-                if not isinstance(columns, dict):
-                    errors.append(f"[{domain}] Template '{template}' columns must be a key-value mapping object.")
-            except json.JSONDecodeError as e:
-                errors.append(f"[{domain}] Template '{template}' is not valid JSON: {e}")
+    # 4. Validate rules.json / extract-rules.json (optional but recommended)
+    rules_path = os.path.join(doc_type_dir, "extract-rules.json")
+    if not os.path.exists(rules_path):
+        rules_path = os.path.join(doc_type_dir, "rules.json")
+
+    if os.path.exists(rules_path):
+        try:
+            with open(rules_path, "r", encoding="utf-8") as f:
+                json.load(f)
+        except json.JSONDecodeError as e:
+            errors.append(f"[{domain}] rules.json is not valid JSON: {e}")
                 
     return len(errors) == 0, errors
 
@@ -284,53 +249,74 @@ def initialize_storage_directories(settings_path: str = "configs/settings.json")
     except Exception:
         return 0
         
-    root = settings.get("storage_root", "pipeline_storage")
+    root = settings.get("storage_root", "storage")
     
-    # Load active domains from settings.json
-    domains_data = settings.get("domains", [])
-    domains = [d.get("domain_id") for d in domains_data if isinstance(d, dict) and d.get("is_active", True) and d.get("domain_id")]
-    if not domains:
-        domains = ["expense_receipt"]
+    # Load active doc_types/domains from settings.json
+    doc_types_data = settings.get("doc_types") or settings.get("domains", [])
+    doc_types = [
+        d.get("doc_type_id") or d.get("domain_id")
+        for d in doc_types_data
+        if isinstance(d, dict) and d.get("is_active", True) and (d.get("doc_type_id") or d.get("domain_id"))
+    ]
+    if not doc_types:
+        doc_types = ["expense_receipt", "tax_invoice", "withholding_tax"]
 
-    folders = settings.get("pipeline_folders", [])
+    folders = settings.get("pipeline_folders", [
+        "01_drop_zone",
+        "02_raw_data",
+        "03_preprocess",
+        "04_processing",
+        "05_archive"
+    ])
     
     ensured_count = 0
-    for domain in domains:
+    for dt in doc_types:
         for folder in folders:
-            path = os.path.join(root, domain, folder)
+            path = os.path.join(root, dt, folder)
             os.makedirs(path, exist_ok=True)
             
-            # Ensure .gitkeep exists inside empty directory
             gitkeep_path = os.path.join(path, ".gitkeep")
             if not os.path.exists(gitkeep_path):
                 try:
                     with open(gitkeep_path, "w", encoding="utf-8") as gf:
                         gf.write("# Keep directory in git\n")
                 except Exception as e:
-                    print(f"Warning: Failed to create .gitkeep in {path}: {e}")
+                    logger.warning(f"Failed to create .gitkeep in {path}: {e}")
             ensured_count += 1
             
-        # Special setup for 01_raw_inbox merchant subfolders
-        inbox_path = os.path.join(root, domain, "01_raw_inbox")
-        if os.path.exists(inbox_path):
-            # Create _uncategorized fallback folder
-            uncat_path = os.path.join(inbox_path, "_uncategorized")
-            os.makedirs(uncat_path, exist_ok=True)
-            with open(os.path.join(uncat_path, ".gitkeep"), "w", encoding="utf-8") as gf:
+        # 1. Setup 01_drop_zone subfolders: Auto_Scanner and Upload
+        drop_zone_path = os.path.join(root, dt, "01_drop_zone")
+        for sub in ["Auto_Scanner", "Upload"]:
+            sub_path = os.path.join(drop_zone_path, sub)
+            os.makedirs(sub_path, exist_ok=True)
+            with open(os.path.join(sub_path, ".gitkeep"), "w", encoding="utf-8") as gf:
                 gf.write("# Keep directory in git\n")
             ensured_count += 1
             
-            # Discover and create subfolder for each merchant
-            sources_dir = os.path.join("configs", "domains", domain, "sources")
-            if os.path.exists(sources_dir):
-                for entry in os.listdir(sources_dir):
-                    entry_path = os.path.join(sources_dir, entry)
-                    if os.path.isdir(entry_path) and not entry.startswith("_"):
-                        merchant_inbox_path = os.path.join(inbox_path, entry)
-                        os.makedirs(merchant_inbox_path, exist_ok=True)
-                        with open(os.path.join(merchant_inbox_path, ".gitkeep"), "w", encoding="utf-8") as gf:
-                            gf.write("# Keep directory in git\n")
-                        ensured_count += 1
+        # 2. Setup 02_raw_data subfolders: PENDING, IGNORED, NO_TAXID, UNDEFINED
+        raw_data_path = os.path.join(root, dt, "02_raw_data")
+        for sub in ["PENDING", "IGNORED", "NO_TAXID", "UNDEFINED"]:
+            sub_path = os.path.join(raw_data_path, sub)
+            os.makedirs(sub_path, exist_ok=True)
+            with open(os.path.join(sub_path, ".gitkeep"), "w", encoding="utf-8") as gf:
+                gf.write("# Keep directory in git\n")
+            ensured_count += 1
+            
+        # Try loading merchants from DB to create merchant subfolders under 02_raw_data
+        try:
+            from src.core.db import get_all_merchants
+            merchants = get_all_merchants()
+            for m in merchants:
+                tax_id = m.get("tax_id") or "NO_TAXID"
+                name = (m.get("merchant_name") or "merchant").lower().replace(" ", "_")
+                m_folder = f"{tax_id}_{name}" if tax_id != "NO_TAXID" else name
+                m_path = os.path.join(raw_data_path, m_folder)
+                os.makedirs(m_path, exist_ok=True)
+                with open(os.path.join(m_path, ".gitkeep"), "w", encoding="utf-8") as gf:
+                    gf.write("# Keep directory in git\n")
+                ensured_count += 1
+        except Exception:
+            pass
             
     # Ensure logging directory exists
     logging_cfg = settings.get("logging", {})
@@ -342,7 +328,7 @@ def initialize_storage_directories(settings_path: str = "configs/settings.json")
         initialize_db_schema()
         seed_initial_data()
     except Exception as de:
-        print(f"Warning: Failed to initialize SQLite database: {de}")
+        logger.warning(f"Failed to initialize SQLite database: {de}")
             
     return ensured_count
 

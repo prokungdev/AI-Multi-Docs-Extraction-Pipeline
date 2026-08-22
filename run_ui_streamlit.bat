@@ -23,7 +23,8 @@ echo [INFO] Activating virtual environment...
 call .venv\Scripts\activate.bat
 
 echo [INFO] Starting Streamlit app...
-streamlit run src/ui/app.py
+streamlit run apps/streamlit/app.py
+
 
 if %ERRORLEVEL% neq 0 (
     echo.

@@ -1,0 +1,15 @@
+{
+  "doc_type_id": "expense_receipt",
+  "display_name": "ใบเสร็จรับเงินค่าใช้จ่าย (Expense Receipt)",
+  "validation_rules": {
+    "require_merchant_name": true,
+    "require_transaction_date": true,
+    "validate_math_totals": true,
+    "tolerance": 0.05
+  },
+  "default_settings": {
+    "currency": "THB",
+    "expense_category": "GENERAL_EXPENSE",
+    "payment_method": "Cash"
+  }
+}

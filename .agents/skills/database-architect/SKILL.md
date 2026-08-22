@@ -1,0 +1,71 @@
+---
+name: database-architect
+description: >-
+  Enterprise relational database architecture standards, SQLAlchemy 2.0 ORM patterns,
+  standardized table and column naming conventions, migrations, indexing, and cascade relationships.
+---
+
+# 🏛️ Database Architect Skill
+
+This skill defines the enterprise database design standards, table/column naming conventions, and SQLAlchemy 2.0 ORM patterns for the repository.
+
+---
+
+## 📐 1. Table & Column Naming Conventions
+
+All relational database models and schema definitions MUST strictly follow these enterprise naming rules:
+
+### 1.1 Table Names
+- **Plural & `snake_case`**: Always use plural English nouns in `snake_case` (e.g., `merchants`, `documents`, `expense_receipts`, `expense_receipt_items`).
+- **NO Cryptic Abbreviations**: Never use legacy abbreviations (e.g., do NOT use `_d` for detail tables; use `_items` or `_details` instead).
+- **NO Singular + Suffix Mixes**: Do NOT use `merchant_master`; use `merchants` (or `merchant_masters` consistently).
+
+### 1.2 Column Names
+- **Primary Keys**: Always format as **`{singular_table}_id`** (e.g., `merchant_id`, `document_id`, `receipt_id`, `item_id`, `page_id`, `log_id`).
+- **Foreign Keys**: Always match the primary key name of the referenced table (e.g., `batch_id`, `document_id`, `receipt_id`, `merchant_id`).
+- **Status Columns**: Standardize on **`status_code`** across all entities (e.g., `documents.status_code`, `merchants.status_code`, `api_call_logs.status_code`).
+- **Timestamp Columns**: Standardize on **`created_at`** and **`updated_at`** (UTC ISO format string or DateTime). Never use unstructured `timestamp` or `time`.
+- **Boolean Flags**: Must start with **`is_`** prefix (e.g., `is_active`, `is_locked`, `is_manually_edited`, `is_auto_approved`, `is_ambiguous`, `is_vat_registered`).
+- **Financial & Quantity Fields**: Use explicit full words (e.g., `quantity`, `unit_price`, `subtotal`, `discount_amount`, `vat_amount`, `net_amount`).
+
+---
+
+## 💾 2. Zero-Tolerance SQLAlchemy 2.0 ORM Policy
+
+1. **Context Manager Access**:
+   All database read and write operations in application and master logic MUST execute inside a session context:
+   ```python
+   from src.core.db import get_db_session, Merchant
+
+   with get_db_session() as session:
+       merchant = session.query(Merchant).filter_by(tax_id=tax_id).first()
+   ```
+2. **Forbidden Anti-Patterns**:
+   - ❌ `cursor.execute("SELECT ...")` in business logic
+   - ❌ `sqlite3.connect(...)` in business logic
+   - ❌ Raw string formatting in SQL queries (SQL Injection risk)
+3. **Serialization Standard**:
+   - All entity models MUST inherit from `DictSerializableMixin` to provide `.to_dict()` for clean decoupled serialization.
+
+---
+
+## 🔗 3. Relationships, Foreign Keys & Cascades
+
+1. **Explicit Cascade Rules**:
+   Child tables (items, pages) must specify explicit cascade behavior:
+   ```python
+   # On parent model:
+   items = relationship("ExpenseReceiptItem", back_populates="receipt", cascade="all, delete-orphan")
+   
+   # On child model:
+   receipt_id = Column(String(100), ForeignKey("expense_receipts.receipt_id", ondelete="CASCADE"), nullable=False)
+   ```
+2. **Indexing Strategy**:
+   - Add explicit indexes (`Index("idx_...", ...)`) on all query-filter and search columns (`tax_id`, `merchant_name`, `short_name`, `file_prefix`, `status_code`, `doc_date`).
+
+---
+
+## 🔄 4. Schema Evolution & Safe Migrations
+
+1. **Declarative Creation**: `Base.metadata.create_all(engine)` is the foundation for creating all tables.
+2. **Lightweight Safe Migrations**: When adding new columns, inspect existing tables via `PRAGMA table_info` and execute `ALTER TABLE ... ADD COLUMN` safely without dropping tables or losing production data.

@@ -1,39 +1,36 @@
+"""Express accounting format output exporter using SQLAlchemy 2.0 ORM."""
+
 from typing import List, Dict, Any
 import pandas as pd
 from .base import BaseOutputExporter
-from src.core.db import get_db_connection
+from src.core.db import get_db_session, Document
+
 
 class ExpressExpenseExporter(BaseOutputExporter):
     """
     Dedicated exporter for exporting approved documents to the Express accounting system format.
     Handles account code mappings, consolidated row formats, and custom voucher running numbers.
     """
-    display_name = "โปรแกรม Express (บันทึกใบสำคัญจ่าย PV พร้อมรันเลขใหม่)"
+    display_name = "Express Accounting (PV Voucher with Running Number)"
     has_custom_params = True
     encoding = "cp874"
-    
-    # Custom Account Code Mapping for Express
-    ACCOUNT_MAPPING = {
-        "spx_express": {"acc_code": "5301-02", "desc": "ค่าขนส่งพัสดุ SPX"},
-        "grab_thailand": {"acc_code": "5301-01", "desc": "ค่าเดินทาง Grab"},
-        "_DEFAULT": {"acc_code": "5999-99", "desc": "ค่าใช้จ่ายเบ็ดเตล็ด"}
+
+    # Default fallback account code mapping
+    DEFAULT_ACCOUNT_MAPPING = {
+        "_DEFAULT": {"acc_code": "5999-99", "desc": "Miscellaneous Expense"}
     }
 
     def get_next_sequence_number(self) -> int:
         """
-        Retrieves the next voucher sequence number by counting APPROVED documents in SQLite.
+        Retrieves the next voucher sequence number by counting APPROVED documents using SQLAlchemy ORM.
         """
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT COUNT(*) FROM documents 
-                WHERE status_code = 'APPROVED' AND domain_id = ?
-            """, (self.domain_id,))
-            row = cursor.fetchone()
-            count = row[0] if row else 0
-            conn.close()
-            return count + 1
+            with get_db_session() as session:
+                count = session.query(Document).filter(
+                    Document.status_code == "APPROVED",
+                    Document.domain_id == self.domain_id
+                ).count()
+                return count + 1
         except Exception:
             return 1
 
@@ -54,37 +51,44 @@ class ExpressExpenseExporter(BaseOutputExporter):
         start_no = kwargs.get("start_voucher_no")
         if start_no is None:
             start_no = self.get_next_sequence_number()
-            
+
         prefix = kwargs.get("voucher_prefix", "PV2608-")
-        
+
         rows = []
         for idx, doc in enumerate(approved_docs):
-            source_id = doc.get("source_id", "_default")
-            mapping = self.ACCOUNT_MAPPING.get(source_id, self.ACCOUNT_MAPPING["_DEFAULT"])
-            
-            # Generate new voucher running number
             voucher_no = self.generate_running_number(prefix, idx, start_no)
-            
-            financial = doc.get("financial_summary", {})
-            subtotal = financial.get("subtotal", doc.get("total_amount", 0.0))
-            discount = financial.get("discount", 0.0)
-            vat_amount = financial.get("vat_amount", 0.0)
-            net_amount = financial.get("net_amount", doc.get("total_amount", 0.0))
-            
-            # Consolidated row per document
-            row = {
-                "เลขที่ใบสำคัญ (Voucher)": voucher_no,
-                "วันที่ใบสำคัญ": doc.get("doc_date", doc.get("transaction_date", "")),
-                "เลขที่บิลเดิม": doc.get("doc_number", ""),
-                "ชื่อผู้จำหน่าย": doc.get("entity_name", doc.get("merchant_name", "")),
-                "เลขประจำตัวผู้เสียภาษี": doc.get("tax_id", ""),
-                "รหัสบัญชี": mapping["acc_code"],
-                "คำอธิบาย": mapping["desc"],
-                "มูลค่าก่อน VAT": subtotal,
-                "ภาษีมูลค่าเพิ่ม": vat_amount,
-                "ส่วนลด": discount,
-                "ยอดจ่ายสุทธิ": net_amount
-            }
-            rows.append(row)
-            
+            source_id = doc.get("source_id", "_DEFAULT")
+
+            mapping = self.DEFAULT_ACCOUNT_MAPPING.get(
+                source_id,
+                self.DEFAULT_ACCOUNT_MAPPING["_DEFAULT"]
+            )
+
+            # Resolve financial values
+            subtotal = float(doc.get("total_amount") or 0.0)
+            vat_amount = 0.0
+            discount = 0.0
+            net_amount = subtotal
+
+            if "data_payload" in doc and isinstance(doc["data_payload"], dict):
+                totals = doc["data_payload"].get("totals") or doc["data_payload"].get("financial_summary") or {}
+                subtotal = float(totals.get("subtotal") or subtotal)
+                vat_amount = float(totals.get("vat_amount") or 0.0)
+                discount = float(totals.get("discount") or 0.0)
+                net_amount = float(totals.get("net_amount") or subtotal)
+
+            rows.append({
+                "Voucher_No": voucher_no,
+                "Doc_Date": doc.get("doc_date", doc.get("transaction_date", "")),
+                "Original_Doc_No": doc.get("doc_number", ""),
+                "Merchant_Name": doc.get("entity_name", doc.get("merchant_name", "")),
+                "Tax_ID": doc.get("tax_id", ""),
+                "Account_Code": mapping["acc_code"],
+                "Description": mapping["desc"],
+                "Subtotal": subtotal,
+                "VAT_Amount": vat_amount,
+                "Discount": discount,
+                "Net_Amount": net_amount
+            })
+
         return pd.DataFrame(rows)

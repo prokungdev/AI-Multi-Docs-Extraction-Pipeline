@@ -20,7 +20,7 @@ class BaseValidator(ABC):
 
 class DateNormalizationValidator(BaseValidator):
     """
-    Validator Strategy to normalize Buddhist Era (BE/พ.ศ.) years to Christian Era (AD/ค.ศ.).
+    Validator Strategy to normalize Buddhist Era (BE) years to Christian Era (AD).
     """
 
     def validate(self, payload: dict, context: dict = None) -> tuple[dict, bool, list[str]]:

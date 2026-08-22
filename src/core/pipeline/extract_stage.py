@@ -29,14 +29,14 @@ def extract_documents(domain: str = None, source: str = None) -> dict:
 
     load_dotenv()
     settings = load_system_settings()
-    storage_root = settings.get("storage_root", "pipeline_storage")
+    storage_root = settings.get("storage_root", "storage")
     ai_cfg = get_ai_provider_config(settings)
     max_images = ai_cfg.get("max_images_per_request", 50)
     if domain is None:
         domain = get_default_domain()
 
     domain_storage = os.path.join(storage_root, domain).replace("\\", "/")
-    queue_dir = os.path.join(domain_storage, "03_processing_queue").replace("\\", "/")
+    queue_dir = os.path.join(domain_storage, "04_processing").replace("\\", "/")
     os.makedirs(queue_dir, exist_ok=True)
 
     try:
@@ -130,7 +130,7 @@ async def async_extract_documents(domain: str = None, source: str = None) -> dic
 
     load_dotenv()
     settings = load_system_settings()
-    storage_root = settings.get("storage_root", "pipeline_storage")
+    storage_root = settings.get("storage_root", "storage")
     ai_cfg = get_ai_provider_config(settings)
     max_images = ai_cfg.get("max_images_per_request", 50)
     max_concurrent = ai_cfg.get("max_concurrent_requests", 5)
@@ -139,7 +139,7 @@ async def async_extract_documents(domain: str = None, source: str = None) -> dic
         domain = get_default_domain()
 
     domain_storage = os.path.join(storage_root, domain).replace("\\", "/")
-    queue_dir = os.path.join(domain_storage, "03_processing_queue").replace("\\", "/")
+    queue_dir = os.path.join(domain_storage, "04_processing").replace("\\", "/")
     os.makedirs(queue_dir, exist_ok=True)
 
     try:

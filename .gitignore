@@ -59,16 +59,33 @@ logs/*
 !logs/.gitkeep
 
 # Local Staging & Pipeline Storage
-# Ignore all files under pipeline_storage recursively (PDF, PNG, JSON, DB files)
-pipeline_storage/**/*
+# Ignore all files under storage recursively (PDF, PNG, JSON, DB files)
+storage/**/*
 
 # Do not ignore .gitkeep files to maintain the workspace folder structure in Git
-!pipeline_storage/**/.gitkeep
+!storage/**/.gitkeep
 
 # Exclude SQLite Database files explicitly
-pipeline_storage/**/pipeline.db
-pipeline_storage/**/*.db
+storage/**/pipeline.db
+storage/**/*.db
+
 
 # Output exports
 outputs/*
 !outputs/.gitkeep
+
+# Web (Next.js) & Frontend dependencies
+node_modules/
+.next/
+out/
+.turbo/
+.npm
+dist/
+
+# Mobile (Flutter / React Native)
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+android/app/build/
+ios/Pods/
+.expo/

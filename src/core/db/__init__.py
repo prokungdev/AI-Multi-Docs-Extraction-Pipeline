@@ -1,8 +1,28 @@
 from .connection import (
+    get_engine,
+    get_db_session,
+    get_database_url,
     get_db_connection,
     get_log_db_connection,
     get_db_connection_ctx,
     get_log_db_connection_ctx
+)
+
+from .models import (
+    Base,
+    MerchantStatus,
+    DocumentStatus,
+    DocumentSource,
+    ProcessedBatch,
+    Document,
+    DocumentPage,
+    Merchant,
+    MerchantMaster,
+    ExpenseReceipt,
+    ExpenseReceiptItem,
+    ApiCredential,
+    ApiCallLog,
+    ApplicationLog
 )
 
 from .schema import (
@@ -47,6 +67,16 @@ from .masters import (
     get_active_credentials,
     update_credential_status,
     get_merchants,
+    get_all_merchants,
+    get_pending_merchants,
+    get_merchant_by_tax_id,
+    get_or_create_merchant_auto,
+    approve_merchant,
+    ignore_merchant,
+    sanitize_short_name,
+    check_short_name_duplicate,
+    check_file_prefix_duplicate,
+    match_merchant_by_file_prefix,
     upsert_merchant,
     match_merchant,
     delete_merchant,
@@ -60,15 +90,32 @@ from .logs import (
 )
 
 __all__ = [
-    # Connection
+    # Connection & ORM
+    "get_engine",
+    "get_db_session",
+    "get_database_url",
     "get_db_connection",
     "get_log_db_connection",
     "get_db_connection_ctx",
     "get_log_db_connection_ctx",
+    "Base",
+    "MerchantStatus",
+    "DocumentStatus",
+    "DocumentSource",
+    "ProcessedBatch",
+    "Document",
+    "DocumentPage",
+    "MerchantMaster",
+    "ExpenseReceipt",
+    "ExpenseReceiptItem",
+    "ApiCredential",
+    "ApiCallLog",
+    "ApplicationLog",
     # Schema
     "initialize_db_schema",
     "initialize_log_db_schema",
     "seed_initial_data",
+    "reset_pipeline_database",
     # Documents & Pages
     "calculate_file_hash",
     "check_duplicate_document",
@@ -102,6 +149,16 @@ __all__ = [
     "get_active_credentials",
     "update_credential_status",
     "get_merchants",
+    "get_all_merchants",
+    "get_pending_merchants",
+    "get_merchant_by_tax_id",
+    "get_or_create_merchant_auto",
+    "approve_merchant",
+    "ignore_merchant",
+    "sanitize_short_name",
+    "check_short_name_duplicate",
+    "check_file_prefix_duplicate",
+    "match_merchant_by_file_prefix",
     "upsert_merchant",
     "match_merchant",
     "delete_merchant",
@@ -111,4 +168,3 @@ __all__ = [
     "get_api_call_logs",
     "get_application_logs",
 ]
-

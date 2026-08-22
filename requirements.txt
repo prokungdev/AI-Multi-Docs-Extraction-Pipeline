@@ -17,5 +17,10 @@ sqlalchemy>=2.0.0
 # Web UI Interface
 streamlit>=1.24.0
 
+# Backend REST API Server (for Next.js / Mobile Clients)
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+
 # Interactive Jupyter Notebooks & Development
 ipykernel>=6.20.0
+

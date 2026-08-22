@@ -48,9 +48,15 @@ from src.core.db import (
     get_domains,
     get_sources,
     update_domain_active_status,
-    update_source_active_status
+    update_source_active_status,
+    get_pending_merchants,
+    get_all_merchants,
+    approve_merchant,
+    ignore_merchant,
+    upsert_merchant
 )
 from src.core.pipeline import split_and_match
+from src.core.pipeline.split_stage import release_pending_merchant_files
 from src.core.post_processor import post_process_document, archive_and_export_document
 
 
@@ -160,10 +166,10 @@ def main_app():
         export_fmt = st.sidebar.radio("ฟอร์แมตไฟล์ปลายทาง", ["CSV", "JSON"], horizontal=True)
         
         if st.sidebar.button("🚀 ประมวลผลเอกสารด้วย AI"):
-            inbox_uncat = os.path.join(domain_storage, "01_raw_inbox", "_uncategorized")
-            os.makedirs(inbox_uncat, exist_ok=True)
+            inbox_upload = os.path.join(domain_storage, "01_drop_zone", "Upload")
+            os.makedirs(inbox_upload, exist_ok=True)
             
-            temp_path = os.path.join(inbox_uncat, uploaded_file.name).replace("\\", "/")
+            temp_path = os.path.join(inbox_upload, uploaded_file.name).replace("\\", "/")
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
                 
@@ -178,9 +184,10 @@ def main_app():
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
 
-    # 3-Tab structure
-    tab_review, tab_search, tab_settings = st.tabs([
+    # 4-Tab structure
+    tab_review, tab_merchants, tab_search, tab_settings = st.tabs([
         "🔎 ตรวจและอนุมัติ (Review & Approve)", 
+        "🏪 ร้านค้ารอการอนุมัติ (Merchant Gatekeeper)",
         "📊 ค้นหาและประวัติ (Search & History)", 
         "⚙️ ตั้งค่าระบบ (Settings)"
     ])
@@ -639,7 +646,95 @@ def main_app():
                                 except Exception as re_err:
                                     st.error(f"การสกัดข้อมูลซ้ำล้มเหลว: {re_err}")
                                     
-    # TAB 2: SEARCH & HISTORY
+    # TAB 2: MERCHANT GATEKEEPER & APPROVAL
+    with tab_merchants:
+        st.subheader("🏪 ศูนย์ตรวจสอบและอนุมัติร้านค้าใหม่ (Merchant Gatekeeper)")
+        st.markdown(
+            "ร้านค้าใหม่ที่มี Tax ID ที่ระบบยังไม่เคยรู้จักจะถูกตั้งสถานะเป็น **`PENDING`** "
+            "และเอกสารจะถูก **พักการทำงาน (Hold)** ไว้ใน `02_raw_data/PENDING/` จนกว่าแอดมินจะกดอนุมัติที่นี่"
+        )
+        
+        pending_merchants = get_pending_merchants()
+        
+        if not pending_merchants:
+            st.success("🎉 ไม่มีร้านค้าใหม่ค้างรอการอนุมัติในขณะนี้ ทุกร้านค้าได้รับการตรวจสอบเรียบร้อยแล้ว")
+        else:
+            st.warning(f"⚠️ พบร้านค้าใหม่รอการอนุมัติ {len(pending_merchants)} รายการ")
+            
+            for m in pending_merchants:
+                m_id = m["merchant_id"]
+                tax_id_val = m.get("tax_id") or "NO_TAXID"
+                m_name = m.get("merchant_name") or "New Merchant"
+                short_n = m.get("short_name") or "merchant"
+                file_pfx = m.get("file_prefix") or short_n
+                created_t = m.get("created_at") or ""
+                
+                with st.expander(f"📌 {m_name} (Tax ID: {tax_id_val})", expanded=True):
+                    col_m1, col_m2 = st.columns([1.5, 1])
+                    with col_m1:
+                        st.markdown(f"- **ชื่อร้านค้า (Merchant Name)**: `{m_name}`")
+                        st.markdown(f"- **เลขประจำตัวผู้เสียภาษี (Tax ID)**: `{tax_id_val}`")
+                        st.markdown(f"- **ตรวจพบเมื่อ (Registered At)**: `{created_t}`")
+                        
+                        edit_short_name = st.text_input(
+                            "✏️ ชื่อย่อร้านค้า (Short Name - ต้องไม่ซ้ำกัน)",
+                            value=short_n,
+                            key=f"short_{m_id}"
+                        ).strip()
+                        edit_file_prefix = st.text_input(
+                            "⚡ คำนำหน้าชื่อไฟล์ (File Prefix สำหรับ Zero-Cost Match)",
+                            value=file_pfx,
+                            key=f"pfx_{m_id}"
+                        ).strip()
+                        
+                        # Real-time uniqueness alert
+                        from src.core.db import check_short_name_duplicate, check_file_prefix_duplicate
+                        is_short_dup = check_short_name_duplicate(edit_short_name, exclude_merchant_id=m_id)
+                        is_pfx_dup = check_file_prefix_duplicate(edit_file_prefix, exclude_merchant_id=m_id)
+                        
+                        if is_short_dup:
+                            st.error(f"❌ ชื่อย่อ `{edit_short_name}` ซ้ำกับร้านอื่นในระบบ กรุณาแก้ไขให้ไม่ซ้ำ")
+                        if is_pfx_dup:
+                            st.error(f"❌ File Prefix `{edit_file_prefix}` ซ้ำกับร้านอื่นในระบบ กรุณาแก้ไขให้ไม่ซ้ำ")
+                            
+                    with col_m2:
+                        st.markdown("#### การดำเนินการ")
+                        st.info(f"📂 โฟลเดอร์ปลายทาง: `02_raw_data/{tax_id_val}_{edit_short_name}`")
+                        col_btn_app, col_btn_ign = st.columns(2)
+                        with col_btn_app:
+                            btn_disabled = is_short_dup or is_pfx_dup or not edit_short_name or not edit_file_prefix
+                            if st.button("✅ อนุมัติ (Approve)", key=f"app_{m_id}", use_container_width=True, disabled=btn_disabled):
+                                ok, msg = approve_merchant(
+                                    m_id,
+                                    reviewer_name=reviewer_name or "admin",
+                                    short_name=edit_short_name,
+                                    file_prefix=edit_file_prefix
+                                )
+                                if ok:
+                                    released = release_pending_merchant_files(selected_domain, tax_id_val, edit_short_name)
+                                    st.success(f"🎉 อนุมัติร้านค้า '{m_name}' สำเร็จ! ปล่อยเอกสาร {len(released)} รายการเข้าสู่คิวประมวลผลต่อแล้ว")
+                                    st.toast("อนุมัติร้านค้าและปล่อยเอกสารเรียบร้อย!", icon="🚀")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                else:
+                                    st.error(f"ไม่สามารถอนุมัติได้: {msg}")
+                        with col_btn_ign:
+                            if st.button("🚫 ปฏิเสธ (Ignore)", key=f"ign_{m_id}", use_container_width=True):
+                                ignore_merchant(m_id, reviewer_name=reviewer_name or "admin")
+                                st.info(f"🚫 ตั้งสถานะเป็น IGNORED ให้ร้านค้า '{m_name}' แล้ว (จะไม่ประมวลผลบิลจากร้านนี้อีก)")
+                                st.toast("บันทึกเป็นร้านค้าที่ไม่ประมวลผลแล้ว", icon="🛑")
+                                st.cache_data.clear()
+                                st.rerun()
+
+        st.divider()
+        st.subheader("📋 รายชื่อร้านค้าทั้งหมดในระบบ (Master Merchant Directory)")
+        all_merchants = get_all_merchants()
+        if all_merchants:
+            df_m = pd.DataFrame(all_merchants)
+            cols_to_show = [c for c in ["merchant_id", "tax_id", "merchant_name", "short_name", "status", "approved_by", "created_at"] if c in df_m.columns]
+            st.dataframe(df_m[cols_to_show], use_container_width=True, hide_index=True)
+
+    # TAB 3: SEARCH & HISTORY
     with tab_search:
         st.subheader("📊 ค้นหาประวัติเอกสารย้อนหลัง (Search & Historical Dashboard)")
         

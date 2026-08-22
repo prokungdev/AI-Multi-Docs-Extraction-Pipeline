@@ -119,7 +119,7 @@ def match_source_by_vision(image_path: str, merchant_rules: dict, settings: dict
     
     Instructions:
     - Compare the merchant name, logo, tax ID, or items in the image against the rules above.
-    - If a match is found, reply with ONLY the merchant identifier string (e.g., "shopee_thailand", "spx_express", "grab_thailand").
+    - If a match is found, reply with ONLY the matching merchant identifier string.
     - If the receipt does not match any candidate rules, reply with '_default'.
     - Do not output any explanation or extra text. Output exactly one word.
     """

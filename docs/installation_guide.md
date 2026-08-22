@@ -105,10 +105,21 @@ run_ui_streamlit.bat
 ```
 or via terminal:
 ```bash
-streamlit run src/ui/app.py
+streamlit run apps/streamlit/app.py
 ```
 
-### 2. Command Line Interface (CLI)
+### 2. REST API Backend (FastAPI)
+Launch the REST API server by running:
+```cmd
+run_api.bat
+```
+or via terminal:
+```bash
+uvicorn apps.api.main:app --reload --port 8000
+```
+API Documentation will be accessible at `http://127.0.0.1:8000/docs`.
+
+### 3. Command Line Interface (CLI)
 Run individual pipeline stages:
 ```bash
 python main.py --step split_match
@@ -119,7 +130,7 @@ python main.py --step export
 python main.py --step run_all
 ```
 
-### 3. Jupyter Notebook Walkthrough
+### 4. Jupyter Notebook Walkthrough
 Open and run cells step-by-step in [`notebooks/01_pipeline_walkthrough.ipynb`](../notebooks/01_pipeline_walkthrough.ipynb). Make sure to select the `.venv` Python kernel in your IDE / Jupyter interface.
 
 ---

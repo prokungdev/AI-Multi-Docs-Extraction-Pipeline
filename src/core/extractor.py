@@ -45,20 +45,20 @@ def clean_schema_for_gemini(schema: dict) -> dict:
 def extract_document_data(image_paths: str | list[str], source: str, domain: str, configs_dir: str = "configs",
                           batch_id: str = None, chunk_index: int = 1) -> dict:
     """
-    Extracts structured data from one or more image files using Gemini 2.5 Flash and a specific
-    prompt/schema configuration.
+    Extracts structured data from one or more image files using the configured
+    multimodal vision AI provider and domain-specific prompt/schema configurations.
     
     Args:
-        image_paths: Path or list of paths to the receipt/document image files.
-        source: The merchant or source identifier (e.g. 'grab_thailand').
-        domain: The domain folder name (e.g. 'expense_receipt').
+        image_paths: Path or list of paths to the document image files.
+        source: The merchant or source identifier (e.g. 'sample_merchant' or '_default').
+        domain: The document type domain name (e.g. 'expense_receipt').
         configs_dir: The root configuration directory.
-        batch_id: Optional ID of the parent batch for logging.
+        batch_id: Optional ID of the parent batch for tracking and logging.
         chunk_index: Optional index of the current chunk/part for logging.
         
     Returns:
         A dictionary containing the extracted data conforming to the domain's schema
-        along with validation_meta checks.
+        along with validation_meta evaluation checks.
     """
     if isinstance(image_paths, str):
         image_paths = [image_paths]
@@ -83,15 +83,19 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
         logger.error(err_msg)
         raise NotImplementedError(err_msg)
 
-    domain_dir = os.path.join(configs_dir, "domains", domain)
-    schema_path = os.path.join(domain_dir, "schema.json")
-    
-    if not os.path.exists(schema_path):
-        raise FileNotFoundError(f"Schema file not found at: {schema_path}")
+    from src.core.config_loader import load_doc_type_schema, load_doc_type_prompt
+    raw_schema = load_doc_type_schema(domain, configs_dir)
+    if not raw_schema:
+        # Fallback to direct path check
+        domain_dir = os.path.join(configs_dir, "domains", domain)
+        schema_path = os.path.join(domain_dir, "schema.json")
+        if os.path.exists(schema_path):
+            with open(schema_path, "r", encoding="utf-8") as f:
+                raw_schema = json.load(f)
+        else:
+            raise FileNotFoundError(f"Schema file not found for doc_type/domain: {domain}")
         
-    # 1. Load and clean the schema
-    with open(schema_path, "r", encoding="utf-8") as f:
-        raw_schema = json.load(f)
+    # 1. Clean the schema
     cleaned_schema = clean_schema_for_gemini(raw_schema)
     
     # Inject system validation_meta and doc_number into the response schema dynamically
@@ -154,17 +158,16 @@ def extract_document_data(image_paths: str | list[str], source: str, domain: str
             if "extraction_metadata" not in cleaned_schema["required"]:
                 cleaned_schema["required"].append("extraction_metadata")
 
-    # 2. Load the source-specific prompt, falling back to _default if not found
-    prompt_dir = os.path.join(domain_dir, "sources", source)
-    prompt_path = os.path.join(prompt_dir, "prompt.txt")
-    
-    if not os.path.exists(prompt_path):
-        prompt_path = os.path.join(domain_dir, "sources", "_default", "prompt.txt")
-        if not os.path.exists(prompt_path):
-            raise FileNotFoundError(f"Prompt file not found at: {prompt_path}")
-            
-    with open(prompt_path, "r", encoding="utf-8") as f:
-        prompt_text = f.read()
+    # 2. Load the standardized prompt
+    prompt_text = load_doc_type_prompt(domain, configs_dir)
+    if not prompt_text:
+        # Fallback to sources prompt if exists
+        prompt_path = os.path.join(configs_dir, "domains", domain, "sources", "_default", "prompt.txt")
+        if os.path.exists(prompt_path):
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                prompt_text = f.read()
+        else:
+            prompt_text = "You are an expert OCR and financial data extraction system. Extract structured data accurately according to the provided schema."
         
     # Wrap the cleaned schema in a dynamic array of documents schema
     wrapped_schema = {

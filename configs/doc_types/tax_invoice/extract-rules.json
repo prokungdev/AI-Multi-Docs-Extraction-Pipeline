@@ -1,0 +1,17 @@
+{
+  "doc_type_id": "tax_invoice",
+  "display_name": "ใบกำกับภาษีเต็มรูป (Tax Invoice)",
+  "validation_rules": {
+    "require_seller_tax_id": true,
+    "seller_tax_id_length": 13,
+    "require_invoice_number": true,
+    "require_invoice_date": true,
+    "validate_vat_calculation": true,
+    "default_vat_rate": 0.07,
+    "vat_tolerance": 0.05
+  },
+  "default_settings": {
+    "currency": "THB",
+    "vat_rate": 7.0
+  }
+}

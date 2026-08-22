@@ -1,17 +1,50 @@
 {
-  "storage_root": "pipeline_storage",
+  "storage_root": "storage",
   "pipeline_folders": [
-    "01_raw_inbox",
-    "02_split_pages",
-    "03_processing_queue",
-    "04_archive"
+    "01_drop_zone",
+    "02_raw_data",
+    "03_preprocess",
+    "04_processing",
+    "05_archive"
+  ],
+  "doc_types": [
+    {
+      "doc_type_id": "expense_receipt",
+      "display_name": "ใบเสร็จรับเงินค่าใช้จ่าย (Expense Receipt)",
+      "is_active": true,
+      "sort_order": 1
+    },
+    {
+      "doc_type_id": "tax_invoice",
+      "display_name": "ใบกำกับภาษีเต็มรูป (Tax Invoice)",
+      "is_active": true,
+      "sort_order": 2
+    },
+    {
+      "doc_type_id": "withholding_tax",
+      "display_name": "หนังสือรับรองการหักภาษี ณ ที่จ่าย 50 ทวิ (Withholding Tax)",
+      "is_active": true,
+      "sort_order": 3
+    }
   ],
   "domains": [
     {
       "domain_id": "expense_receipt",
-      "display_name": "ใบเสร็จค่าใช้จ่าย (Expense Receipt)",
+      "display_name": "ใบเสร็จรับเงินค่าใช้จ่าย (Expense Receipt)",
       "is_active": true,
       "sort_order": 1
+    },
+    {
+      "domain_id": "tax_invoice",
+      "display_name": "ใบกำกับภาษีเต็มรูป (Tax Invoice)",
+      "is_active": true,
+      "sort_order": 2
+    },
+    {
+      "domain_id": "withholding_tax",
+      "display_name": "หนังสือรับรองการหักภาษี ณ ที่จ่าย 50 ทวิ (Withholding Tax)",
+      "is_active": true,
+      "sort_order": 3
     }
   ],
   "logging": {
@@ -51,6 +84,20 @@
       "model_name": "gpt-4o",
       "api_key_env": "OPENAI_API_KEY",
       "max_concurrent_requests": 3
+    }
+  },
+  "database": {
+    "active_driver": "sqlite",
+    "echo_sql": false,
+    "sqlite": {
+      "db_filename": "pipeline.db"
+    },
+    "postgresql": {
+      "url_env": "DATABASE_URL",
+      "pool_size": 10,
+      "max_overflow": 20,
+      "pool_recycle": 3600,
+      "pool_pre_ping": true
     }
   }
 }

@@ -23,12 +23,17 @@ def transform_to_db(domain: str = None) -> dict:
     logger.info("Starting Stage 5 (Transform to DB): DB Transformation")
 
     settings = load_system_settings()
-    storage_root = settings.get("storage_root", "pipeline_storage")
+    storage_root = settings.get("storage_root", "storage")
     if domain is None:
         domain = get_default_domain()
 
     domain_storage = os.path.join(storage_root, domain).replace("\\", "/")
-    queue_dir = os.path.join(domain_storage, "03_processing_queue").replace("\\", "/")
+    queue_dir = os.path.join(domain_storage, "04_processing").replace("\\", "/")
+
+    if not os.path.exists(queue_dir):
+        legacy_queue = os.path.join(domain_storage, "03_processing_queue").replace("\\", "/")
+        if os.path.exists(legacy_queue):
+            queue_dir = legacy_queue
 
     try:
         pages = get_pages_by_status([

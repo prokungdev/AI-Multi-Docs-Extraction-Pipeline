@@ -1,6 +1,7 @@
 """Database connection and SQLAlchemy Engine / Session management.
 
-Resolves connection URLs dynamically for SQLite (default) and PostgreSQL (production).
+Resolves connection URLs and pools dynamically for SQLite (default) and PostgreSQL (production)
+based on central settings.json and environment configurations.
 """
 
 import os
@@ -16,10 +17,29 @@ from sqlalchemy.orm import sessionmaker, Session
 # Project root directory (4 levels up from src/core/db/connection.py)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
+
+def get_database_config(settings_path: str = "configs/settings.json") -> dict:
+    """
+    Loads the database configuration block from settings.json.
+    """
+    abs_settings_path = PROJECT_ROOT / settings_path if not os.path.isabs(settings_path) else Path(settings_path)
+    if abs_settings_path.exists():
+        try:
+            with open(abs_settings_path, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+            return settings.get("database", {})
+        except Exception as e:
+            logger.warning(f"Failed to read database configuration from {settings_path}: {e}")
+    return {}
+
+
 def get_database_url(settings_path: str = "configs/settings.json") -> str:
     """
     Resolves database connection URL dynamically.
-    Prioritizes DB_URL_OVERRIDE or DB_PATH_OVERRIDE environment variables, falls back to SQLite file.
+    Priority:
+      1. DB_URL_OVERRIDE / DB_PATH_OVERRIDE (unit test mock overrides)
+      2. If active_driver == 'postgresql': reads url_env (e.g. DATABASE_URL from .env)
+      3. If active_driver == 'sqlite': resolves {storage_root}/{db_filename}
     """
     env_url = os.environ.get("DB_URL_OVERRIDE")
     if env_url:
@@ -30,34 +50,71 @@ def get_database_url(settings_path: str = "configs/settings.json") -> str:
         return f"sqlite:///{override_path.replace('\\', '/')}"
 
     abs_settings_path = PROJECT_ROOT / settings_path if not os.path.isabs(settings_path) else Path(settings_path)
-    storage_root = "pipeline_storage"
+    settings = {}
+    storage_root = "storage"
     if abs_settings_path.exists():
         try:
             with open(abs_settings_path, "r", encoding="utf-8") as f:
                 settings = json.load(f)
-            storage_root = settings.get("storage_root", "pipeline_storage")
+            storage_root = settings.get("storage_root", "storage")
         except Exception as e:
             logger.warning(f"Failed to read settings.json for DB URL resolution: {e}")
 
+    db_cfg = settings.get("database", {})
+    active_driver = db_cfg.get("active_driver", "sqlite").lower()
+
+    if active_driver == "postgresql":
+        pg_cfg = db_cfg.get("postgresql", {})
+        url_env_name = pg_cfg.get("url_env", "DATABASE_URL")
+        pg_url = os.environ.get(url_env_name)
+        if pg_url:
+            return pg_url
+        logger.warning(f"PostgreSQL active driver selected but environment variable '{url_env_name}' is not set. Falling back to SQLite.")
+
+    # SQLite resolution (Default)
+    sqlite_cfg = db_cfg.get("sqlite", {})
+    db_filename = sqlite_cfg.get("db_filename", "pipeline.db")
     abs_storage_dir = PROJECT_ROOT / storage_root if not os.path.isabs(storage_root) else Path(storage_root)
     os.makedirs(abs_storage_dir, exist_ok=True)
-    db_path = str((abs_storage_dir / "pipeline.db").resolve()).replace("\\", "/")
+    db_path = str((abs_storage_dir / db_filename).resolve()).replace("\\", "/")
     return f"sqlite:///{db_path}"
 
-def get_engine():
+
+def get_engine(settings_path: str = "configs/settings.json"):
     """
-    Returns an Engine instance for the currently resolved DATABASE_URL.
+    Returns a configured Engine instance with connection pooling based on the resolved driver.
     """
-    url = get_database_url()
-    is_sqlite = url.startswith("sqlite")
-    return create_engine(
-        url,
-        connect_args={"check_same_thread": False} if is_sqlite else {},
-        echo=False
-    )
+    url = get_database_url(settings_path)
+    db_cfg = get_database_config(settings_path)
+    echo_sql = db_cfg.get("echo_sql", False)
+
+    if url.startswith("sqlite"):
+        return create_engine(
+            url,
+            connect_args={"check_same_thread": False},
+            echo=echo_sql
+        )
+    else:
+        # PostgreSQL / MySQL enterprise connection pooling
+        pg_cfg = db_cfg.get("postgresql", {})
+        pool_size = pg_cfg.get("pool_size", 10)
+        max_overflow = pg_cfg.get("max_overflow", 20)
+        pool_recycle = pg_cfg.get("pool_recycle", 3600)
+        pool_pre_ping = pg_cfg.get("pool_pre_ping", True)
+
+        return create_engine(
+            url,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_recycle=pool_recycle,
+            pool_pre_ping=pool_pre_ping,
+            echo=echo_sql
+        )
+
 
 engine = get_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 
 @contextmanager
 def get_db_session() -> Generator[Session, None, None]:
@@ -77,6 +134,7 @@ def get_db_session() -> Generator[Session, None, None]:
     finally:
         session.close()
 
+
 def get_db_connection(settings_path: str = "configs/settings.json") -> sqlite3.Connection:
     """
     Legacy helper: Establishes a raw connection to the centralized SQLite database.
@@ -85,13 +143,14 @@ def get_db_connection(settings_path: str = "configs/settings.json") -> sqlite3.C
     if db_url.startswith("sqlite:///"):
         raw_path = db_url.replace("sqlite:///", "")
     else:
-        raw_path = "pipeline_storage/pipeline.db"
+        raw_path = "storage/pipeline.db"
 
     conn = sqlite3.connect(raw_path, timeout=30.0)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     return conn
+
 
 def get_log_db_connection(settings_path: str = "configs/settings.json") -> sqlite3.Connection:
     """
@@ -110,40 +169,33 @@ def get_log_db_connection(settings_path: str = "configs/settings.json") -> sqlit
 
     abs_logs_dir = PROJECT_ROOT / logs_dir if not os.path.isabs(logs_dir) else Path(logs_dir)
     os.makedirs(abs_logs_dir, exist_ok=True)
-    db_path = str((abs_logs_dir / "logs.db").resolve()).replace("\\", "/")
+    db_path = str((abs_logs_dir / "logs.db").resolve())
 
     conn = sqlite3.connect(db_path, timeout=30.0)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.row_factory = sqlite3.Row
     return conn
 
+
 @contextmanager
 def get_db_connection_ctx(settings_path: str = "configs/settings.json") -> Generator[sqlite3.Connection, None, None]:
     """
-    Legacy context manager for database connections with automatic commit, rollback on error, and closure.
+    Context manager for database connections that automatically handles closing.
     """
     conn = get_db_connection(settings_path)
     try:
         yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
     finally:
         conn.close()
+
 
 @contextmanager
 def get_log_db_connection_ctx(settings_path: str = "configs/settings.json") -> Generator[sqlite3.Connection, None, None]:
     """
-    Legacy context manager for log database connections with automatic commit, rollback on error, and closure.
+    Context manager for log database connections that automatically handles closing.
     """
     conn = get_log_db_connection(settings_path)
     try:
         yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
     finally:
         conn.close()
-

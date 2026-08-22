@@ -3,7 +3,17 @@ import unittest
 import uuid
 from datetime import datetime, timezone
 from src.core.db.connection import get_db_session, get_engine, get_database_url
-from src.core.db.models import Base, ProcessedBatch, DocumentStatus, DocumentPage, MerchantMaster, ExpenseReceipt
+from src.core.db.models import (
+    Base,
+    ProcessedBatch,
+    DocumentStatus,
+    DocumentPage,
+    Merchant,
+    MerchantStatus,
+    ExpenseReceipt,
+    ExpenseReceiptItem
+)
+
 
 class TestSQLAlchemyORM(unittest.TestCase):
 
@@ -28,9 +38,9 @@ class TestSQLAlchemyORM(unittest.TestCase):
             # 1. Insert ProcessedBatch ORM entity
             batch = ProcessedBatch(
                 batch_id=batch_id,
-                original_pdf_name="test_orm_doc.pdf",
+                original_filename="test_orm_doc.pdf",
                 total_pages=1,
-                storage_path="pipeline_storage/expense_receipt/02_split_pages",
+                storage_path="storage/expense_receipt/03_preprocess",
                 file_hash=file_hash,
                 created_at=datetime.now(timezone.utc).isoformat()
             )
@@ -40,29 +50,34 @@ class TestSQLAlchemyORM(unittest.TestCase):
         with get_db_session() as session:
             queried_batch = session.query(ProcessedBatch).filter_by(batch_id=batch_id).first()
             self.assertIsNotNone(queried_batch)
-            self.assertEqual(queried_batch.original_pdf_name, "test_orm_doc.pdf")
+            self.assertEqual(queried_batch.original_filename, "test_orm_doc.pdf")
             self.assertEqual(queried_batch.file_hash, file_hash)
             print(f"[TEST] ORM Batch insertion & query test passed for batch '{batch_id}'.")
 
     def test_03_orm_relationship_cascade(self):
-        """Test ORM MerchantMaster and ExpenseReceipt relationship."""
+        """Test ORM Merchant, ExpenseReceipt, and ExpenseReceiptItem relationships."""
         merchant_id = f"merch_{uuid.uuid4().hex[:8]}"
 
         with get_db_session() as session:
-            merchant = MerchantMaster(
+            merchant = Merchant(
                 merchant_id=merchant_id,
                 tax_id="9995561164871",
                 merchant_name="ORM Test Merchant Co., Ltd.",
+                short_name="orm_test",
+                file_prefix="orm_test",
+                status_code=MerchantStatus.APPROVED.value,
                 default_wht_rate=0.0,
                 is_vat_registered=1
             )
             session.add(merchant)
 
         with get_db_session() as session:
-            fetched_merchant = session.query(MerchantMaster).filter_by(merchant_id=merchant_id).first()
+            fetched_merchant = session.query(Merchant).filter_by(merchant_id=merchant_id).first()
             self.assertIsNotNone(fetched_merchant)
             self.assertEqual(fetched_merchant.merchant_name, "ORM Test Merchant Co., Ltd.")
-            print(f"[TEST] ORM MerchantMaster relationship test passed for merchant '{merchant_id}'.")
+            self.assertEqual(fetched_merchant.status_code, MerchantStatus.APPROVED.value)
+            print(f"[TEST] ORM Merchant relationship test passed for merchant '{merchant_id}'.")
+
 
 if __name__ == "__main__":
     unittest.main()

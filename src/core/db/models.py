@@ -1,9 +1,10 @@
 """SQLAlchemy ORM Entities and Data Models for AI Multi-Docs Extraction Pipeline.
 
-Provides declarative models for relational database mapping across SQLite and PostgreSQL.
+Provides standardized declarative models for relational database mapping across SQLite and PostgreSQL.
 """
 
 from datetime import datetime, timezone
+import enum
 from sqlalchemy import (
     Column,
     String,
@@ -18,7 +19,26 @@ from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 
-class DocumentStatus(Base):
+
+class MerchantStatus(str, enum.Enum):
+    """Strongly-typed merchant gatekeeper status."""
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    IGNORED = "IGNORED"
+
+
+class DictSerializableMixin:
+    """Mixin to serialize SQLAlchemy models to Python dictionaries."""
+    def to_dict(self) -> dict:
+        """Converts model columns into a dictionary."""
+        result = {}
+        for column in self.__table__.columns:
+            val = getattr(self, column.name)
+            result[column.name] = val
+        return result
+
+
+class DocumentStatus(Base, DictSerializableMixin):
     """Document processing status reference model."""
     __tablename__ = "document_statuses"
 
@@ -26,21 +46,23 @@ class DocumentStatus(Base):
     display_name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
 
-class DocumentSource(Base):
+
+class DocumentSource(Base, DictSerializableMixin):
     """Merchant/Document source reference model."""
     __tablename__ = "document_sources"
 
     source_id = Column(String(100), primary_key=True)
-    domain_id = Column(String(100), nullable=False)
+    domain_id = Column(String(100), primary_key=True)
     display_name = Column(String(150), nullable=False)
     is_active = Column(Integer, default=1)
 
-class ProcessedBatch(Base):
+
+class ProcessedBatch(Base, DictSerializableMixin):
     """Processed document batch metadata model."""
     __tablename__ = "processed_batches"
 
     batch_id = Column(String(100), primary_key=True)
-    original_pdf_name = Column(String(255), nullable=False)
+    original_filename = Column(String(255), nullable=False)
     total_pages = Column(Integer, nullable=False)
     storage_path = Column(String(500), nullable=False)
     file_hash = Column(String(64), unique=True, nullable=False)
@@ -49,7 +71,8 @@ class ProcessedBatch(Base):
     documents = relationship("Document", back_populates="batch", cascade="all, delete-orphan")
     pages = relationship("DocumentPage", back_populates="batch", cascade="all, delete-orphan")
 
-class Document(Base):
+
+class Document(Base, DictSerializableMixin):
     """Document master model."""
     __tablename__ = "documents"
 
@@ -75,10 +98,10 @@ class Document(Base):
     overall_confidence = Column(Float, nullable=True)
     confidence_level = Column(String(50), nullable=True)
     is_blurry = Column(Integer, nullable=True)
-    has_ambiguous_fields = Column(Integer, nullable=True)
+    is_ambiguous = Column(Integer, nullable=True)
     confidence_notes = Column(Text, nullable=True)
     review_priority = Column(String(20), nullable=True)
-    auto_approved = Column(Integer, default=0, server_default="0")
+    is_auto_approved = Column(Integer, default=0, server_default="0")
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at = Column(String(50), nullable=True)
 
@@ -87,7 +110,8 @@ class Document(Base):
     pages = relationship("DocumentPage", back_populates="document")
     expense_receipts = relationship("ExpenseReceipt", back_populates="document", cascade="all, delete-orphan")
 
-class DocumentPage(Base):
+
+class DocumentPage(Base, DictSerializableMixin):
     """Document page image model."""
     __tablename__ = "document_pages"
 
@@ -104,13 +128,19 @@ class DocumentPage(Base):
     document = relationship("Document", back_populates="pages")
     status = relationship("DocumentStatus")
 
-class MerchantMaster(Base):
-    """Merchant master reference model."""
-    __tablename__ = "merchant_master"
+
+class Merchant(Base, DictSerializableMixin):
+    """Standardized merchant entity model."""
+    __tablename__ = "merchants"
 
     merchant_id = Column(String(100), primary_key=True)
     tax_id = Column(String(50), nullable=True)
     merchant_name = Column(String(200), nullable=False)
+    short_name = Column(String(100), nullable=False, default="merchant")
+    file_prefix = Column(String(100), nullable=False, default="merchant")
+    status_code = Column(String(50), nullable=False, default="APPROVED")  # APPROVED, PENDING, IGNORED
+    approved_by = Column(String(100), nullable=True)
+    approved_at = Column(String(50), nullable=True)
     default_wht_rate = Column(Float, default=0.0)
     is_vat_registered = Column(Integer, default=1)
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
@@ -119,47 +149,58 @@ class MerchantMaster(Base):
     receipts = relationship("ExpenseReceipt", back_populates="merchant")
 
     __table_args__ = (
-        Index("idx_merchant_tax_id", "tax_id"),
-        Index("idx_merchant_name", "merchant_name"),
+        Index("idx_merchants_tax_id", "tax_id"),
+        Index("idx_merchants_name", "merchant_name"),
+        Index("idx_merchants_short_name", "short_name"),
+        Index("idx_merchants_file_prefix", "file_prefix"),
+        Index("idx_merchants_status_code", "status_code"),
     )
 
-class ExpenseReceipt(Base):
-    """Expense receipt header model."""
-    __tablename__ = "expense_receipt"
+
+# Alias for backward compatibility if needed
+MerchantMaster = Merchant
+
+
+class ExpenseReceipt(Base, DictSerializableMixin):
+    """Standardized expense receipt header model."""
+    __tablename__ = "expense_receipts"
 
     receipt_id = Column(String(100), primary_key=True)
     document_id = Column(String(100), ForeignKey("documents.document_id", ondelete="CASCADE"), nullable=False)
-    merchant_id = Column(String(100), ForeignKey("merchant_master.merchant_id"), nullable=False)
+    merchant_id = Column(String(100), ForeignKey("merchants.merchant_id"), nullable=False)
     transaction_date = Column(String(50), nullable=True)
     merchant_name = Column(String(200), nullable=True)
     tax_id = Column(String(50), nullable=True)
     expense_category = Column(String(100), nullable=True)
     subtotal = Column(Float, default=0.0)
-    discount = Column(Float, default=0.0)
+    discount_amount = Column(Float, default=0.0)
     vat_amount = Column(Float, default=0.0)
     net_amount = Column(Float, default=0.0)
     payment_method = Column(String(50), nullable=True)
-    source_file_name = Column(String(255), nullable=True)
+    source_filename = Column(String(255), nullable=True)
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at = Column(String(50), nullable=True)
 
     document = relationship("Document", back_populates="expense_receipts")
-    merchant = relationship("MerchantMaster", back_populates="receipts")
+    merchant = relationship("Merchant", back_populates="receipts")
     items = relationship("ExpenseReceiptItem", back_populates="receipt", cascade="all, delete-orphan")
 
-class ExpenseReceiptItem(Base):
-    """Expense receipt detail item model."""
-    __tablename__ = "expense_receipt_d"
+
+class ExpenseReceiptItem(Base, DictSerializableMixin):
+    """Standardized expense receipt item detail model."""
+    __tablename__ = "expense_receipt_items"
 
     item_id = Column(String(100), primary_key=True)
-    receipt_id = Column(String(100), ForeignKey("expense_receipt.receipt_id", ondelete="CASCADE"), nullable=False)
+    receipt_id = Column(String(100), ForeignKey("expense_receipts.receipt_id", ondelete="CASCADE"), nullable=False)
     item_name = Column(String(255), nullable=False)
-    qty = Column(Float, default=1.0)
+    quantity = Column(Float, default=1.0)
     unit_price = Column(Float, default=0.0)
     total_price = Column(Float, default=0.0)
 
     receipt = relationship("ExpenseReceipt", back_populates="items")
 
-class ApiCredential(Base):
+
+class ApiCredential(Base, DictSerializableMixin):
     """API credentials model."""
     __tablename__ = "api_credentials"
 
@@ -170,8 +211,11 @@ class ApiCredential(Base):
     is_active = Column(Integer, default=1)
     last_active_at = Column(String(50), nullable=True)
     error_count = Column(Integer, default=0)
+    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at = Column(String(50), nullable=True)
 
-class ApiCallLog(Base):
+
+class ApiCallLog(Base, DictSerializableMixin):
     """API execution log model."""
     __tablename__ = "api_call_logs"
 
@@ -182,10 +226,23 @@ class ApiCallLog(Base):
     model_name = Column(String(100), nullable=False)
     chunk_index = Column(Integer, nullable=True)
     request_pages = Column(Text, nullable=True)
-    status = Column(String(50), nullable=False)
+    status_code = Column(String(50), nullable=False)
     input_tokens = Column(Integer, default=0)
     output_tokens = Column(Integer, default=0)
     latency_ms = Column(Float, nullable=True)
     error_reason = Column(Text, nullable=True)
     raw_response = Column(Text, nullable=True)
+    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class ApplicationLog(Base, DictSerializableMixin):
+    """Application log model."""
+    __tablename__ = "application_logs"
+
+    log_id = Column(Integer, primary_key=True, autoincrement=True)
+    level = Column(String(20), nullable=False)
+    module = Column(String(100), nullable=False)
+    function = Column(String(100), nullable=False)
+    message = Column(Text, nullable=False)
+    extra_data = Column(Text, nullable=True)
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())

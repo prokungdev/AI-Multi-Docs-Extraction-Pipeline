@@ -16,7 +16,7 @@ def reset_pipeline_data(
     logger.info("Resetting Pipeline Data (Fresh Start)")
 
     settings = load_system_settings()
-    storage_root = settings.get("storage_root", "pipeline_storage")
+    storage_root = settings.get("storage_root", "storage")
     if domain is None:
         domain = get_default_domain()
 
@@ -31,6 +31,8 @@ def reset_pipeline_data(
     if clear_storage_temp:
         domain_storage = os.path.join(storage_root, domain).replace("\\", "/")
         folders_to_clean = [
+            os.path.join(domain_storage, "03_preprocess"),
+            os.path.join(domain_storage, "04_processing"),
             os.path.join(domain_storage, "02_split_pages"),
             os.path.join(domain_storage, "03_processing_queue"),
         ]
@@ -49,6 +51,6 @@ def reset_pipeline_data(
 
         res["storage_cleaned"] = True
         res["deleted_files_count"] = deleted_count
-        logger.info(f"Cleaned {deleted_count} temporary files from 02_split_pages and 03_processing_queue.")
+        logger.info(f"Cleaned {deleted_count} temporary files from preprocess and processing queue.")
 
     return res

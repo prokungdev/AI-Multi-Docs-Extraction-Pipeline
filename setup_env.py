@@ -87,7 +87,9 @@ def main() -> None:
     print("==========================================================")
     print()
     print("You can launch the Streamlit Web UI by executing:")
-    print("  python setup_env.py  (or run_ui_streamlit.bat / streamlit run src/ui/app.py)")
+    print("  run_ui_streamlit.bat  (or streamlit run apps/streamlit/app.py)")
+    print("You can also run the REST API server by executing:")
+    print("  run_api.bat           (or uvicorn apps.api.main:app --reload)")
     print()
 
 if __name__ == "__main__":

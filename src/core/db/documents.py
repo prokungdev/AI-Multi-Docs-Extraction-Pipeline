@@ -1,11 +1,15 @@
+"""Document and batch database operations using SQLAlchemy 2.0 ORM."""
+
 import os
-import json
-import sqlite3
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Tuple
 from loguru import logger
-from .connection import get_db_connection
+from sqlalchemy import or_, and_, desc, asc, func
+
+from .connection import get_db_session
+from .models import ProcessedBatch, DocumentPage, Document, DocumentStatus
+
 
 def calculate_file_hash(file_path: str) -> str:
     """
@@ -17,648 +21,673 @@ def calculate_file_hash(file_path: str) -> str:
             sha256.update(chunk)
     return sha256.hexdigest()
 
+
 def check_duplicate_document(file_hash: str) -> tuple[bool, dict | None]:
     """
-    Checks if a batch with the given SHA-256 hash already exists.
+    Checks if a batch with the given SHA-256 hash already exists using SQLAlchemy ORM.
     Returns: (is_duplicate, batch_metadata_dict)
     """
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT pb.batch_id, pb.original_pdf_name, pb.created_at, doc.status_code, doc.domain_id, doc.source_id
-            FROM processed_batches pb
-            LEFT JOIN documents doc ON pb.batch_id = doc.batch_id
-            WHERE pb.file_hash = ?
-        """, (file_hash,))
-        row = cursor.fetchone()
-        if row:
-            metadata = {
-                "batch_id": row["batch_id"],
-                "original_pdf_name": row["original_pdf_name"],
-                "created_at": row["created_at"],
-                "status": row["status_code"] if row["status_code"] else "PENDING",
-                "domain": row["domain_id"] if row["domain_id"] else "expense_receipt",
-                "source": row["source_id"] if row["source_id"] else "_default"
-            }
-            return True, metadata
+        with get_db_session() as session:
+            batch = session.query(ProcessedBatch).filter_by(file_hash=file_hash).first()
+            if batch:
+                first_doc = session.query(Document).filter_by(batch_id=batch.batch_id).first()
+                metadata = {
+                    "batch_id": batch.batch_id,
+                    "original_filename": batch.original_filename,
+                    "original_pdf_name": batch.original_filename,  # backward compatibility alias
+                    "created_at": batch.created_at,
+                    "status": first_doc.status_code if first_doc else "PENDING",
+                    "domain": first_doc.domain_id if first_doc else "expense_receipt",
+                    "source": first_doc.source_id if first_doc else "_default"
+                }
+                return True, metadata
     except Exception as e:
         logger.error(f"Error checking duplicate document hash: {e}")
-    finally:
-        if conn:
-            conn.close()
     return False, None
 
-def create_batch(batch_id: str, original_pdf_name: str, total_pages: int, storage_path: str, file_hash: str) -> bool:
+
+def create_batch(batch_id: str, original_filename: str = None, total_pages: int = 1,
+                 storage_path: str = "", file_hash: str = "", original_pdf_name: str = None) -> bool:
     """
-    Inserts a new batch record.
+    Inserts or updates a batch record using SQLAlchemy ORM.
+    Supports both original_filename and legacy original_pdf_name.
     """
-    conn = None
+    filename = original_filename or original_pdf_name or "document.pdf"
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        created_at = datetime.now().isoformat()
-        cursor.execute("""
-            INSERT OR REPLACE INTO processed_batches (batch_id, original_pdf_name, total_pages, storage_path, file_hash, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (batch_id, original_pdf_name, total_pages, storage_path, file_hash, created_at))
-        conn.commit()
-        return True
+        with get_db_session() as session:
+            created_at = datetime.now(timezone.utc).isoformat()
+            batch = session.query(ProcessedBatch).filter_by(batch_id=batch_id).first()
+            if batch:
+                batch.original_filename = filename
+                batch.total_pages = total_pages
+                batch.storage_path = storage_path
+                batch.file_hash = file_hash
+            else:
+                batch = ProcessedBatch(
+                    batch_id=batch_id,
+                    original_filename=filename,
+                    total_pages=total_pages,
+                    storage_path=storage_path,
+                    file_hash=file_hash,
+                    created_at=created_at
+                )
+                session.add(batch)
+            return True
     except Exception as e:
-        logger.error(f"Failed to create batch: {e}")
+        logger.error(f"Failed to create batch '{batch_id}': {e}")
         return False
-    finally:
-        if conn:
-            conn.close()
+
 
 def create_page(page_id: str, batch_id: str, page_number: int, image_path: str, status_code: str, error_reason: str = None) -> bool:
     """
-    Inserts a new page record.
+    Inserts or updates a page record using SQLAlchemy ORM.
     """
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        created_at = datetime.now().isoformat()
-        cursor.execute("""
-            INSERT OR REPLACE INTO document_pages (page_id, batch_id, page_number, image_path, status_code, error_reason, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (page_id, batch_id, page_number, image_path, status_code, error_reason, created_at))
-        conn.commit()
-        return True
+        with get_db_session() as session:
+            created_at = datetime.now(timezone.utc).isoformat()
+            page = session.query(DocumentPage).filter_by(page_id=page_id).first()
+            if page:
+                page.batch_id = batch_id
+                page.page_number = page_number
+                page.image_path = image_path
+                page.status_code = status_code
+                page.error_reason = error_reason
+            else:
+                page = DocumentPage(
+                    page_id=page_id,
+                    batch_id=batch_id,
+                    page_number=page_number,
+                    image_path=image_path,
+                    status_code=status_code,
+                    error_reason=error_reason,
+                    created_at=created_at
+                )
+                session.add(page)
+            return True
     except Exception as e:
-        logger.error(f"Failed to create page: {e}")
+        logger.error(f"Failed to create page '{page_id}': {e}")
         return False
-    finally:
-        if conn:
-            conn.close()
+
 
 def update_page(page_id: str, image_path: str = None, status_code: str = None, error_reason: str = None) -> bool:
     """
-    Updates an existing page record (e.g. image_path, status_code, error_reason).
+    Updates an existing page record using SQLAlchemy ORM.
     """
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        fields = []
-        params = []
-        if image_path is not None:
-            fields.append("image_path = ?")
-            params.append(image_path)
-        if status_code is not None:
-            fields.append("status_code = ?")
-            params.append(status_code)
-        if error_reason is not None:
-            fields.append("error_reason = ?")
-            params.append(error_reason)
-        if not fields:
+        with get_db_session() as session:
+            page = session.query(DocumentPage).filter_by(page_id=page_id).first()
+            if not page:
+                return False
+            if image_path is not None:
+                page.image_path = image_path
+            if status_code is not None:
+                page.status_code = status_code
+            if error_reason is not None:
+                page.error_reason = error_reason
             return True
-        params.append(page_id)
-        query = f"UPDATE document_pages SET {', '.join(fields)} WHERE page_id = ?"
-        cursor.execute(query, tuple(params))
-        conn.commit()
-        return True
     except Exception as e:
-        logger.error(f"Failed to update page {page_id}: {e}")
+        logger.error(f"Failed to update page '{page_id}': {e}")
         return False
-    finally:
-        if conn:
-            conn.close()
 
-def update_page_status(page_id: str, status_code: str, error_reason: str = None, conn: sqlite3.Connection = None) -> bool:
-    """
-    Convenience helper to update status and error reason of a page.
-    """
-    should_close = False
-    if conn is None:
-        conn = get_db_connection()
-        should_close = True
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE document_pages
-            SET status_code = ?, error_reason = ?
-            WHERE page_id = ?
-        """, (status_code, error_reason, page_id))
-        if should_close:
-            conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Failed to update page status for {page_id}: {e}")
-        return False
-    finally:
-        if should_close and conn:
-            conn.close()
 
-def update_pages_status_batch(updates: List[Tuple[str, str | None, str, int]], conn: sqlite3.Connection = None) -> bool:
+def update_page_status(page_id: str, status_code: str, error_reason: str = None) -> bool:
     """
-    Batch update page statuses using executemany for high performance.
+    Convenience helper to update status and error reason of a page using SQLAlchemy ORM.
+    """
+    return update_page(page_id, status_code=status_code, error_reason=error_reason)
+
+
+def update_pages_status_batch(updates: List[Tuple[str, str | None, str, int]]) -> bool:
+    """
+    Batch update page statuses using SQLAlchemy ORM.
     Args:
         updates: List of tuples (status_code, error_reason, batch_id, page_number)
     """
-    should_close = False
-    if conn is None:
-        conn = get_db_connection()
-        should_close = True
     try:
-        cursor = conn.cursor()
-        cursor.executemany("""
-            UPDATE document_pages
-            SET status_code = ?, error_reason = ?
-            WHERE batch_id = ? AND page_number = ?
-        """, updates)
-        if should_close:
-            conn.commit()
-        return True
+        with get_db_session() as session:
+            for status_code, error_reason, batch_id, page_number in updates:
+                page = session.query(DocumentPage).filter_by(batch_id=batch_id, page_number=page_number).first()
+                if page:
+                    page.status_code = status_code
+                    page.error_reason = error_reason
+            return True
     except Exception as e:
         logger.error(f"Failed to batch update page statuses: {e}")
         return False
-    finally:
-        if should_close and conn:
-            conn.close()
 
-def create_document(document_id: str, batch_id: str, domain_id: str, source_id: str, status_code: str, 
-                    doc_number: str = None, doc_date: str = None, entity_name: str = None, 
-                    total_amount: float = None, search_text: str = None, data_payload: str = None, 
-                    error_reason: str = None, model_used: str = None, input_tokens: int = None,
-                    output_tokens: int = None, conn: sqlite3.Connection = None,
-                    overall_confidence: float = None, confidence_level: str = None,
-                    is_blurry: int = None, has_ambiguous_fields: int = None,
-                    confidence_notes: str = None, review_priority: str = None,
-                    auto_approved: int = None) -> bool:
+
+def create_document(
+    document_id: str,
+    batch_id: str,
+    domain_id: str,
+    source_id: str,
+    status_code: str,
+    doc_number: str = None,
+    doc_date: str = None,
+    entity_name: str = None,
+    total_amount: float = None,
+    search_text: str = None,
+    data_payload: str = None,
+    error_reason: str = None,
+    model_used: str = None,
+    input_tokens: int = None,
+    output_tokens: int = None,
+    overall_confidence: float = None,
+    confidence_level: str = None,
+    is_blurry: int = None,
+    is_ambiguous: int = None,
+    has_ambiguous_fields: int = None,
+    confidence_notes: str = None,
+    review_priority: str = None,
+    is_auto_approved: int = None,
+    auto_approved: int = None
+) -> bool:
     """
-    Inserts a new document record.
+    Inserts or updates a document record using SQLAlchemy ORM.
     """
-    should_close = False
-    if conn is None:
-        conn = get_db_connection()
-        should_close = True
+    final_auto_approved = is_auto_approved if is_auto_approved is not None else (auto_approved or 0)
+    final_ambiguous = is_ambiguous if is_ambiguous is not None else (has_ambiguous_fields or 0)
+
     try:
-        cursor = conn.cursor()
-        created_at = datetime.now().isoformat()
-        cursor.execute("""
-            INSERT OR REPLACE INTO documents (
-                document_id, batch_id, domain_id, source_id, status_code, doc_number, doc_date, 
-                entity_name, total_amount, search_text, data_payload, error_reason,
-                model_used, input_tokens, output_tokens, overall_confidence, confidence_level,
-                is_blurry, has_ambiguous_fields, confidence_notes, review_priority, auto_approved,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (document_id, batch_id, domain_id, source_id, status_code, doc_number, doc_date,
-              entity_name, total_amount, search_text, data_payload, error_reason,
-              model_used, input_tokens, output_tokens, overall_confidence, confidence_level,
-              is_blurry, has_ambiguous_fields, confidence_notes, review_priority, auto_approved,
-              created_at))
-        if should_close:
-            conn.commit()
-        return True
+        with get_db_session() as session:
+            created_at = datetime.now(timezone.utc).isoformat()
+            doc = session.query(Document).filter_by(document_id=document_id).first()
+            if doc:
+                doc.batch_id = batch_id
+                doc.domain_id = domain_id
+                doc.source_id = source_id
+                doc.status_code = status_code
+                doc.doc_number = doc_number
+                doc.doc_date = doc_date
+                doc.entity_name = entity_name
+                doc.total_amount = total_amount
+                doc.search_text = search_text
+                doc.data_payload = data_payload
+                doc.error_reason = error_reason
+                doc.model_used = model_used
+                doc.input_tokens = input_tokens or 0
+                doc.output_tokens = output_tokens or 0
+                doc.overall_confidence = overall_confidence
+                doc.confidence_level = confidence_level
+                doc.is_blurry = is_blurry
+                doc.is_ambiguous = final_ambiguous
+                doc.confidence_notes = confidence_notes
+                doc.review_priority = review_priority
+                doc.is_auto_approved = final_auto_approved
+                doc.updated_at = created_at
+            else:
+                doc = Document(
+                    document_id=document_id,
+                    batch_id=batch_id,
+                    domain_id=domain_id,
+                    source_id=source_id,
+                    status_code=status_code,
+                    doc_number=doc_number,
+                    doc_date=doc_date,
+                    entity_name=entity_name,
+                    total_amount=total_amount,
+                    search_text=search_text,
+                    data_payload=data_payload,
+                    error_reason=error_reason,
+                    model_used=model_used,
+                    input_tokens=input_tokens or 0,
+                    output_tokens=output_tokens or 0,
+                    overall_confidence=overall_confidence,
+                    confidence_level=confidence_level,
+                    is_blurry=is_blurry,
+                    is_ambiguous=final_ambiguous,
+                    confidence_notes=confidence_notes,
+                    review_priority=review_priority,
+                    is_auto_approved=final_auto_approved,
+                    created_at=created_at
+                )
+                session.add(doc)
+            return True
     except Exception as e:
-        logger.error(f"Failed to create document: {e}")
+        logger.error(f"Failed to create document '{document_id}': {e}")
         return False
-    finally:
-        if should_close and conn:
-            conn.close()
 
-def link_pages_to_document(batch_id: str, document_id: str, status_code: str = None, conn: sqlite3.Connection = None):
+
+def link_pages_to_document(document_id: str, page_ids: list[str]) -> bool:
     """
-    Links all pages in a batch to a specific document and optionally updates their status.
+    Links given page_ids to a document_id using SQLAlchemy ORM.
     """
-    should_close = False
-    if conn is None:
-        conn = get_db_connection()
-        should_close = True
     try:
-        cursor = conn.cursor()
-        if status_code:
-            cursor.execute("""
-                UPDATE document_pages
-                SET document_id = ?, status_code = ?
-                WHERE batch_id = ?
-            """, (document_id, status_code, batch_id))
-        else:
-            cursor.execute("""
-                UPDATE document_pages
-                SET document_id = ?
-                WHERE batch_id = ?
-            """, (document_id, batch_id))
-        if should_close:
-            conn.commit()
+        with get_db_session() as session:
+            for pid in page_ids:
+                page = session.query(DocumentPage).filter_by(page_id=pid).first()
+                if page:
+                    page.document_id = document_id
+            return True
     except Exception as e:
-        logger.error(f"Failed to link pages to document: {e}")
-    finally:
-        if should_close and conn:
-            conn.close()
+        logger.error(f"Failed to link pages to document '{document_id}': {e}")
+        return False
+
 
 def get_document_by_id(document_id: str) -> dict | None:
     """
-    Fetches a single document by its ID.
+    Retrieves full document record joined with batch info using SQLAlchemy ORM.
     """
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM documents WHERE document_id = ?", (document_id,))
-        row = cursor.fetchone()
-        if row:
-            return dict(row)
+        with get_db_session() as session:
+            doc = session.query(Document).filter_by(document_id=document_id).first()
+            if not doc:
+                return None
+            doc_dict = doc.to_dict()
+            batch = session.query(ProcessedBatch).filter_by(batch_id=doc.batch_id).first()
+            if batch:
+                doc_dict["original_filename"] = batch.original_filename
+                doc_dict["original_pdf_name"] = batch.original_filename
+                doc_dict["storage_path"] = batch.storage_path
+            return doc_dict
     except Exception as e:
-        logger.error(f"Failed to fetch document by ID: {e}")
-    finally:
-        if conn:
-            conn.close()
-    return None
+        logger.error(f"Failed to get document '{document_id}': {e}")
+        return None
+
 
 def get_document_pages(document_id: str) -> list[dict]:
     """
-    Retrieves all pages associated with a document.
+    Retrieves all pages associated with a specific document using SQLAlchemy ORM.
     """
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM document_pages WHERE document_id = ? ORDER BY page_number ASC", (document_id,))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        with get_db_session() as session:
+            pages = session.query(DocumentPage).filter_by(document_id=document_id).order_by(DocumentPage.page_number.asc()).all()
+            return [p.to_dict() for p in pages]
     except Exception as e:
-        logger.error(f"Failed to fetch pages for document: {e}")
-    finally:
-        if conn:
-            conn.close()
-    return []
+        logger.error(f"Failed to get pages for document '{document_id}': {e}")
+        return []
+
 
 def get_batch_pages(batch_id: str) -> list[dict]:
     """
-    Retrieves all pages associated with a batch.
+    Retrieves all pages belonging to a batch using SQLAlchemy ORM.
     """
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM document_pages WHERE batch_id = ? ORDER BY page_number ASC", (batch_id,))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        with get_db_session() as session:
+            pages = session.query(DocumentPage).filter_by(batch_id=batch_id).order_by(DocumentPage.page_number.asc()).all()
+            return [p.to_dict() for p in pages]
     except Exception as e:
-        logger.error(f"Failed to fetch pages for batch: {e}")
-    finally:
-        if conn:
-            conn.close()
-    return []
+        logger.error(f"Failed to get pages for batch '{batch_id}': {e}")
+        return []
 
-def get_pending_documents(domain_id: str) -> list[dict]:
-    """
-    Retrieves all documents in a domain that are not approved (unlocked).
-    """
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT doc.*, pb.original_pdf_name, pb.storage_path
-            FROM documents doc
-            JOIN processed_batches pb ON doc.batch_id = pb.batch_id
-            WHERE doc.domain_id = ? AND doc.is_locked = 0
-            ORDER BY 
-                CASE doc.review_priority
-                    WHEN 'HIGH' THEN 1
-                    WHEN 'MEDIUM' THEN 2
-                    WHEN 'LOW' THEN 3
-                    ELSE 4
-                END ASC,
-                doc.created_at DESC
-        """, (domain_id,))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
-    except Exception as e:
-        logger.error(f"Failed to fetch pending documents: {e}")
-    finally:
-        if conn:
-            conn.close()
-    return []
 
-def get_all_documents(domain_id: str) -> list[dict]:
+def get_pending_documents(domain_id: str = None, source_id: str = None) -> list[dict]:
     """
-    Retrieves all documents in a domain with batch metadata.
+    Retrieves documents waiting for review using SQLAlchemy ORM.
     """
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT doc.*, pb.original_pdf_name, pb.storage_path
-            FROM documents doc
-            JOIN processed_batches pb ON doc.batch_id = pb.batch_id
-            WHERE doc.domain_id = ?
-            ORDER BY doc.created_at DESC
-        """, (domain_id,))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
-    except Exception as e:
-        logger.error(f"Failed to fetch all documents: {e}")
-    finally:
-        if conn:
-            conn.close()
-    return []
+        with get_db_session() as session:
+            query = session.query(Document, ProcessedBatch).join(
+                ProcessedBatch, Document.batch_id == ProcessedBatch.batch_id
+            ).filter(
+                Document.status_code.in_(["PENDING", "NEEDS_REVIEW", "PROCESSED"])
+            )
 
-def update_document_to_approved(document_id: str, doc_number: str, doc_date: str, entity_name: str, 
-                                total_amount: float, data_payload: str, confirmed_by: str) -> bool:
-    """
-    Locks the document and marks its status as APPROVED.
-    """
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        confirmed_at = datetime.now().isoformat()
-        cursor.execute("""
-            UPDATE documents
-            SET status_code = 'APPROVED',
-                doc_number = ?,
-                doc_date = ?,
-                entity_name = ?,
-                total_amount = ?,
-                data_payload = ?,
-                is_locked = 1,
-                confirmed_by = ?,
-                confirmed_at = ?,
-                updated_at = ?
-            WHERE document_id = ?
-        """, (doc_number, doc_date, entity_name, total_amount, data_payload, confirmed_by, confirmed_at, confirmed_at, document_id))
-        conn.commit()
-        return True
+            if domain_id:
+                query = query.filter(Document.domain_id == domain_id)
+            if source_id:
+                query = query.filter(Document.source_id == source_id)
+
+            query = query.order_by(
+                Document.review_priority.desc(),
+                Document.created_at.desc()
+            )
+
+            results = query.all()
+            docs = []
+            for doc, batch in results:
+                d = doc.to_dict()
+                d["original_filename"] = batch.original_filename
+                d["original_pdf_name"] = batch.original_filename
+                d["storage_path"] = batch.storage_path
+                docs.append(d)
+            return docs
     except Exception as e:
-        logger.error(f"Failed to approve document: {e}")
+        logger.error(f"Failed to get pending documents: {e}")
+        return []
+
+
+def get_all_documents(domain_id: str = None, source_id: str = None, status_code: str = None) -> list[dict]:
+    """
+    Retrieves all documents matching criteria using SQLAlchemy ORM.
+    """
+    try:
+        with get_db_session() as session:
+            query = session.query(Document, ProcessedBatch).join(
+                ProcessedBatch, Document.batch_id == ProcessedBatch.batch_id
+            )
+
+            if domain_id:
+                query = query.filter(Document.domain_id == domain_id)
+            if source_id:
+                query = query.filter(Document.source_id == source_id)
+            if status_code:
+                query = query.filter(Document.status_code == status_code)
+
+            query = query.order_by(Document.created_at.desc())
+            results = query.all()
+            docs = []
+            for doc, batch in results:
+                d = doc.to_dict()
+                d["original_filename"] = batch.original_filename
+                d["original_pdf_name"] = batch.original_filename
+                d["storage_path"] = batch.storage_path
+                docs.append(d)
+            return docs
+    except Exception as e:
+        logger.error(f"Failed to get all documents: {e}")
+        return []
+
+
+def update_document_to_approved(
+    document_id: str,
+    confirmed_by: str = "human",
+    doc_number: str = None,
+    doc_date: str = None,
+    entity_name: str = None,
+    total_amount: float = None,
+    data_payload: str = None,
+    is_manually_edited: int = 0
+) -> bool:
+    """
+    Marks a document as APPROVED and locks it using SQLAlchemy ORM.
+    """
+    try:
+        with get_db_session() as session:
+            doc = session.query(Document).filter_by(document_id=document_id).first()
+            if not doc:
+                return False
+            now_str = datetime.now(timezone.utc).isoformat()
+            doc.status_code = "APPROVED"
+            doc.is_locked = 1
+            doc.confirmed_by = confirmed_by
+            doc.confirmed_at = now_str
+            doc.is_manually_edited = is_manually_edited
+            if doc_number is not None:
+                doc.doc_number = doc_number
+            if doc_date is not None:
+                doc.doc_date = doc_date
+            if entity_name is not None:
+                doc.entity_name = entity_name
+            if total_amount is not None:
+                doc.total_amount = total_amount
+            if data_payload is not None:
+                doc.data_payload = data_payload
+            doc.updated_at = now_str
+            return True
+    except Exception as e:
+        logger.error(f"Failed to approve document '{document_id}': {e}")
         return False
-    finally:
-        if conn:
-            conn.close()
 
-def update_document_to_rejected(document_id: str, confirmed_by: str = "admin", reason: str = None) -> bool:
-    """
-    Marks a document as REJECTED and locks it.
-    """
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        confirmed_at = datetime.now().isoformat()
-        cursor.execute("""
-            UPDATE documents
-            SET status_code = 'REJECTED',
-                is_locked = 1,
-                confirmed_by = ?,
-                confirmed_at = ?,
-                error_reason = ?,
-                updated_at = ?
-            WHERE document_id = ?
-        """, (confirmed_by, confirmed_at, reason, confirmed_at, document_id))
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Failed to reject document: {e}")
-        return False
-    finally:
-        if conn:
-            conn.close()
 
-def update_document_status(document_id: str, status_code: str, error_reason: str = None, conn: sqlite3.Connection = None) -> bool:
+def update_document_to_rejected(document_id: str, reason: str, confirmed_by: str = "human") -> bool:
     """
-    Updates the status code and optional error reason of a document.
+    Marks a document as REJECTED using SQLAlchemy ORM.
     """
-    should_close = False
-    if conn is None:
-        conn = get_db_connection()
-        should_close = True
     try:
-        cursor = conn.cursor()
-        updated_at = datetime.now().isoformat()
-        cursor.execute("""
-            UPDATE documents
-            SET status_code = ?,
-                error_reason = ?,
-                updated_at = ?
-            WHERE document_id = ?
-        """, (status_code, error_reason, updated_at, document_id))
-        if should_close:
-            conn.commit()
-        return True
+        with get_db_session() as session:
+            doc = session.query(Document).filter_by(document_id=document_id).first()
+            if not doc:
+                return False
+            now_str = datetime.now(timezone.utc).isoformat()
+            doc.status_code = "REJECTED"
+            doc.is_locked = 1
+            doc.confirmed_by = confirmed_by
+            doc.confirmed_at = now_str
+            doc.error_reason = reason
+            doc.updated_at = now_str
+            return True
     except Exception as e:
-        logger.error(f"Failed to update document status: {e}")
+        logger.error(f"Failed to reject document '{document_id}': {e}")
         return False
-    finally:
-        if should_close and conn:
-            conn.close()
+
+
+def update_document_status(document_id: str, status_code: str, error_reason: str = None) -> bool:
+    """
+    Updates the status code and optional error reason of a document using SQLAlchemy ORM.
+    """
+    try:
+        with get_db_session() as session:
+            doc = session.query(Document).filter_by(document_id=document_id).first()
+            if not doc:
+                return False
+            doc.status_code = status_code
+            doc.error_reason = error_reason
+            doc.updated_at = datetime.now(timezone.utc).isoformat()
+            return True
+    except Exception as e:
+        logger.error(f"Failed to update document status for '{document_id}': {e}")
+        return False
+
 
 def update_document_to_failed(document_id: str, error_reason: str) -> bool:
     """
-    Sets status as FAILED and logs error reason.
+    Sets status as FAILED and logs error reason using SQLAlchemy ORM.
     """
     return update_document_status(document_id, "FAILED", error_reason)
 
-def update_document_payload(document_id: str, data_payload: str, status_code: str = "PROCESSED", 
-                            doc_number: str = None, doc_date: str = None, entity_name: str = None, 
-                            total_amount: float = None, is_manually_edited: int = 0) -> bool:
-    """
-    Updates the extracted payload fields.
-    """
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        updated_at = datetime.now().isoformat()
-        cursor.execute("""
-            UPDATE documents
-            SET status_code = ?,
-                data_payload = ?,
-                doc_number = ?,
-                doc_date = ?,
-                entity_name = ?,
-                total_amount = ?,
-                is_manually_edited = ?,
-                error_reason = NULL,
-                updated_at = ?
-            WHERE document_id = ?
-        """, (status_code, data_payload, doc_number, doc_date, entity_name, total_amount, is_manually_edited, updated_at, document_id))
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Failed to update document payload: {e}")
-        return False
-    finally:
-        if conn:
-            conn.close()
 
-def update_document_metadata(document_id: str, overall_confidence: float, confidence_level: str,
-                             is_blurry: int, has_ambiguous_fields: int, confidence_notes: str,
-                             review_priority: str, auto_approved: int, conn: sqlite3.Connection = None) -> bool:
+def update_document_payload(
+    document_id: str,
+    data_payload: str,
+    status_code: str = "PROCESSED",
+    doc_number: str = None,
+    doc_date: str = None,
+    entity_name: str = None,
+    total_amount: float = None,
+    is_manually_edited: int = 0
+) -> bool:
     """
-    Updates the evaluation metadata columns for a document.
+    Updates the extracted payload fields using SQLAlchemy ORM.
     """
-    should_close = False
-    if conn is None:
-        conn = get_db_connection()
-        should_close = True
     try:
-        cursor = conn.cursor()
-        updated_at = datetime.now().isoformat()
-        cursor.execute("""
-            UPDATE documents
-            SET overall_confidence = ?,
-                confidence_level = ?,
-                is_blurry = ?,
-                has_ambiguous_fields = ?,
-                confidence_notes = ?,
-                review_priority = ?,
-                auto_approved = ?,
-                updated_at = ?
-            WHERE document_id = ?
-        """, (overall_confidence, confidence_level, is_blurry, has_ambiguous_fields, confidence_notes, review_priority, auto_approved, updated_at, document_id))
-        if should_close:
-            conn.commit()
-        return True
+        with get_db_session() as session:
+            doc = session.query(Document).filter_by(document_id=document_id).first()
+            if not doc:
+                return False
+            now_str = datetime.now(timezone.utc).isoformat()
+            doc.status_code = status_code
+            doc.data_payload = data_payload
+            doc.doc_number = doc_number
+            doc.doc_date = doc_date
+            doc.entity_name = entity_name
+            doc.total_amount = total_amount
+            doc.is_manually_edited = is_manually_edited
+            doc.error_reason = None
+            doc.updated_at = now_str
+            return True
     except Exception as e:
-        logger.error(f"Failed to update document metadata: {e}")
+        logger.error(f"Failed to update document payload for '{document_id}': {e}")
         return False
-    finally:
-        if should_close and conn:
-            conn.close()
 
-def search_documents(domain_id: str, source_id: str = None, start_date: str = None, 
-                     end_date: str = None, keyword: str = None) -> list[dict]:
+
+def update_document_metadata(
+    document_id: str,
+    overall_confidence: float,
+    confidence_level: str,
+    is_blurry: int,
+    is_ambiguous: int = None,
+    has_ambiguous_fields: int = None,
+    confidence_notes: str = None,
+    review_priority: str = None,
+    is_auto_approved: int = None,
+    auto_approved: int = None
+) -> bool:
     """
-    Performs dynamic lookup of documents based on domains, sources, dates, and keywords.
-    Uses clean list comprehensions for dynamic conditions.
+    Updates the evaluation metadata columns for a document using SQLAlchemy ORM.
     """
-    conn = None
+    final_auto_approved = is_auto_approved if is_auto_approved is not None else (auto_approved or 0)
+    final_ambiguous = is_ambiguous if is_ambiguous is not None else (has_ambiguous_fields or 0)
+
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        conditions = ["doc.domain_id = ?"]
-        params = [domain_id]
-        
-        if source_id and source_id != "All":
-            conditions.append("doc.source_id = ?")
-            params.append(source_id)
-            
-        if start_date:
-            conditions.append("doc.doc_date >= ?")
-            params.append(start_date)
-            
-        if end_date:
-            conditions.append("doc.doc_date <= ?")
-            params.append(end_date)
-            
-        if keyword:
-            conditions.append("(doc.doc_number LIKE ? OR doc.entity_name LIKE ? OR doc.search_text LIKE ?)")
-            like_kw = f"%{keyword}%"
-            params.extend([like_kw, like_kw, like_kw])
-            
-        query = f"""
-            SELECT doc.*, pb.original_pdf_name, pb.storage_path
-            FROM documents doc
-            JOIN processed_batches pb ON doc.batch_id = pb.batch_id
-            WHERE {' AND '.join(conditions)}
-            ORDER BY doc.created_at DESC
-        """
-        
-        cursor.execute(query, tuple(params))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        with get_db_session() as session:
+            doc = session.query(Document).filter_by(document_id=document_id).first()
+            if not doc:
+                return False
+            now_str = datetime.now(timezone.utc).isoformat()
+            doc.overall_confidence = overall_confidence
+            doc.confidence_level = confidence_level
+            doc.is_blurry = is_blurry
+            doc.is_ambiguous = final_ambiguous
+            doc.confidence_notes = confidence_notes
+            doc.review_priority = review_priority
+            doc.is_auto_approved = final_auto_approved
+            doc.updated_at = now_str
+            return True
+    except Exception as e:
+        logger.error(f"Failed to update document metadata for '{document_id}': {e}")
+        return False
+
+
+def search_documents(
+    domain_id: str,
+    source_id: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    keyword: str = None
+) -> list[dict]:
+    """
+    Performs dynamic lookup of documents based on domains, sources, dates, and keywords using SQLAlchemy ORM.
+    """
+    try:
+        with get_db_session() as session:
+            query = session.query(Document, ProcessedBatch).join(
+                ProcessedBatch, Document.batch_id == ProcessedBatch.batch_id
+            ).filter(Document.domain_id == domain_id)
+
+            if source_id and source_id != "All":
+                query = query.filter(Document.source_id == source_id)
+
+            if start_date:
+                query = query.filter(Document.doc_date >= start_date)
+
+            if end_date:
+                query = query.filter(Document.doc_date <= end_date)
+
+            if keyword:
+                like_kw = f"%{keyword}%"
+                query = query.filter(
+                    or_(
+                        Document.doc_number.ilike(like_kw),
+                        Document.entity_name.ilike(like_kw),
+                        Document.search_text.ilike(like_kw)
+                    )
+                )
+
+            query = query.order_by(Document.created_at.desc())
+            results = query.all()
+            docs = []
+            for doc, batch in results:
+                d = doc.to_dict()
+                d["original_filename"] = batch.original_filename
+                d["original_pdf_name"] = batch.original_filename
+                d["storage_path"] = batch.storage_path
+                docs.append(d)
+            return docs
     except Exception as e:
         logger.error(f"Failed to search documents: {e}")
-    finally:
-        if conn:
-            conn.close()
-    return []
+        return []
+
 
 def get_unextracted_batches(status_codes: list[str] = None) -> list[dict]:
     """
-    Fetches batches that contain pages matching specified status codes (e.g. PREPROCESSED, PENDING).
+    Fetches batches that contain pages matching specified status codes using SQLAlchemy ORM.
     """
     if status_codes is None:
         status_codes = ["PREPROCESSED", "PENDING"]
 
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        placeholders = ", ".join(["?"] * len(status_codes))
-        query = f"""
-            SELECT DISTINCT pb.batch_id, pb.original_pdf_name, pb.storage_path, pb.total_pages
-            FROM processed_batches pb
-            JOIN document_pages dp ON pb.batch_id = dp.batch_id
-            WHERE dp.status_code IN ({placeholders})
-        """
-        cursor.execute(query, tuple(status_codes))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        with get_db_session() as session:
+            batches = session.query(
+                ProcessedBatch.batch_id,
+                ProcessedBatch.original_filename,
+                ProcessedBatch.storage_path,
+                ProcessedBatch.total_pages
+            ).join(
+                DocumentPage, ProcessedBatch.batch_id == DocumentPage.batch_id
+            ).filter(
+                DocumentPage.status_code.in_(status_codes)
+            ).distinct().all()
+
+            return [
+                {
+                    "batch_id": b.batch_id,
+                    "original_filename": b.original_filename,
+                    "original_pdf_name": b.original_filename,
+                    "storage_path": b.storage_path,
+                    "total_pages": b.total_pages
+                }
+                for b in batches
+            ]
     except Exception as e:
         logger.error(f"Failed to fetch unextracted batches: {e}")
         return []
-    finally:
-        if conn:
-            conn.close()
+
 
 def get_pages_by_status(status_codes: list[str] = None) -> list[dict]:
     """
-    Fetches document page records joined with batch info matching given status codes.
+    Fetches document page records joined with batch info matching given status codes using SQLAlchemy ORM.
     """
     if status_codes is None:
         status_codes = ["EXTRACTED"]
 
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        placeholders = ", ".join(["?"] * len(status_codes))
-        query = f"""
-            SELECT dp.page_id, dp.batch_id, dp.page_number, dp.image_path, 
-                   pb.original_pdf_name, pb.storage_path
-            FROM document_pages dp
-            JOIN processed_batches pb ON dp.batch_id = pb.batch_id
-            WHERE dp.status_code IN ({placeholders})
-            ORDER BY dp.batch_id, dp.page_number ASC
-        """
-        cursor.execute(query, tuple(status_codes))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        with get_db_session() as session:
+            results = session.query(
+                DocumentPage,
+                ProcessedBatch.original_filename,
+                ProcessedBatch.storage_path
+            ).join(
+                ProcessedBatch, DocumentPage.batch_id == ProcessedBatch.batch_id
+            ).filter(
+                DocumentPage.status_code.in_(status_codes)
+            ).order_by(
+                DocumentPage.batch_id.asc(),
+                DocumentPage.page_number.asc()
+            ).all()
+
+            pages = []
+            for dp, orig_name, storage_path in results:
+                d = dp.to_dict()
+                d["original_filename"] = orig_name
+                d["original_pdf_name"] = orig_name
+                d["storage_path"] = storage_path
+                pages.append(d)
+            return pages
     except Exception as e:
         logger.error(f"Failed to fetch pages by status: {e}")
         return []
-    finally:
-        if conn:
-            conn.close()
+
 
 def get_documents_for_export(domain_id: str, status_codes: list[str] = None) -> list[dict]:
     """
-    Fetches approved/processed document records joined with batch info for dynamic report exporters.
+    Fetches approved/processed document records joined with batch info for dynamic report exporters using SQLAlchemy ORM.
     """
     if status_codes is None:
         status_codes = ["APPROVED", "PROCESSED"]
 
-    conn = None
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        placeholders = ", ".join(["?"] * len(status_codes))
-        query = f"""
-            SELECT d.*, pb.original_pdf_name
-            FROM documents d
-            JOIN processed_batches pb ON d.batch_id = pb.batch_id
-            WHERE d.domain_id = ? AND d.status_code IN ({placeholders})
-            ORDER BY d.created_at ASC
-        """
-        params = [domain_id] + list(status_codes)
-        cursor.execute(query, tuple(params))
-        rows = cursor.fetchall()
-        return [dict(r) for r in rows]
+        with get_db_session() as session:
+            results = session.query(
+                Document,
+                ProcessedBatch.original_filename
+            ).join(
+                ProcessedBatch, Document.batch_id == ProcessedBatch.batch_id
+            ).filter(
+                Document.domain_id == domain_id,
+                Document.status_code.in_(status_codes)
+            ).order_by(
+                Document.created_at.asc()
+            ).all()
+
+            docs = []
+            for doc, orig_name in results:
+                d = doc.to_dict()
+                d["original_filename"] = orig_name
+                d["original_pdf_name"] = orig_name
+                docs.append(d)
+            return docs
     except Exception as e:
         logger.error(f"Failed to fetch documents for export: {e}")
         return []
-    finally:
-        if conn:
-            conn.close()
-

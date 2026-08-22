@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExpenseReceipt",
+  "description": "Standardized schema for extracting expense receipts and slips.",
+  "type": "object",
+  "properties": {
+    "receipt_info": {
+      "type": "object",
+      "description": "General document metadata and receipt details.",
+      "properties": {
+        "receipt_number": {
+          "type": "string",
+          "description": "The receipt document number (เลขที่ใบเสร็จ/เลขที่รายการ)."
+        },
+        "transaction_date": {
+          "type": "string",
+          "description": "The date of transaction in YYYY-MM-DD format (e.g. 2026-08-15)."
+        },
+        "transaction_time": {
+          "type": "string",
+          "description": "The time of transaction in HH:MM:SS format (e.g. 14:30:00)."
+        },
+        "expense_category": {
+          "type": "string",
+          "description": "The category of expense (e.g. Food & Beverage, Fuel, Office Supplies, Transport, Utilities)."
+        },
+        "payment_method": {
+          "type": "string",
+          "description": "Payment method used (e.g. Cash, Credit Card, Bank Transfer, QR Pay, TrueMoney, ShopeePay)."
+        }
+      },
+      "required": [
+        "transaction_date",
+        "expense_category",
+        "payment_method"
+      ]
+    },
+    "merchant": {
+      "type": "object",
+      "description": "Seller or store details.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Official name or commercial name of the merchant/store."
+        },
+        "tax_id": {
+          "type": "string",
+          "description": "Merchant 13-digit Tax ID in Thailand, if printed."
+        },
+        "branch": {
+          "type": "string",
+          "description": "Merchant branch name or branch code."
+        },
+        "address": {
+          "type": "string",
+          "description": "Full address of the merchant."
+        },
+        "phone": {
+          "type": "string",
+          "description": "Contact phone number of the merchant."
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "items": {
+      "type": "array",
+      "description": "List of purchased items or services.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Item description or name."
+          },
+          "qty": {
+            "type": "number",
+            "default": 1.0,
+            "description": "Quantity purchased."
+          },
+          "unit": {
+            "type": "string",
+            "default": "PCS",
+            "description": "Unit of measurement."
+          },
+          "unit_price": {
+            "type": "number",
+            "description": "Price per unit."
+          },
+          "total_price": {
+            "type": "number",
+            "description": "Total price for this line item."
+          }
+        },
+        "required": [
+          "name",
+          "qty",
+          "unit_price",
+          "total_price"
+        ]
+      }
+    },
+    "totals": {
+      "type": "object",
+      "description": "Financial summary of the receipt.",
+      "properties": {
+        "currency": {
+          "type": "string",
+          "default": "THB",
+          "description": "Currency code (THB, USD, EUR)."
+        },
+        "subtotal": {
+          "type": "number",
+          "description": "Amount before discount and VAT."
+        },
+        "discount": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Total discount amount."
+        },
+        "vat_rate": {
+          "type": "number",
+          "default": 0.0,
+          "description": "VAT rate percentage (e.g. 7.0)."
+        },
+        "vat_amount": {
+          "type": "number",
+          "default": 0.0,
+          "description": "VAT amount."
+        },
+        "net_amount": {
+          "type": "number",
+          "description": "Final total amount paid."
+        }
+      },
+      "required": [
+        "subtotal",
+        "discount",
+        "vat_amount",
+        "net_amount"
+      ]
+    }
+  },
+  "required": [
+    "receipt_info",
+    "merchant",
+    "items",
+    "totals"
+  ]
+}

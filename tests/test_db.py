@@ -1,14 +1,13 @@
 import os
-import sqlite3
 import unittest
 from datetime import datetime
 from src.core.db import (
-    get_db_connection,
     initialize_db_schema,
     seed_initial_data,
     create_batch,
     create_page,
     create_document,
+    link_pages_to_document,
     check_duplicate_document,
     get_document_by_id,
     get_document_pages,
@@ -24,21 +23,23 @@ from src.core.db import (
     update_source_active_status
 )
 
+
 class TestDatabase(unittest.TestCase):
-    
+
     @classmethod
     def setUpClass(cls):
         # Override connection to use a temporary test file db
-        import os
-        cls.db_path = "pipeline_storage/test_pipeline.db"
+        cls.db_path = "storage/test_pipeline.db"
         os.environ["DB_PATH_OVERRIDE"] = cls.db_path
         if os.path.exists(cls.db_path):
-            os.remove(cls.db_path)
-            
+            try:
+                os.remove(cls.db_path)
+            except Exception:
+                pass
+
     @classmethod
     def tearDownClass(cls):
         # Clean up the test database file and dispose SQLAlchemy engine
-        import os
         from src.core.db.connection import get_engine
         try:
             get_engine().dispose()
@@ -54,16 +55,15 @@ class TestDatabase(unittest.TestCase):
     def test_01_init_and_seed(self):
         """Test database schema initialization and seeding."""
         initialize_db_schema()
-        # Verify db file is created
         self.assertTrue(os.path.exists(self.db_path))
-        
+
         seed_initial_data()
-        
+
         # Verify default domains and sources are seeded dynamically
         domains = get_domains()
         self.assertGreater(len(domains), 0)
         domain_id = domains[0]["domain_id"]
-        
+
         sources = get_sources(domain_id)
         self.assertGreater(len(sources), 0)
         source_ids = [s["source_id"] for s in sources]
@@ -73,35 +73,35 @@ class TestDatabase(unittest.TestCase):
         """Test batch, page, and document CRUD flows using generic test identifiers."""
         batch_id = "test_batch_123"
         file_hash = "mock_sha256_hash_value"
-        
+
         # Resolve active domain & source dynamically
         domains = get_domains()
         test_domain = domains[0]["domain_id"] if domains else "test_domain"
         sources = get_sources(test_domain)
         test_source = sources[0]["source_id"] if sources else "_default"
-        
+
         # 1. Create Batch
         success = create_batch(
             batch_id=batch_id,
-            original_pdf_name="test_document.pdf",
+            original_filename="test_document.pdf",
             total_pages=2,
-            storage_path=f"pipeline_storage/{test_domain}/04_archive/2026-08/raw",
+            storage_path=f"storage/{test_domain}/05_archive/2026-08/raw",
             file_hash=file_hash
         )
         self.assertTrue(success)
-        
+
         # 2. Check Duplicate
         is_dup, meta = check_duplicate_document(file_hash)
         self.assertTrue(is_dup)
         self.assertEqual(meta["batch_id"], batch_id)
-        self.assertEqual(meta["original_pdf_name"], "test_document.pdf")
-        
+        self.assertEqual(meta["original_filename"], "test_document.pdf")
+
         # 3. Create Pages
-        p1 = create_page("page_1", batch_id, 1, f"pipeline_storage/{test_domain}/02_split_pages/p1.png", "PENDING")
-        p2 = create_page("page_2", batch_id, 2, f"pipeline_storage/{test_domain}/02_split_pages/p2.png", "PENDING")
+        p1 = create_page("page_1", batch_id, 1, f"storage/{test_domain}/03_preprocess/p1.png", "PENDING")
+        p2 = create_page("page_2", batch_id, 2, f"storage/{test_domain}/03_preprocess/p2.png", "PENDING")
         self.assertTrue(p1)
         self.assertTrue(p2)
-        
+
         # 4. Create Document
         doc_id = "test_doc_456"
         success = create_document(
@@ -118,24 +118,20 @@ class TestDatabase(unittest.TestCase):
             data_payload='{"net_amount": 120.0}'
         )
         self.assertTrue(success)
-        
-        # Link pages to document
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE document_pages SET document_id = ? WHERE batch_id = ?", (doc_id, batch_id))
-        conn.commit()
-        conn.close()
-        
+
+        # Link pages to document using ORM helper
+        link_pages_to_document(doc_id, ["page_1", "page_2"])
+
         # 5. Fetch Document & Pages
         doc = get_document_by_id(doc_id)
         self.assertIsNotNone(doc)
         self.assertEqual(doc["doc_number"], "DOC-001")
         self.assertEqual(doc["total_amount"], 120.0)
         self.assertEqual(doc["status_code"], "PROCESSED")
-        
+
         pages = get_document_pages(doc_id)
         self.assertEqual(len(pages), 2)
-        
+
         # 6. Fetch pending documents
         pending = get_pending_documents(test_domain)
         self.assertGreater(len(pending), 0)
@@ -145,12 +141,12 @@ class TestDatabase(unittest.TestCase):
         """Test approval and failure transitions with generic mock parameters."""
         batch_id = "test_batch_123"
         doc_id = "test_doc_456"
-        
+
         domains = get_domains()
         test_domain = domains[0]["domain_id"] if domains else "test_domain"
         sources = get_sources(test_domain)
         test_source = sources[0]["source_id"] if sources else "_default"
-        
+
         # Ensure document exists
         create_document(
             document_id=doc_id,
@@ -165,7 +161,7 @@ class TestDatabase(unittest.TestCase):
             search_text="test tax invoice document",
             data_payload='{"net_amount": 120.0}'
         )
-        
+
         # Update payload (simulate human edit in Review UI)
         success = update_document_payload(
             document_id=doc_id,
@@ -178,12 +174,12 @@ class TestDatabase(unittest.TestCase):
             is_manually_edited=1
         )
         self.assertTrue(success)
-        
+
         doc = get_document_by_id(doc_id)
         self.assertEqual(doc["doc_number"], "DOC-001-REV")
         self.assertEqual(doc["total_amount"], 110.0)
         self.assertEqual(doc["is_manually_edited"], 1)
-        
+
         # Approve Document
         success = update_document_to_approved(
             document_id=doc_id,
@@ -195,12 +191,12 @@ class TestDatabase(unittest.TestCase):
             confirmed_by="test_user"
         )
         self.assertTrue(success)
-        
+
         doc = get_document_by_id(doc_id)
         self.assertEqual(doc["status_code"], "APPROVED")
         self.assertEqual(doc["is_locked"], 1)
         self.assertEqual(doc["confirmed_by"], "test_user")
-        
+
         # Verify it is no longer in pending documents list
         pending = get_pending_documents(test_domain)
         doc_ids = [d["document_id"] for d in pending]
@@ -211,24 +207,25 @@ class TestDatabase(unittest.TestCase):
         domains = get_domains()
         self.assertGreater(len(domains), 0)
         test_domain = domains[0]["domain_id"]
-        
+
         sources = get_sources(test_domain)
         self.assertGreater(len(sources), 0)
         target_src = sources[0]
         src_id = target_src["source_id"]
-        
+
         # Check source active state before toggle
         initial_status = target_src["is_active"]
         new_status = 0 if initial_status == 1 else 1
-        
+
         # Toggle status
-        success = update_source_active_status(src_id, new_status)
+        success = update_source_active_status(src_id, test_domain, new_status)
         self.assertTrue(success)
-        
+
         # Verify status changed
         updated_sources = get_sources(test_domain)
         updated_src = [s for s in updated_sources if s["source_id"] == src_id][0]
         self.assertEqual(updated_src["is_active"], new_status)
+
 
 if __name__ == "__main__":
     unittest.main()

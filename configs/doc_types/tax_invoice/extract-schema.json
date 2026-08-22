@@ -1,0 +1,189 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TaxInvoice",
+  "description": "Standardized schema for extracting Full Tax Invoices (ใบกำกับภาษีเต็มรูป).",
+  "type": "object",
+  "properties": {
+    "invoice_info": {
+      "type": "object",
+      "description": "Invoice metadata and details.",
+      "properties": {
+        "invoice_number": {
+          "type": "string",
+          "description": "Tax invoice number (เลขที่ใบกำกับภาษี/Invoice No)."
+        },
+        "invoice_date": {
+          "type": "string",
+          "description": "Date of the tax invoice in YYYY-MM-DD format."
+        },
+        "due_date": {
+          "type": "string",
+          "description": "Payment due date in YYYY-MM-DD format (if applicable)."
+        },
+        "po_number": {
+          "type": "string",
+          "description": "Customer purchase order reference number (PO No.)."
+        }
+      },
+      "required": [
+        "invoice_number",
+        "invoice_date"
+      ]
+    },
+    "seller": {
+      "type": "object",
+      "description": "Seller / Supplier organization details.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Full registered company/seller name."
+        },
+        "tax_id": {
+          "type": "string",
+          "description": "Seller 13-digit Thai Tax Identification Number (เลขประจำตัวผู้เสียภาษี 13 หลัก)."
+        },
+        "branch": {
+          "type": "string",
+          "description": "Seller branch code or name (e.g. สำนักงานใหญ่, 00000, สาขาที่ 00001)."
+        },
+        "address": {
+          "type": "string",
+          "description": "Registered address of the seller."
+        },
+        "phone": {
+          "type": "string",
+          "description": "Telephone / contact number."
+        }
+      },
+      "required": [
+        "name",
+        "tax_id"
+      ]
+    },
+    "buyer": {
+      "type": "object",
+      "description": "Buyer / Customer details.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Buyer company/individual name."
+        },
+        "tax_id": {
+          "type": "string",
+          "description": "Buyer 13-digit Tax ID."
+        },
+        "branch": {
+          "type": "string",
+          "description": "Buyer branch code or name (e.g. สำนักงานใหญ่ or 00000)."
+        },
+        "address": {
+          "type": "string",
+          "description": "Buyer registered billing address."
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "items": {
+      "type": "array",
+      "description": "List of goods or services invoiced.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "item_no": {
+            "type": "integer",
+            "description": "Line item index number."
+          },
+          "description": {
+            "type": "string",
+            "description": "Product or service description."
+          },
+          "qty": {
+            "type": "number",
+            "default": 1.0,
+            "description": "Quantity."
+          },
+          "unit": {
+            "type": "string",
+            "default": "หน่วย",
+            "description": "Unit of measure (e.g. รายการ, ชิ้น, ครั้ง, เครื่อง)."
+          },
+          "unit_price": {
+            "type": "number",
+            "description": "Unit price excluding/including tax as printed."
+          },
+          "discount": {
+            "type": "number",
+            "default": 0.0,
+            "description": "Line discount amount."
+          },
+          "amount": {
+            "type": "number",
+            "description": "Line total amount."
+          }
+        },
+        "required": [
+          "description",
+          "qty",
+          "unit_price",
+          "amount"
+        ]
+      }
+    },
+    "financial_summary": {
+      "type": "object",
+      "description": "Totals, tax breakdown and net payable amount.",
+      "properties": {
+        "currency": {
+          "type": "string",
+          "default": "THB",
+          "description": "Currency (THB, USD, etc.)."
+        },
+        "subtotal_before_discount": {
+          "type": "number",
+          "description": "Gross subtotal amount before discount."
+        },
+        "total_discount": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Total invoice discount."
+        },
+        "subtotal_non_vat": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Portion of amount exempt from VAT."
+        },
+        "subtotal_taxable": {
+          "type": "number",
+          "description": "Taxable base amount subject to VAT (มูลค่าก่อนภาษีมูลค่าเพิ่ม)."
+        },
+        "vat_rate": {
+          "type": "number",
+          "default": 7.0,
+          "description": "VAT percentage rate (normally 7.0)."
+        },
+        "vat_amount": {
+          "type": "number",
+          "description": "Value Added Tax amount (ภาษีมูลค่าเพิ่ม 7%)."
+        },
+        "grand_total": {
+          "type": "number",
+          "description": "Grand total net payable amount (จำนวนเงินรวมทั้งสิ้น)."
+        }
+      },
+      "required": [
+        "subtotal_taxable",
+        "vat_amount",
+        "grand_total"
+      ]
+    }
+  },
+  "required": [
+    "invoice_info",
+    "seller",
+    "buyer",
+    "items",
+    "financial_summary"
+  ]
+}

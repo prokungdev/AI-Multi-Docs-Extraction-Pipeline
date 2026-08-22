@@ -12,18 +12,20 @@ except ImportError:
     logger = logging.getLogger("post_processor")
 
 from src.core.db import (
-    get_db_connection,
+    get_db_session,
     get_document_pages,
     get_batch_pages,
     update_document_metadata,
-    update_document_to_approved
+    update_document_to_approved,
+    Document,
+    ProcessedBatch
 )
 from src.core.transformer import transform_data
 from src.core.config_loader import load_source_rules
 
 def normalize_date_to_ad(date_str: str, source_era: str = "BE") -> str:
     """
-    Converts Buddhist Era (BE/พ.ศ.) years (> 2500) to Christian Era (AD/ค.ศ.) in YYYY-MM-DD format.
+    Converts Buddhist Era (BE) years (> 2500) to Christian Era (AD) in YYYY-MM-DD format.
     """
     if not date_str or not isinstance(date_str, str):
         return ""
@@ -142,11 +144,11 @@ def archive_and_export_document(document_id: str, payload: dict, original_pdf_na
     Copies raw file and split pages to 04_archive, deletes pages from 02_split_pages,
     and updates flattened outputs.
     """
-    storage_root = settings.get("storage_root", "pipeline_storage")
+    storage_root = settings.get("storage_root", "storage")
     domain_storage = os.path.join(storage_root, domain_id).replace("\\", "/")
     
     # 1. Archiving Files
-    archive_dir = os.path.join(domain_storage, "04_archive").replace("\\", "/")
+    archive_dir = os.path.join(domain_storage, "05_archive").replace("\\", "/")
     current_month = datetime.now().strftime("%Y-%m")
     month_archive_raw = os.path.join(archive_dir, current_month, "raw").replace("\\", "/")
     month_archive_json = os.path.join(archive_dir, current_month, "verified_json").replace("\\", "/")
@@ -154,16 +156,20 @@ def archive_and_export_document(document_id: str, payload: dict, original_pdf_na
     os.makedirs(month_archive_raw, exist_ok=True)
     os.makedirs(month_archive_json, exist_ok=True)
     
-    # Find and copy original file from inbox to archive raw
-    inbox_dir = os.path.join(domain_storage, "01_raw_inbox").replace("\\", "/")
-    if os.path.exists(inbox_dir):
-        for folder in os.listdir(inbox_dir):
-            source_folder = os.path.join(inbox_dir, folder).replace("\\", "/")
-            if os.path.isdir(source_folder):
-                for f in os.listdir(source_folder):
-                    # Check base filename match
+    # Find and copy original file from 02_raw_data, 01_drop_zone, or 01_raw_inbox to archive raw
+    raw_dirs = [
+        os.path.join(domain_storage, "02_raw_data").replace("\\", "/"),
+        os.path.join(domain_storage, "01_drop_zone").replace("\\", "/"),
+        os.path.join(domain_storage, "01_raw_inbox").replace("\\", "/")
+    ]
+    for r_dir in raw_dirs:
+        if os.path.exists(r_dir):
+            for root_dir, _, files in os.walk(r_dir):
+                for f in files:
                     if os.path.splitext(f)[0] == original_pdf_name.split(".")[0]:
-                        shutil.copy(os.path.join(source_folder, f).replace("\\", "/"), os.path.join(month_archive_raw, f).replace("\\", "/"))
+                        src_f = os.path.join(root_dir, f).replace("\\", "/")
+                        dst_f = os.path.join(month_archive_raw, f).replace("\\", "/")
+                        shutil.copy(src_f, dst_f)
                         break
                         
     # Copy split pages and write JSON payload to archive
@@ -327,17 +333,13 @@ def post_process_document(document_id: str, payload: dict, source_id: str, domai
     
     # Fetch original filename for archiving
     original_pdf_name = "document.pdf"
-    close_conn = False
-    if conn is None:
-        conn = get_db_connection()
-        close_conn = True
-        
     try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT pb.original_pdf_name FROM documents doc JOIN processed_batches pb ON doc.batch_id = pb.batch_id WHERE doc.document_id = ?", (document_id,))
-        row = cursor.fetchone()
-        if row:
-            original_pdf_name = row["original_pdf_name"]
+        with get_db_session() as session:
+            doc_batch = session.query(ProcessedBatch.original_pdf_name).join(
+                Document, Document.batch_id == ProcessedBatch.batch_id
+            ).filter(Document.document_id == document_id).first()
+            if doc_batch:
+                original_pdf_name = doc_batch[0]
             
         if eligible_for_auto_approve:
             status_code = "APPROVED"

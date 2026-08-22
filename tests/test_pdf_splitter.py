@@ -41,7 +41,7 @@ class TestPdfSplitter(unittest.TestCase):
 
     def test_pdf_splitting(self):
         """Test splitting PDF into JPG page images using mock paths."""
-        output_dir = f"pipeline_storage/{self.mock_domain}/02_split_pages"
+        output_dir = f"storage/{self.mock_domain}/03_preprocess"
         os.makedirs(output_dir, exist_ok=True)
         image_paths = split_pdf(self.pdf_path, output_dir, image_format="jpg")
 
@@ -52,7 +52,7 @@ class TestPdfSplitter(unittest.TestCase):
 
     def test_raw_image_processing(self):
         """Test processing & resizing raw image files."""
-        output_dir = f"pipeline_storage/{self.mock_domain}/02_split_pages"
+        output_dir = f"storage/{self.mock_domain}/03_preprocess"
         os.makedirs(output_dir, exist_ok=True)
         temp_img_path = os.path.join(output_dir, "temp_large_raw_mock.png").replace("\\", "/")
 

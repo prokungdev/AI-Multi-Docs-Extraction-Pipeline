@@ -54,19 +54,37 @@ class MasterRecord(Base):
     items = relationship("DetailItem", back_populates="master", cascade="all, delete-orphan")
 ```
 
-### Session Lifecycle & Context Management
-Always use a `get_db_session()` context manager for transaction safety, automatic commit, rollback on error, and proper session closure:
+### Session Lifecycle & Context Management (Zero Tolerance on Raw SQL)
+Always use a `get_db_session()` context manager for transaction safety, automatic commit, rollback on error, and proper session closure.
 
+❌ **FORBIDDEN ANTI-PATTERNS**:
+- `cursor.execute("SELECT ...")` or `cursor.execute("INSERT ...")`
+- `sqlite3.connect()` or `conn = get_db_connection()`
+- Raw SQL string formatting or manual cursor transactions in business/data layer.
+
+✅ **MANDATORY ENTERPRISE ORM PATTERNS**:
 ```python
-from core.db.connection import get_db_session
+from src.core.db.connection import get_db_session
+from src.core.db.models import MasterRecord
 
 def fetch_active_record(record_id: str) -> dict | None:
-    """Fetch record details using SQLAlchemy session."""
+    """Fetch record details using SQLAlchemy ORM session."""
     with get_db_session() as session:
         record = session.query(MasterRecord).filter(MasterRecord.record_id == record_id).first()
         if record:
             return {"record_id": record.record_id, "title": record.title}
     return None
+
+def create_or_update_record(record_id: str, title: str) -> bool:
+    """Create or update record using SQLAlchemy ORM session."""
+    with get_db_session() as session:
+        record = session.query(MasterRecord).filter_by(record_id=record_id).first()
+        if record:
+            record.title = title
+        else:
+            record = MasterRecord(record_id=record_id, title=title, status_code="ACTIVE")
+            session.add(record)
+    return True
 ```
 
 ---
