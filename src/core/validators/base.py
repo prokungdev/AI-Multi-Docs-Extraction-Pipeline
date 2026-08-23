@@ -65,15 +65,15 @@ class TaxIDValidator(BaseValidator):
     def validate(self, payload: dict, context: dict = None) -> tuple[dict, bool, list[str]]:
         needs_review = False
         reasons = []
-        from src.core.constants import NO_TAX_ID, NO_TAX_LABEL
-        source = context.get("source", NO_TAX_LABEL)
+        from src.core.constants import DefaultIdentifier
+        source = context.get("source", DefaultIdentifier.NO_TAX_LABEL)
         allowed_tax_ids = context.get("allowed_tax_ids", [])
 
         merchant_obj = payload.get("merchant", {})
         extracted_tax_id = merchant_obj.get("tax_id") or payload.get("tax_id", "")
         clean_tax_id = str(extracted_tax_id).replace(" ", "").replace("-", "").strip() if extracted_tax_id else ""
 
-        if source not in (NO_TAX_ID, NO_TAX_LABEL) and allowed_tax_ids:
+        if source not in (DefaultIdentifier.NO_TAX_ID, DefaultIdentifier.NO_TAX_LABEL) and allowed_tax_ids:
             if not clean_tax_id:
                 needs_review = True
                 reasons.append(f"Missing merchant tax ID for source '{source}'")

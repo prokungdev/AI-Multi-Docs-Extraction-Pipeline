@@ -1,12 +1,12 @@
 import os
 import shutil
 import uuid
-from loguru import logger
+from src.core.logger import logger
 
 from src.core.config_loader import (
     load_system_settings,
-    get_default_domain,
-    get_default_company_code,
+    resolve_doc_type,
+    resolve_company_code,
     get_company_storage_dir,
     get_company_pipeline_folder,
     is_source_active,
@@ -20,13 +20,38 @@ from src.core.db import (
     create_page,
     get_company_by_code,
 )
-from src.core.models import DocumentStatus
+from src.core.constants import DocumentStatusCode, PipelineStageFolder
 from src.core.pdf_splitter import split_pdf, process_raw_image, format_page_filename
 from src.core.source_matcher import match_source
 from src.core.storage_manager import storage_manager
 
 
-def split_and_match(domain: str = None, input_file: str = None, input_pdf: str = None, company_code: str = None) -> list[dict]:
+def _register_preprocessed_page(
+    batch_id: str,
+    page_number: int,
+    image_path: str,
+    created_pages: list[str]
+) -> str:
+    """Helper to record preprocessed page record in database and tracking list."""
+    page_id = str(uuid.uuid4())
+    create_page(
+        page_id=page_id,
+        batch_id=batch_id,
+        page_number=page_number,
+        image_path=image_path,
+        status_code=DocumentStatusCode.PREPROCESSED,
+    )
+    created_pages.append(image_path)
+    return page_id
+
+
+def split_and_match(
+    doc_type: str = None,
+    domain: str = None,
+    input_file: str = None,
+    input_pdf: str = None,
+    company_code: str = None
+) -> list[dict]:
     """
     Stage 2: Split multi-page PDFs or process raw images into optimized page images and match merchant source.
     """
@@ -36,14 +61,12 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
         input_file = input_pdf
 
     settings = load_system_settings()
-    storage_root = settings.get("storage_root", "storage")
-    comp_code = company_code or get_default_company_code()
+    comp_code = resolve_company_code(company_code)
     
     comp_info = get_company_by_code(comp_code)
     company_id = comp_info["company_id"] if comp_info else None
 
-    if domain is None:
-        domain = get_default_domain()
+    target_doc_type = resolve_doc_type(doc_type or domain)
 
     img_cfg = get_image_processing_config(settings)
     supported_exts = get_supported_extensions(settings)
@@ -52,15 +75,16 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
     max_dim = img_cfg["max_dimension"]
     dpi = img_cfg["dpi"]
     filename_pattern = img_cfg.get("split_filename_pattern") or img_cfg.get(
-        "filename_pattern", "{domain}_{source}_{original_filename}_{batch_id}_p{page_no}"
+        "filename_pattern", "{doc_type}_{tax_id}_{original_filename}_{batch_id}_p{page_no}"
     )
 
     # 1. Resolve Company-Centric Storage Paths via StoragePathManager
-    drop_zone_comp_dt = storage_manager.get_drop_zone_dir(comp_code, domain)
-    raw_data_dir = storage_manager.get_raw_data_dir(comp_code, domain)
-    split_dir = storage_manager.get_preprocess_dir(comp_code, domain)
+    drop_zone_comp_dt = storage_manager.get_drop_zone_dir(comp_code, target_doc_type)
+    drop_zone_comp_root = storage_manager.get_drop_zone_dir(comp_code)
+    raw_data_dir = storage_manager.get_raw_data_dir(comp_code, target_doc_type)
+    split_dir = storage_manager.get_preprocess_dir(comp_code, target_doc_type)
 
-    # Identify files to process (Scan company drop zone, subfolders, and legacy paths)
+    # Identify files to process (Scan company drop zone and approved subfolders)
     files_to_process = []
     if input_file:
         if os.path.exists(input_file):
@@ -70,8 +94,6 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
             return []
     else:
         scan_dirs = [drop_zone_comp_dt, drop_zone_comp_root]
-        if os.path.exists(legacy_drop_zone) and legacy_drop_zone not in scan_dirs:
-            scan_dirs.append(legacy_drop_zone)
 
         # Only scan approved subfolders in raw_data (exclude PENDING and IGNORED)
         if os.path.exists(raw_data_dir):
@@ -117,17 +139,18 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
             continue
 
         # 2. Fast AI Classifier & Gatekeeper Routing for Drop Zone files
-        from src.core.constants import NO_TAX_ID, NO_TAX_LABEL
+        from src.core.constants import DefaultIdentifier, PipelineAction, PipelineStageFolder
         dest_file_path = file_path
         dest_folder = os.path.dirname(file_path)
-        matched_source = NO_TAX_LABEL
+        matched_source = DefaultIdentifier.NO_TAX_LABEL
+        pipeline_action = PipelineAction.PROCEED
 
-        if "01_drop_zone" in file_path or "01_raw_inbox" in file_path:
+        if PipelineStageFolder.DROP_ZONE in file_path or "01_raw_inbox" in file_path:
             try:
-                from src.core.classifier import classify_drop_zone_document
-                cls_res = classify_drop_zone_document(file_path, domain=domain, configs_dir="configs")
+                from src.core.classifier import classify_document
+                cls_res = classify_document(file_path, doc_type=target_doc_type, configs_dir="configs")
                 target_folder = cls_res.get("target_folder", raw_data_dir)
-                pipeline_action = cls_res.get("pipeline_action", "PROCESS")
+                pipeline_action = cls_res.get("pipeline_action", PipelineAction.PROCEED)
                 
                 dest_file_path = os.path.join(target_folder, filename).replace("\\", "/")
                 dest_folder = target_folder
@@ -135,12 +158,12 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
                     os.makedirs(target_folder, exist_ok=True)
                     shutil.move(file_path, dest_file_path)
                     
-                matched_source = cls_res.get("folder_identifier", NO_TAX_LABEL)
+                matched_source = cls_res.get("folder_identifier", DefaultIdentifier.NO_TAX_LABEL)
 
-                if pipeline_action == "HOLD":
+                if pipeline_action == PipelineAction.HOLD:
                     logger.warning(f"File '{filename}' held in '{target_folder}' awaiting merchant approval.")
                     continue
-                elif pipeline_action == "IGNORE":
+                elif pipeline_action == PipelineAction.IGNORE:
                     logger.info(f"File '{filename}' belongs to IGNORED merchant. Moving to '{target_folder}' and skipping.")
                     continue
             except Exception as cl_err:
@@ -148,11 +171,11 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
                 dest_file_path = file_path
                 dest_folder = os.path.dirname(file_path)
         else:
-            matched_source = match_source(dest_file_path, domain=domain, settings=settings)
-            if not is_source_active(domain, matched_source):
-                matched_source = NO_TAX_LABEL
+            matched_source = match_source(dest_file_path, doc_type=target_doc_type, settings=settings)
+            if not is_source_active(target_doc_type, matched_source):
+                matched_source = DefaultIdentifier.NO_TAX_LABEL
 
-        # 3. Process Pages
+        # 3. Process Pages (PDF Splitting or Direct Image Processing)
         batch_id = str(uuid.uuid4())
         created_pages = []
 
@@ -180,50 +203,10 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
                 file_hash=file_hash,
             )
 
-            if pipeline_action == "HOLD":
-                logger.warning(f"File '{filename}' held in '{target_folder}' awaiting merchant approval.")
-                continue
-            elif pipeline_action == "IGNORE":
-                logger.info(f"File '{filename}' belongs to IGNORED merchant. Moving to '{target_folder}' and skipping.")
-                continue
-        else:
-            # Already in 02_raw_data/{tax_id}_{short_name} or NO_TAXID
-            matched_source = match_source(dest_file_path, domain=domain, settings=settings)
-            if not is_source_active(domain, matched_source):
-                matched_source = "_default"
-
-        # 4. Process Pages (PDF Splitting or Direct Image Processing)
-        batch_id = str(uuid.uuid4())
-        created_pages = []
-
-        if is_pdf:
-            try:
-                page_images = split_pdf(
-                    pdf_path=dest_file_path,
-                    output_dir=split_dir,
-                    dpi=dpi,
-                    image_format=processing_fmt,
-                    quality=jpeg_quality,
-                    max_dimension=max_dim,
-                )
-                total_pages = len(page_images)
-            except Exception as e:
-                logger.error(f"Failed to split PDF '{filename}': {e}")
-                continue
-
-            create_batch(
-                batch_id=batch_id,
-                original_pdf_name=filename,
-                total_pages=total_pages,
-                storage_path=dest_folder,
-                file_hash=file_hash,
-            )
-
             for idx, temp_img_path in enumerate(page_images, start=1):
-                page_id = str(uuid.uuid4())
                 page_filename = format_page_filename(
                     pattern=filename_pattern,
-                    domain=domain,
+                    doc_type=target_doc_type,
                     source=matched_source,
                     original_filename=filename,
                     page_no=idx,
@@ -237,21 +220,18 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
                         os.remove(final_img_path)
                     os.rename(temp_img_path, final_img_path)
 
-                create_page(
-                    page_id=page_id,
+                _register_preprocessed_page(
                     batch_id=batch_id,
                     page_number=idx,
                     image_path=final_img_path,
-                    status_code=DocumentStatus.PREPROCESSED.value,
+                    created_pages=created_pages,
                 )
-                created_pages.append(final_img_path)
         else:
             # Standalone raw image
             total_pages = 1
-            page_id = str(uuid.uuid4())
             page_filename = format_page_filename(
                 pattern=filename_pattern,
-                domain=domain,
+                doc_type=target_doc_type,
                 source=matched_source,
                 original_filename=filename,
                 page_no=1,
@@ -275,20 +255,19 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
 
             create_batch(
                 batch_id=batch_id,
+                company_id=company_id,
                 original_pdf_name=filename,
                 total_pages=total_pages,
                 storage_path=dest_folder,
                 file_hash=file_hash,
             )
 
-            create_page(
-                page_id=page_id,
+            _register_preprocessed_page(
                 batch_id=batch_id,
                 page_number=1,
                 image_path=final_img_path,
-                status_code=DocumentStatus.PREPROCESSED.value,
+                created_pages=created_pages,
             )
-            created_pages.append(final_img_path)
 
         logger.info(f"Registered Batch '{batch_id}' with {total_pages} page(s) as PREPROCESSED.")
         results.append(
@@ -304,15 +283,22 @@ def split_and_match(domain: str = None, input_file: str = None, input_pdf: str =
     return results
 
 
-def release_pending_merchant_files(domain: str, tax_id: str, short_name: str, company_code: str = None) -> list[dict]:
+def release_pending_merchant_files(
+    doc_type: str = None,
+    tax_id: str = None,
+    short_name: str = None,
+    domain: str = None,
+    company_code: str = None
+) -> list[dict]:
     """
     Releases all held files for an approved merchant from 02_raw_data/PENDING/{tax_id}_{short_name}
     to 02_raw_data/{tax_id}_{short_name} and runs split_and_match on them.
     """
+    target_doc_type = doc_type or domain or get_default_doc_type()
     comp_code = company_code or get_default_company_code()
     folder_name = f"{tax_id}_{short_name}"
-    pending_folder = storage_manager.get_raw_data_dir(comp_code, domain, status="PENDING", merchant_folder=folder_name)
-    approved_folder = storage_manager.get_raw_data_dir(comp_code, domain, merchant_folder=folder_name)
+    pending_folder = storage_manager.get_raw_data_dir(comp_code, target_doc_type, status="PENDING", merchant_folder=folder_name)
+    approved_folder = storage_manager.get_raw_data_dir(comp_code, target_doc_type, merchant_folder=folder_name)
     
     if not os.path.exists(pending_folder) or not os.listdir(pending_folder):
         logger.info(f"No pending folder or files found at '{pending_folder}'.")
@@ -333,7 +319,7 @@ def release_pending_merchant_files(domain: str, tax_id: str, short_name: str, co
     # Trigger split on moved files
     results = []
     for mf in moved_files:
-        res = split_and_match(domain=domain, input_file=mf, company_code=comp_code)
+        res = split_and_match(doc_type=target_doc_type, input_file=mf, company_code=comp_code)
         results.extend(res)
         
     return results

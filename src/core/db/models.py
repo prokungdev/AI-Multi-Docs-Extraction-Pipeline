@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
+LogBase = declarative_base()
 
 
 class MerchantStatus(str, enum.Enum):
@@ -73,9 +74,14 @@ class DocumentSource(Base, DictSerializableMixin):
     __tablename__ = "document_sources"
 
     source_id = Column(String(100), primary_key=True)
-    domain_id = Column(String(100), primary_key=True)
+    doc_type_id = Column(String(100), primary_key=True, default="expense_receipt")
     display_name = Column(String(150), nullable=False)
     is_active = Column(Integer, default=1)
+
+    @property
+    def domain_id(self) -> str:
+        """Backward-compatibility property alias for doc_type_id."""
+        return self.doc_type_id
 
 
 class ProcessedBatch(Base, DictSerializableMixin):
@@ -232,21 +238,6 @@ class ExpenseReceiptItem(Base, DictSerializableMixin):
     receipt = relationship("ExpenseReceipt", back_populates="items")
 
 
-class ApiCredential(Base, DictSerializableMixin):
-    """API credentials model."""
-    __tablename__ = "api_credentials"
-
-    credential_id = Column(String(100), primary_key=True)
-    provider = Column(String(50), nullable=False)
-    model_name = Column(String(100), nullable=False)
-    api_key_env = Column(String(100), nullable=False)
-    is_active = Column(Integer, default=1)
-    last_active_at = Column(String(50), nullable=True)
-    error_count = Column(Integer, default=0)
-    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at = Column(String(50), nullable=True)
-
-
 class ApiCallLog(Base, DictSerializableMixin):
     """API execution log model."""
     __tablename__ = "api_call_logs"
@@ -273,7 +264,7 @@ class ApiCallLog(Base, DictSerializableMixin):
     company = relationship("Company", back_populates="api_call_logs")
 
 
-class ApplicationLog(Base, DictSerializableMixin):
+class ApplicationLog(LogBase, DictSerializableMixin):
     """Application log model."""
     __tablename__ = "application_logs"
 

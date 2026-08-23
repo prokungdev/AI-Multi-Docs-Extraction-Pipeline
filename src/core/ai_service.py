@@ -9,11 +9,12 @@ import time
 import asyncio
 from typing import List, Dict, Any, Optional, Tuple
 from PIL import Image
-from loguru import logger
+from src.core.logger import logger
 
 from src.core.config_loader import load_system_settings
 from src.core.cost_estimator import calculate_api_cost
-from src.core.constants import DEFAULT_SETTINGS_PATH
+from src.core.constants import DefaultPath
+from src.core.db import create_api_call_log, AuditLogService, ApiCallLogCreate
 
 
 class AIService:
@@ -23,8 +24,9 @@ class AIService:
     and automatic token cost estimation.
     """
 
-    def __init__(self, settings_path: str = DEFAULT_SETTINGS_PATH):
+    def __init__(self, settings_path: str = DefaultPath.SETTINGS):
         self.settings_path = settings_path
+        self._client: Optional[Any] = None
         self._reload_config()
 
     def _reload_config(self):
@@ -38,20 +40,23 @@ class AIService:
         self.default_model = provider_cfg.get("model_name", "gemini-3.5-flash")
         self.api_key_env = provider_cfg.get("api_key_env", "GEMINI_API_KEY")
         self.api_key = os.getenv(self.api_key_env, "").strip()
+        self._client = None  # Invalidate cached client on config reload
 
     def get_client(self):
-        """Returns the active AI provider client instance."""
-        if not self.api_key:
-            self._reload_config()
+        """Returns the active AI provider client instance (cached per config)."""
+        if self._client is None:
+            if not self.api_key:
+                self._reload_config()
 
-        if not self.api_key:
-            raise ValueError(f"AI API key environment variable '{self.api_key_env}' is not set in environment or .env file.")
+            if not self.api_key:
+                raise ValueError(f"AI API key environment variable '{self.api_key_env}' is not set in environment or .env file.")
 
-        if self.active_provider == "gemini":
-            from google import genai
-            return genai.Client(api_key=self.api_key)
-        else:
-            raise NotImplementedError(f"AI Provider '{self.active_provider}' is not yet supported.")
+            if self.active_provider == "gemini":
+                from google import genai
+                self._client = genai.Client(api_key=self.api_key)
+            else:
+                raise NotImplementedError(f"AI Provider '{self.active_provider}' is not yet supported.")
+        return self._client
 
     def extract_structured_json(
         self,
@@ -161,6 +166,290 @@ class AIService:
             raise RuntimeError(f"AI Service execution failed after {self.max_retries} attempts. Last error: {last_err}")
 
         raise NotImplementedError(f"Unsupported AI Provider: {self.active_provider}")
+
+    def generate_raw_content(
+        self,
+        prompt: str,
+        images: Optional[List[Image.Image]] = None,
+        model_name: Optional[str] = None,
+        temperature: float = 0.0
+    ) -> str:
+        """
+        Generates raw text response with automatic retry backoff and cached client reuse.
+        """
+        client = self.get_client()
+        effective_model = model_name or self.default_model
+
+        if self.active_provider == "gemini":
+            from google.genai import types
+
+            config = types.GenerateContentConfig(temperature=temperature)
+            contents: List[Any] = [prompt]
+            if images:
+                contents.extend(images)
+
+            last_err = None
+            for attempt in range(1, self.max_retries + 1):
+                try:
+                    response = client.models.generate_content(
+                        model=effective_model,
+                        contents=contents,
+                        config=config
+                    )
+                    return response.text or ""
+                except Exception as exc:
+                    last_err = exc
+                    err_str = str(exc)
+                    is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower()
+                    if attempt < self.max_retries:
+                        sleep_sec = (2 ** attempt) + 1 if is_rate_limit else 2
+                        logger.warning(f"⚠️ AI generate_raw_content failed (attempt {attempt}/{self.max_retries}): {exc}. Retrying in {sleep_sec}s...")
+                        time.sleep(sleep_sec)
+                    else:
+                        logger.error(f"❌ AI generate_raw_content permanently failed after {self.max_retries} attempts: {exc}")
+
+            raise RuntimeError(f"AI generate_raw_content failed after {self.max_retries} attempts. Last error: {last_err}")
+
+        raise NotImplementedError(f"Unsupported AI Provider: {self.active_provider}")
+
+    def _call_with_key(
+        self,
+        api_key: str,
+        prompt: str,
+        images: List[Image.Image],
+        response_schema: Optional[Dict[str, Any]] = None,
+        model_name: Optional[str] = None,
+        temperature: float = 0.1,
+        batch_id: Optional[str] = None,
+        chunk_index: int = 1,
+        cred_id: str = "default",
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Executes a single-credential API call with exponential backoff retry.
+        Records each attempt to the api_call_logs table via create_api_call_log.
+
+        Returns:
+            Tuple of (parsed_payload: dict, execution_metadata: dict)
+        Raises:
+            RuntimeError: If all retry attempts fail.
+        """
+        import uuid as _uuid
+        effective_model = model_name or self.default_model
+
+        if self.active_provider == "gemini":
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(api_key=api_key)
+            config_kwargs: Dict[str, Any] = {
+                "temperature": temperature,
+                "response_mime_type": "application/json",
+            }
+            if response_schema:
+                config_kwargs["response_schema"] = response_schema
+            config = types.GenerateContentConfig(**config_kwargs)
+
+            contents: List[Any] = [prompt]
+            contents.extend(images)
+
+            last_err = None
+            start_time = time.time()
+            pages_desc = f"{len(images)} pages"
+
+            for attempt in range(1, self.max_retries + 1):
+                log_id = f"api_{_uuid.uuid4().hex[:12]}"
+                attempt_start = time.time()
+                try:
+                    logger.info(
+                        f"🤖 AI Request -> Credential: '{cred_id}' | Model: {effective_model} "
+                        f"| Images: {len(images)} (Attempt {attempt}/{self.max_retries})"
+                    )
+                    response = client.models.generate_content(
+                        model=effective_model,
+                        contents=contents,
+                        config=config,
+                    )
+                    latency_ms = (time.time() - attempt_start) * 1000.0
+                    duration = time.time() - start_time
+                    raw_text = response.text or "{}"
+
+                    # Strip markdown code fences if present
+                    clean_text = raw_text.strip()
+                    if clean_text.startswith("```json"):
+                        clean_text = clean_text[7:]
+                    if clean_text.startswith("```"):
+                        clean_text = clean_text[3:]
+                    if clean_text.endswith("```"):
+                        clean_text = clean_text[:-3]
+                    clean_text = clean_text.strip()
+
+                    payload = json.loads(clean_text)
+
+                    # Token usage
+                    input_tokens = 0
+                    output_tokens = 0
+                    if hasattr(response, "usage_metadata") and response.usage_metadata:
+                        input_tokens = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+                        output_tokens = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+
+                    cost_info = calculate_api_cost(
+                        provider=self.active_provider,
+                        model_name=effective_model,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                    )
+
+                    # Write SUCCESS log
+                    if batch_id:
+                        log_cred_id = cred_id if cred_id != "fallback_default" else None
+                        AuditLogService.log_api_call(ApiCallLogCreate(
+                            log_id=log_id,
+                            batch_id=batch_id,
+                            credential_id=log_cred_id,
+                            provider=self.active_provider,
+                            model_name=effective_model,
+                            chunk_index=chunk_index,
+                            request_pages=pages_desc,
+                            status_code="SUCCESS",
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            cost_usd=cost_info["cost_usd"],
+                            nominal_value_usd=cost_info["nominal_value_usd"],
+                            is_free_tier=cost_info["is_free_tier"],
+                            latency_ms=latency_ms,
+                            error_reason=None,
+                            raw_response=None,
+                        ))
+
+                    metadata = {
+                        "provider": self.active_provider,
+                        "model_name": effective_model,
+                        "duration_sec": round(duration, 2),
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cost_usd": cost_info.get("cost_usd", 0.0),
+                        "cost_thb": cost_info.get("cost_thb", 0.0),
+                        "nominal_value_usd": cost_info.get("nominal_value_usd", 0.0),
+                        "is_free_tier": cost_info.get("is_free_tier", 0),
+                        "attempts": attempt,
+                        "cred_id": cred_id,
+                    }
+
+                    # Inject _metadata into payload for downstream pipeline consumers
+                    payload["_metadata"] = metadata
+
+                    logger.info(
+                        f"✅ AI Extraction OK in {duration:.2f}s | "
+                        f"Tokens: in={input_tokens}, out={output_tokens} | "
+                        f"Cost: ${metadata['cost_usd']:.5f} ({metadata['cost_thb']:.3f} THB)"
+                    )
+                    return payload, metadata
+
+                except Exception as exc:
+                    last_err = exc
+                    latency_ms = (time.time() - attempt_start) * 1000.0
+                    err_str = str(exc)
+                    is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower()
+
+                    # Write FAILED log
+                    if batch_id:
+                        log_cred_id = cred_id if cred_id != "fallback_default" else None
+                        AuditLogService.log_api_call(ApiCallLogCreate(
+                            log_id=log_id,
+                            batch_id=batch_id,
+                            credential_id=log_cred_id,
+                            provider=self.active_provider,
+                            model_name=effective_model,
+                            chunk_index=chunk_index,
+                            request_pages=pages_desc,
+                            status_code="FAILED",
+                            input_tokens=0,
+                            output_tokens=0,
+                            latency_ms=latency_ms,
+                            error_reason=err_str,
+                        ))
+
+                    if attempt < self.max_retries:
+                        sleep_sec = (2 ** attempt) + 1 if is_rate_limit else 2
+                        logger.warning(
+                            f"⚠️ Attempt {attempt}/{self.max_retries} failed for '{cred_id}': {exc}. "
+                            f"Retrying in {sleep_sec}s..."
+                        )
+                        time.sleep(sleep_sec)
+                    else:
+                        logger.error(f"❌ All {self.max_retries} retries failed for credential '{cred_id}': {exc}")
+
+            raise RuntimeError(
+                f"AI call failed after {self.max_retries} attempts for credential '{cred_id}'. Last error: {last_err}"
+            )
+
+        raise NotImplementedError(f"Unsupported AI Provider: {self.active_provider}")
+
+    def extract_with_credentials(
+        self,
+        prompt: str,
+        images: List[Image.Image],
+        credentials: List[dict],
+        response_schema: Optional[Dict[str, Any]] = None,
+        model_name: Optional[str] = None,
+        temperature: float = 0.1,
+        batch_id: Optional[str] = None,
+        chunk_index: int = 1,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Extracts structured JSON with multi-credential rotation and automatic
+        deactivation of repeatedly-failing credentials.
+
+        Iterates through provided credentials in order, falling back to the next
+        credential if the current one exhausts all retry attempts.
+
+        Args:
+            credentials: List of credential dicts with keys:
+                         credential_id, api_key_env, error_count, is_active
+            batch_id: Optional parent batch ID for per-attempt DB logging.
+            chunk_index: Chunk index for multi-chunk batch tracking.
+
+        Returns:
+            Tuple of (extracted_payload: dict, execution_metadata: dict)
+        Raises:
+            RuntimeError: If all credentials are exhausted without success.
+        """
+        from datetime import datetime, timezone
+
+        last_exception = None
+        effective_model = model_name or self.default_model
+
+        for cred in credentials:
+            cred_id = cred["credential_id"]
+            env_var = cred["api_key_env"]
+            api_key = os.getenv(env_var)
+
+            if not api_key:
+                logger.warning(f"API key env '{env_var}' is not set. Skipping credential '{cred_id}'.")
+                continue
+
+            try:
+                logger.info(f"Attempting extraction using credential '{cred_id}' (env: '{env_var}')...")
+                payload, metadata = self._call_with_key(
+                    api_key=api_key,
+                    prompt=prompt,
+                    images=images,
+                    response_schema=response_schema,
+                    model_name=effective_model,
+                    temperature=temperature,
+                    batch_id=batch_id,
+                    chunk_index=chunk_index,
+                    cred_id=cred_id,
+                )
+                return payload, metadata
+
+            except Exception as exc:
+                last_exception = exc
+                logger.error(f"Credential '{cred_id}' exhausted all retries: {exc}")
+
+        raise RuntimeError(
+            f"All {len(credentials)} credentials failed extraction. Last error: {last_exception}"
+        )
 
 
 # Global Singleton Instance

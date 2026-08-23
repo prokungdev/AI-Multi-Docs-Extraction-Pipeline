@@ -1,6 +1,6 @@
 ---
 name: python-enterprise-stack
-description: Enterprise Python 3.10+ development standards, Pure SQLAlchemy 2.0 ORM patterns, Dual Logging (Loguru + Database), Fail-Fast Pydantic v2 schemas, FastAPI Dependency Injection, and Async processing.
+description: Enterprise Python 3.10+ development standards, Pure SQLAlchemy 2.0 ORM patterns, Universal Dual Logging Gateway (Diagnostic + Database Audit Wrapper), Fail-Fast Pydantic v2 schemas, FastAPI Dependency Injection, and Async processing.
 ---
 
 # Python Enterprise Stack & Architecture Standards
@@ -23,7 +23,7 @@ This skill documents the universal technology stack standards, design patterns, 
   - Centralize static constants in a dedicated `constants.py` module.
   - Use strongly-typed `Enum` classes for state machines and status transitions.
 - **Strict Fail-Fast Configuration Principle**:
-  - If a configuration parameter or threshold is defined in configuration files (e.g. `settings.json`, YAML), **do NOT provide silent fallback defaults in Python application logic**.
+  - If a configuration parameter or threshold is defined in configuration files (e.g. JSON, YAML, TOML, or `.env`), **do NOT provide silent fallback defaults in Python application logic**.
   - If a required configuration is missing or invalid, the system must fail immediately and loudly at boot time via Pydantic v2 schema validation (`model_validate()`).
 
 ---
@@ -121,14 +121,85 @@ def get_item_endpoint(item_id: str, db: Session = Depends(get_db_session_dep)):
 
 ---
 
-## 4. Dual Logging Architecture (Loguru + Database Logs)
+## 4. Dual Logging Architecture & Logging Gateway Pattern
 
-The system maintains a **Dual Logging System** to support both real-time developer debugging and persistent user auditability:
+The system enforces an enterprise **Dual Logging Architecture** with a decoupled **Logging Gateway (Adapter Pattern)** to eliminate vendor lock-in and support both real-time diagnostics and persistent auditability:
 
-1. **Text Log File (`logs/app.log`)**:
-   - Managed via `loguru`.
-   - Rotates at 10 MB or daily, retained for 30 days.
-   - Formatted with timestamps, log levels, module names, and function names.
-2. **Database Application Logs**:
-   - Stores user-facing activity logs, audit trails, and execution statuses.
-   - Queryable via admin API endpoints for operational dashboards.
+### 1. Decoupled Logging Gateway (Wrapper Pattern)
+- **Centralized Entry Point**: All application and business modules must import and use the project's internal **Logger Gateway / Wrapper** rather than importing third-party logging libraries directly.
+- **Uniform Interface**: Exposes standardized logging methods (`debug()`, `info()`, `warning()`, `error()`, `exception()`, `bind()`).
+- **Backend Swappability**: Changing the underlying logging engine (console, rotating file, remote collector) is isolated strictly within the logger gateway module without touching any business code.
+
+### 2. Dual Sink Strategy
+- **Diagnostic Text Logs**:
+  - Console and rotating file sinks for real-time developer debugging.
+  - Automatically captures timestamps, log levels, module names, and function context.
+- **Audit & Database Telemetry Logs**:
+  - Persistent database tables for user-facing activity logs, API execution metrics, token cost telemetry, and audit trails.
+  - Queryable via administration APIs and operational monitoring dashboards.
+
+### 3. Structured Audit Logging (DTO Pattern)
+- Database and telemetry logging must pass strongly-typed **Data Transfer Objects (DTO) / Schemas** rather than loose multi-argument parameters, ensuring type safety, validation, and schema evolution.
+
+### 4. Diagnostic vs Operational Log Storage Segregation
+- High-volume diagnostic log streams captured by database sinks MUST be routed to a dedicated logging database or storage cluster (via isolated session managers) rather than the primary operational database, preventing lock contention and uncontrolled business database growth.
+
+---
+
+## 5. Third-Party Processing Engine Adapters & Service Wrappers
+
+To avoid vendor lock-in, resource leaks, and tight coupling across business logic:
+
+### 1. Mandatory Service Wrapper for Multi-File Dependencies
+- Any third-party processing engine that is used across multiple modules (e.g. PDF processing, image transformation, optical text extraction, external API clients) **MUST be encapsulated behind an internal Service Wrapper / Adapter Layer** (e.g. `PDFService`, `ImageService`, `AIService`).
+- Business logic modules must never import or invoke complex third-party C-bindings or libraries directly.
+
+### 2. Lifecycle & Safe Resource Management
+- Service wrappers must manage underlying file descriptors, memory buffers, and C-extension handles safely via **Context Managers** (`__enter__` / `__exit__`), guaranteeing immediate cleanup and preventing OS file locks (especially on Windows).
+
+---
+
+## 6. Namespaced Constants Classes & Cascading Parameter Resolvers
+
+To maintain clean architecture, avoid floating global variables, and eliminate copy-pasted parameter fallback logic:
+
+### 1. Namespaced Constants Classes
+- **Class-Grouped Constants**: Group related static constants into dedicated, typed namespace classes rather than leaving loose, scattered uppercase variables:
+  - System and filesystem path container classes (e.g. `DefaultPath` / `SystemPaths`).
+  - Entity identifiers and fallback labels container classes (e.g. `DefaultIdentifier` / `SystemIdentifiers`).
+  - Application metadata container classes (e.g. `AppMetadata`).
+  - State machine lifecycle actions and entity status codes (`Enum` or namespace classes).
+
+### 2. Zero Static Aliases Policy (Anti-Pattern Prevention)
+- **Eliminate Dual Import Ambiguity**: Once enterprise namespaced classes are established, do NOT maintain lingering flat module-level static aliases (e.g., `DEFAULT_PATH = DefaultPath.PATH`).
+- **Direct Namespace Consumption**: All consumer modules, services, and test suites MUST import and access constants directly via their namespaced classes (e.g. `DefaultPath.SETTINGS`), preventing split terminology and obsolete legacy bridges.
+
+### 3. Cascading Parameter Resolvers (DRY Principle)
+- When multiple pipeline stages or services resolve cascading defaults (e.g. resolving target tenant ID, entity scope, or processing domain), **MUST create centralized resolver functions** rather than repeating ternary fallback expressions across multiple caller files.
+
+---
+
+## 7. Dynamic Schema & Dead Model Elimination
+
+- **Dynamic Payload vs Static Pydantic Models**: When an enterprise system adopts dynamic JSON Schemas or runtime schema-driven extraction, eliminate dead/unused static payload Pydantic models from domain model modules to prevent dead code accumulation and schema divergence.
+- **Legacy Fallback Directory Purge**: When directory layouts or naming standards are migrated, purge old fallback lookups to deleted/deprecated directory layouts (`if not os.path.exists("new_dir"): return "old_dir"`) to establish a single, unambiguous Source of Truth.
+
+---
+
+## 8. Dynamic Configuration Verification & Boot-Time Probing
+
+To ensure rock-solid production readiness and fail-fast guarantees:
+
+### 1. Cross-Field Hierarchy & Semantic Parity
+- Use schema-level model validators (e.g. `@model_validator(mode="after")`) to verify relational constraints across distinct configuration blocks:
+  - **Threshold Hierarchies**: Ensure ordered thresholds (e.g., `low <= review <= high`) are logically consistent.
+  - **Dependent Block Parity**: Ensure that active entity or model names selected in provider configurations exist in associated rate cards or pricing tables.
+
+### 2. Dynamic Environment & Driver Resolution
+- Application initialization must dynamically resolve environment variable keys from schema definitions (e.g., driver-specific URL keys or provider-specific credential keys) rather than hardcoding static environment variable names in boot scripts.
+
+### 3. Storage & Resource Write-Permission Probing
+- Boot-time health checks and initialization routines MUST execute non-destructive write/remove probes (e.g., creating and cleaning a `.probe.tmp` file) on configured storage roots and log directories to catch permission errors before user workloads arrive.
+
+### 4. Bidirectional Asset & Schema Sync
+- Verify that active features, templates, or domain types declared in configuration files have corresponding physical asset directories and schema definitions on disk, while flagging orphaned assets.

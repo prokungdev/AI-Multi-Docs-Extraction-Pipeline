@@ -1,4 +1,4 @@
-from loguru import logger
+from src.core.logger import logger
 from src.core.config_loader import load_system_settings
 from src.core.db import (
     initialize_db_schema,
@@ -7,17 +7,18 @@ from src.core.db import (
 )
 from src.core.initializer import (
     validate_settings_config,
-    validate_domain_config,
+    validate_doc_type_config,
     validate_environment,
     initialize_storage_directories,
 )
 from src.core.logger import setup_logger
 
 
-def init_system(settings_path: str = "configs/settings.json") -> bool:
+def init_system(settings_path: str = "configs/settings.json", drop_and_recreate: bool = False) -> bool:
     """
     Stage 1: System Initialization & Health Check.
-    Validates settings.json, domain configs, Python environment, storage folders, and database schemas.
+    Validates settings.json, doc_type configs, Python environment, storage folders, and database schemas.
+    If drop_and_recreate is True, drops and recreates all operational database tables for a fresh start.
     """
     setup_logger(settings_path)
     logger.info("Starting Stage 1 (Init): System Initialization & Health Check")
@@ -32,31 +33,31 @@ def init_system(settings_path: str = "configs/settings.json") -> bool:
         return False
     logger.info("[PASS] settings.json is valid and complete.")
 
-    # 2. Validate domains
+    # 2. Validate doc_types
     settings = load_system_settings(settings_path)
-    domains_data = settings.get("domains", [])
-    active_domains = [
-        d.get("domain_id")
-        for d in domains_data
-        if isinstance(d, dict) and d.get("is_active", True) and d.get("domain_id")
+    doc_types_data = settings.get("doc_types", [])
+    active_doc_types = [
+        d.get("doc_type_id")
+        for d in doc_types_data
+        if isinstance(d, dict) and d.get("is_active", True) and d.get("doc_type_id")
     ]
-    if not active_domains:
-        active_domains = ["expense_receipt"]
+    if not active_doc_types:
+        active_doc_types = ["expense_receipt"]
 
-    logger.info("[2/4] Checking Domain-specific configurations...")
-    for domain in active_domains:
-        logger.info(f"  * Checking domain '{domain}'...")
-        domain_valid, domain_errors = validate_domain_config(domain)
-        if not domain_valid:
-            logger.error(f"    [FAIL] Domain '{domain}' has configuration errors:")
-            for err in domain_errors:
+    logger.info("[2/4] Checking DocType-specific configurations...")
+    for dt in active_doc_types:
+        logger.info(f"  * Checking doc_type '{dt}'...")
+        dt_valid, dt_errors = validate_doc_type_config(dt)
+        if not dt_valid:
+            logger.error(f"    [FAIL] DocType '{dt}' has configuration errors:")
+            for err in dt_errors:
                 logger.error(f"       - {err}")
             return False
-        logger.info(f"    [PASS] Domain '{domain}' configs are valid.")
+        logger.info(f"    [PASS] DocType '{dt}' configs are valid.")
 
     # 3. Check environment & packages
     logger.info("[3/4] Checking Environment & Package Dependencies...")
-    env_warnings = validate_environment()
+    env_warnings = validate_environment(settings_path)
     has_errors = any("[ERROR]" in msg for msg in env_warnings)
     if has_errors:
         logger.error("[FAIL] System is missing required dependencies:")
@@ -70,9 +71,9 @@ def init_system(settings_path: str = "configs/settings.json") -> bool:
 
     # 4. Initialize storage directories & Database Schema
     logger.info("[4/4] Initializing Pipeline Storage Directories & DB Schema...")
-    initialize_log_db_schema()
-    initialize_db_schema()
-    seed_initial_data()
+    initialize_log_db_schema(settings_path)
+    initialize_db_schema(drop_and_recreate=drop_and_recreate)
+    seed_initial_data(configs_dir=settings_path)
     dir_count = initialize_storage_directories(settings_path)
     logger.info(f"[PASS] Ensured {dir_count} directories are created with .gitkeep.")
 

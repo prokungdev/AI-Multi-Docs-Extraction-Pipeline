@@ -1,8 +1,11 @@
 from .connection import (
     get_engine,
+    get_log_engine,
     get_db_session,
+    get_log_db_session,
     get_db_session_dep,
     get_database_url,
+    get_log_database_url,
     get_db_connection,
     get_log_db_connection,
     get_db_connection_ctx,
@@ -11,6 +14,7 @@ from .connection import (
 
 from .models import (
     Base,
+    LogBase,
     Company,
     MerchantStatus,
     DocumentStatus,
@@ -22,7 +26,6 @@ from .models import (
     MerchantMaster,
     ExpenseReceipt,
     ExpenseReceiptItem,
-    ApiCredential,
     ApiCallLog,
     ApplicationLog
 )
@@ -68,12 +71,12 @@ from .masters import (
     get_company_by_code,
     get_all_companies,
     update_company,
+    get_doc_types,
     get_domains,
     get_sources,
+    update_doc_type_active_status,
     update_domain_active_status,
     update_source_active_status,
-    get_active_credentials,
-    update_credential_status,
     get_merchants,
     get_all_merchants,
     get_pending_merchants,
@@ -95,18 +98,24 @@ from .logs import (
     create_api_call_log,
     get_api_call_logs,
     get_application_logs,
+    AuditLogService,
+    ApiCallLogCreate,
 )
 
 __all__ = [
     # Connection & ORM
     "get_engine",
+    "get_log_engine",
     "get_db_session",
+    "get_log_db_session",
     "get_database_url",
+    "get_log_database_url",
     "get_db_connection",
     "get_log_db_connection",
     "get_db_connection_ctx",
     "get_log_db_connection_ctx",
     "Base",
+    "LogBase",
     "Company",
     "MerchantStatus",
     "DocumentStatus",
@@ -117,7 +126,6 @@ __all__ = [
     "MerchantMaster",
     "ExpenseReceipt",
     "ExpenseReceiptItem",
-    "ApiCredential",
     "ApiCallLog",
     "ApplicationLog",
     # Schema
@@ -161,8 +169,6 @@ __all__ = [
     "get_sources",
     "update_domain_active_status",
     "update_source_active_status",
-    "get_active_credentials",
-    "update_credential_status",
     "get_merchants",
     "get_all_merchants",
     "get_pending_merchants",

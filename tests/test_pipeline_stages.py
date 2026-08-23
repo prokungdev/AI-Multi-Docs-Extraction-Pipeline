@@ -189,7 +189,7 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
 
     def test_02_new_merchant_auto_discovery_and_hold(self):
         """Test auto-discovery of new merchant and HOLD pipeline action."""
-        cls_res = classify_drop_zone_document(self.pdf_path, domain="expense_receipt")
+        cls_res = classify_drop_zone_document(self.pdf_path, doc_type="expense_receipt")
         self.assertEqual(cls_res["tax_id"], "0107542000011")
         self.assertEqual(cls_res["pipeline_action"], "HOLD")
         self.assertEqual(cls_res["merchant_status"], "PENDING")
@@ -219,7 +219,7 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
         self.assertTrue(ok)
 
         # Classify again -> should PROCEED
-        cls_res = classify_drop_zone_document(self.pdf_path, domain="expense_receipt")
+        cls_res = classify_drop_zone_document(self.pdf_path, doc_type="expense_receipt")
         self.assertEqual(cls_res["pipeline_action"], "PROCEED")
         self.assertEqual(cls_res["merchant_status"], "APPROVED")
 
@@ -251,7 +251,7 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
         self.assertTrue(ok)
 
         # Classify again -> should IGNORE
-        cls_res = classify_drop_zone_document(self.pdf_path, domain="expense_receipt")
+        cls_res = classify_drop_zone_document(self.pdf_path, doc_type="expense_receipt")
         self.assertEqual(cls_res["pipeline_action"], "IGNORE")
         self.assertEqual(cls_res["merchant_status"], "IGNORED")
 
@@ -266,7 +266,7 @@ class TestSourceMatcher(unittest.TestCase):
         setup_logger("configs/settings.json")
         initialize_storage_directories("configs/settings.json")
         cls.settings = load_system_settings("configs/settings.json")
-        cls.domain = "expense_receipt"
+        cls.doc_type = "expense_receipt"
 
         # Generate mock PDF with generic mock merchant text
         cls.pdf_path = "mock_source_document.pdf"
@@ -288,7 +288,7 @@ class TestSourceMatcher(unittest.TestCase):
 
     def test_source_matching(self):
         """Test rule-based merchant source matching using source matcher rules."""
-        matched_source = match_source(self.pdf_path, domain=self.domain, settings=self.settings)
+        matched_source = match_source(self.pdf_path, doc_type=self.doc_type, settings=self.settings)
         self.assertIsNotNone(matched_source)
         self.assertIsInstance(matched_source, str)
 

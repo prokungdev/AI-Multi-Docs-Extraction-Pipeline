@@ -1,16 +1,9 @@
 from typing import List, Dict, Optional, Any
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class DocTypeConfigModel(BaseModel):
     doc_type_id: str
-    display_name: str
-    is_active: bool = True
-    sort_order: int = 1
-
-
-class DomainConfigModel(BaseModel):
-    domain_id: str
     display_name: str
     is_active: bool = True
     sort_order: int = 1
@@ -106,10 +99,32 @@ class SystemSettingsModel(BaseModel):
     storage_root: str = "storage"
     pipeline_folders: List[str]
     doc_types: List[DocTypeConfigModel]
-    domains: List[DomainConfigModel]
     logging: LoggingConfigModel
     image_processing: ImageProcessingConfigModel
     validation_thresholds: ValidationThresholdsConfigModel
     ai_provider: AIProviderConfigModel
     ai_pricing: Dict[str, Any] = Field(default_factory=dict)
     database: DatabaseConfigModel
+
+    @model_validator(mode="after")
+    def validate_cross_field_rules(self) -> "SystemSettingsModel":
+        # 1. Validation Threshold Hierarchy Check
+        th = self.validation_thresholds
+        if not (th.confidence_low <= th.confidence_review <= th.confidence_high):
+            raise ValueError(
+                f"Invalid threshold hierarchy: confidence_low ({th.confidence_low}) <= "
+                f"confidence_review ({th.confidence_review}) <= confidence_high ({th.confidence_high}) is violated."
+            )
+
+        # 2. AI Pricing Parity Check
+        active_p = self.ai_provider.active_provider
+        provider_cfg = getattr(self.ai_provider, active_p, {})
+        if isinstance(provider_cfg, dict) and provider_cfg.get("model_name"):
+            model_name = provider_cfg["model_name"]
+            pricing_models = self.ai_pricing.get("models", {})
+            if pricing_models and model_name not in pricing_models:
+                raise ValueError(
+                    f"Active AI model '{model_name}' (provider '{active_p}') "
+                    f"is missing pricing configuration in 'ai_pricing.models'."
+                )
+        return self

@@ -2,14 +2,13 @@ import os
 import shutil
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from loguru import logger
+from src.core.logger import logger
 
 from src.core.config_loader import load_system_settings
 from src.core.constants import (
-    DEFAULT_SETTINGS_PATH,
-    DEFAULT_STORAGE_ROOT,
-    DEFAULT_COMPANY_CODE,
-    DEFAULT_DOC_TYPE,
+    DefaultPath,
+    DefaultIdentifier,
+    PipelineStageFolder,
 )
 
 
@@ -19,12 +18,12 @@ class StoragePathManager:
     Provides standard path resolution and atomic safe file operations across the entire pipeline.
     """
 
-    def __init__(self, settings_path: str = DEFAULT_SETTINGS_PATH):
+    def __init__(self, settings_path: str = DefaultPath.SETTINGS):
         self.settings_path = settings_path
         self._settings = load_system_settings(settings_path)
-        self.storage_root = self._settings.get("storage_root", DEFAULT_STORAGE_ROOT)
-        self.default_company = DEFAULT_COMPANY_CODE
-        self.default_doc_type = DEFAULT_DOC_TYPE
+        self.storage_root = self._settings.get("storage_root", DefaultPath.STORAGE_ROOT)
+        self.default_company = DefaultIdentifier.COMPANY_CODE
+        self.default_doc_type = DefaultIdentifier.DOC_TYPE
 
     @property
     def root(self) -> str:
@@ -78,7 +77,7 @@ class StoragePathManager:
         sub_folder: Optional[str] = None
     ) -> str:
         """Returns drop zone directory or specific drop subfolder (e.g. Upload, Auto_Scanner)."""
-        base = self.get_stage_dir("01_drop_zone", company_code, doc_type)
+        base = self.get_stage_dir(PipelineStageFolder.DROP_ZONE, company_code, doc_type)
         if sub_folder:
             path = os.path.join(base, sub_folder).replace("\\", "/")
             os.makedirs(path, exist_ok=True)
@@ -97,7 +96,7 @@ class StoragePathManager:
         - None: storage/companies/{c}/{dt}/02_raw_data
         - status='PENDING', merchant_folder='0107542000011_cpall': .../02_raw_data/PENDING/0107542000011_cpall
         """
-        base = self.get_stage_dir("02_raw_data", company_code, doc_type)
+        base = self.get_stage_dir(PipelineStageFolder.RAW_DATA, company_code, doc_type)
         if status:
             base = os.path.join(base, status.upper()).replace("\\", "/")
         if merchant_folder:
@@ -107,11 +106,15 @@ class StoragePathManager:
 
     def get_preprocess_dir(self, company_code: Optional[str] = None, doc_type: Optional[str] = None) -> str:
         """Returns preprocess directory: storage/companies/{c}/{dt}/03_preprocess."""
-        return self.get_stage_dir("03_preprocess", company_code, doc_type)
+        return self.get_stage_dir(PipelineStageFolder.PREPROCESS, company_code, doc_type)
 
     def get_processing_dir(self, company_code: Optional[str] = None, doc_type: Optional[str] = None) -> str:
         """Returns processing queue directory: storage/companies/{c}/{dt}/04_processing."""
-        return self.get_stage_dir("04_processing", company_code, doc_type)
+        return self.get_stage_dir(PipelineStageFolder.PROCESSING, company_code, doc_type)
+
+    def get_extracted_dir(self, company_code: Optional[str] = None, doc_type: Optional[str] = None) -> str:
+        """Alias for get_processing_dir for extracted JSON payloads."""
+        return self.get_processing_dir(company_code, doc_type)
 
     def get_archive_dir(
         self,
@@ -124,7 +127,7 @@ class StoragePathManager:
         Returns archive directory with optional YYYY-MM subpartitioning.
         Example: storage/companies/C00000_SAMPLE/expense_receipt/05_archive/2026-08/raw
         """
-        base = self.get_stage_dir("05_archive", company_code, doc_type)
+        base = self.get_stage_dir(PipelineStageFolder.ARCHIVE, company_code, doc_type)
         if year_month:
             base = os.path.join(base, year_month).replace("\\", "/")
         if sub:
@@ -134,7 +137,7 @@ class StoragePathManager:
 
     def get_output_dir(self, company_code: Optional[str] = None, doc_type: Optional[str] = None) -> str:
         """Returns final export output directory: storage/companies/{c}/{dt}/06_output."""
-        return self.get_stage_dir("06_output", company_code, doc_type)
+        return self.get_stage_dir(PipelineStageFolder.OUTPUT, company_code, doc_type)
 
     @staticmethod
     def safe_move_file(source_path: str, target_dir: str, overwrite: bool = True) -> str:

@@ -21,6 +21,7 @@ from src.core.pdf_splitter import split_pdf
 from src.core.source_matcher import match_source
 from src.core.extractor import extract_document_data
 from src.core.transformer import transform_data
+from src.core.constants import DefaultPath
 from src.core.initializer import (
     validate_settings_config,
     validate_domain_config,
@@ -30,12 +31,11 @@ from src.core.initializer import (
 from src.core.logger import setup_logger
 from src.core.config_loader import (
     load_system_settings,
-    get_active_domains_hybrid,
+    get_active_doc_types,
     get_active_sources_hybrid,
     get_default_company_code,
     get_company_storage_dir,
     get_company_pipeline_folder,
-    DEFAULT_STORAGE_ROOT
 )
 from src.core.db import (
     calculate_file_hash,
@@ -68,10 +68,13 @@ from src.core.post_processor import post_process_document, archive_and_export_do
 
 
 from src.core.exporters import list_exporters
+from src.core.config_loader import get_app_metadata
+
+_app_meta = get_app_metadata()
 
 # Page configuration
 st.set_page_config(
-    page_title="AI Multi-Docs Extraction Pipeline",
+    page_title=_app_meta["app_name"],
     page_icon="📄",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -100,7 +103,7 @@ def main_app():
         st.session_state["logger_initialized"] = True
         
     settings = get_cached_settings()
-    storage_root = settings.get("storage_root", DEFAULT_STORAGE_ROOT)
+    storage_root = settings.get("storage_root", DefaultPath.STORAGE_ROOT)
     
     # 1. System configurations check
     settings_valid, settings_errors = validate_settings_config()
@@ -157,15 +160,15 @@ def main_app():
     else:
         st.sidebar.success("🔑 ตรวจพบ Gemini API Key เรียบร้อย")
         
-    # Load Active Domains dynamically from configs/settings.json
-    active_domains = get_active_domains_hybrid()
-    if not active_domains:
-        st.error("❌ ไม่พบโดเมนที่เปิดใช้งานในระบบ แอดมินต้องเปิดใช้งานอย่างน้อย 1 โดเมนที่แท็บ Settings")
-        active_domains = [{"domain_id": "expense_receipt", "display_name": "ใบเสร็จค่าใช้จ่าย (Expense Receipt)"}]
+    # Load Active Doc Types dynamically from configs/settings.json
+    active_doc_types = get_active_doc_types()
+    if not active_doc_types:
+        st.error("❌ ไม่พบประเภทเอกสารที่เปิดใช้งานในระบบ แอดมินต้องเปิดใช้งานอย่างน้อย 1 ประเภทที่แท็บ Settings")
+        active_doc_types = [{"doc_type_id": "expense_receipt", "display_name": "ใบเสร็จค่าใช้จ่าย (Expense Receipt)"}]
         
-    domain_options = {d["display_name"]: d["domain_id"] for d in active_domains}
-    selected_domain_name = st.sidebar.selectbox("เลือกโดเมนเอกสาร (Domain)", list(domain_options.keys()))
-    selected_domain = domain_options[selected_domain_name]
+    doc_type_options = {d["display_name"]: d.get("doc_type_id") or d.get("domain_id") for d in active_doc_types}
+    selected_domain_name = st.sidebar.selectbox("เลือกประเภทเอกสาร (Doc Type)", list(doc_type_options.keys()))
+    selected_domain = doc_type_options[selected_domain_name]
     
     # Document upload block
     st.sidebar.subheader("📥 อัปโหลดเอกสารใหม่ (Upload Document)")
@@ -196,7 +199,7 @@ def main_app():
                 
             with st.spinner(f"กำลังประมวลผลไฟล์สำหรับ {selected_company_code} (ตรวจสอบความสมบูรณ์ -> แยกหน้า -> ค้นหาร้านค้า)..."):
                 try:
-                    split_and_match(domain=selected_domain, input_file=temp_path, company_code=selected_company_code)
+                    split_and_match(doc_type=selected_domain, input_file=temp_path, company_code=selected_company_code)
                     st.sidebar.success(f"🎉 อัปโหลดและแยกไฟล์ของบริษัท {selected_company_code} เรียบร้อยแล้ว!")
                     st.cache_data.clear()
                     st.rerun()
@@ -912,21 +915,22 @@ def main_app():
 
         st.markdown("---")
 
-        # 2. Manage domains
-        st.markdown("#### 📂 2. จัดการการเปิดใช้งานโดเมนเอกสาร (Manage Domains)")
-        all_domains = get_domains()
+        # 2. Manage doc_types
+        st.markdown("#### 📂 2. จัดการประเภทเอกสาร (Manage Doc Types)")
+        all_doc_types = get_domains()
         
-        # Draw columns/grid for domains
-        for d in all_domains:
+        # Draw columns/grid for doc_types
+        for d in all_doc_types:
+            dt_id = d.get("doc_type_id") or d.get("domain_id")
             col_d_name, col_d_toggle = st.columns([3, 1])
             with col_d_name:
-                st.write(f"**{d['display_name']}** (ID: `{d['domain_id']}`)")
+                st.write(f"**{d['display_name']}** (ID: `{dt_id}`)")
             with col_d_toggle:
                 is_act = d["is_active"] == 1
-                toggle_val = st.checkbox("เปิดใช้งาน", value=is_act, key=f"domain_toggle_{d['domain_id']}")
+                toggle_val = st.checkbox("เปิดใช้งาน", value=is_act, key=f"doc_type_toggle_{dt_id}")
                 if toggle_val != is_act:
-                    update_domain_active_status(d["domain_id"], 1 if toggle_val else 0)
-                    st.toast(f"อัปเดตโดเมน {d['domain_id']} เป็น {'เปิด' if toggle_val else 'ปิด'} เรียบร้อย", icon="⚙️")
+                    update_domain_active_status(dt_id, 1 if toggle_val else 0)
+                    st.toast(f"อัปเดตประเภทเอกสาร {dt_id} เป็น {'เปิด' if toggle_val else 'ปิด'} เรียบร้อย", icon="⚙️")
                     st.cache_data.clear()
                     st.rerun()
                     

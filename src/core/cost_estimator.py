@@ -1,11 +1,13 @@
 """AI Cost calculation engine and multi-tier pricing estimator."""
 
 from typing import Dict, Any, Optional
-from loguru import logger
+from src.core.logger import logger
 
 from src.core.config_loader import load_system_settings
 
-# Default pricing card per 1,000,000 tokens in USD
+# Fallback pricing catalog — override via configs/settings.json > ai_pricing.models
+# These are illustrative defaults only; update settings.json for production-accurate pricing.
+# Keys are model identifiers used for fuzzy-match lookup, not vendor lock-in.
 DEFAULT_MODEL_PRICING: Dict[str, Dict[str, float]] = {
     "gemini-3.5-flash": {"input_per_million": 0.075, "output_per_million": 0.30},
     "gemini-2.5-flash": {"input_per_million": 0.075, "output_per_million": 0.30},

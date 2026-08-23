@@ -15,23 +15,17 @@ class JsonConfigExporter(BaseOutputExporter):
         "accounting_line_items": "Accounting Line Items (รายงานแยกรายการสินค้า)"
     }
 
-    def __init__(self, domain_id: str, template_name: str, display_name: str = None):
-        super().__init__(domain_id)
+    def __init__(self, doc_type_id: str = None, template_name: str = None, display_name: str = None, domain_id: str = None):
+        target_dt = doc_type_id or domain_id or "expense_receipt"
+        super().__init__(doc_type_id=target_dt)
         self.template_name = template_name
-        self.display_name = display_name or self.DISPLAY_NAMES.get(template_name, template_name.replace("_", " ").title())
+        self.display_name = display_name or self.DISPLAY_NAMES.get(template_name, (template_name or "").replace("_", " ").title())
         self.has_custom_params = False
 
     def transform(self, approved_docs: List[Dict[str, Any]], **kwargs) -> pd.DataFrame:
-        # Check potential template locations
-        candidate_paths = [
-            f"configs/doc_types/{self.domain_id}/outputs/{self.template_name}.json",
-            f"configs/domains/{self.domain_id}/outputs/{self.template_name}.json",
-        ]
-        template_path = None
-        for p in candidate_paths:
-            if os.path.exists(p):
-                template_path = p
-                break
+        template_path = f"configs/doc_types/{self.doc_type_id}/outputs/{self.template_name}.json"
+        if not os.path.exists(template_path):
+            template_path = None
 
         all_rows = []
         for doc in approved_docs:

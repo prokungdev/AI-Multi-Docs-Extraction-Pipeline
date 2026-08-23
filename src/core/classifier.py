@@ -4,8 +4,8 @@ import json
 import uuid
 from typing import Optional
 from PIL import Image
-from loguru import logger
-import pymupdf
+from src.core.logger import logger
+from src.core.pdf_service import PDFService
 
 from src.core.config_loader import (
     load_system_settings,
@@ -13,6 +13,7 @@ from src.core.config_loader import (
     get_ai_provider_config,
     get_doc_type_config_dir,
 )
+from src.core.constants import PipelineAction
 from src.core.storage_manager import storage_manager
 from src.core.db import (
     get_or_create_merchant_auto,
@@ -24,7 +25,8 @@ from src.core.db import (
 
 def fast_filename_prefix_match(
     file_path: str,
-    domain: str = "expense_receipt",
+    doc_type: str = None,
+    domain: str = None,
     company_code: Optional[str] = None
 ) -> dict | None:
     """
@@ -36,6 +38,7 @@ def fast_filename_prefix_match(
     if not matched_merchant:
         return None
 
+    target_doc_type = doc_type or domain or "expense_receipt"
     status = matched_merchant.get("status_code") or matched_merchant.get("status", "APPROVED")
     tax_id = matched_merchant.get("tax_id") or "NO_TAXID"
     short_name = matched_merchant.get("short_name") or "merchant"
@@ -43,15 +46,15 @@ def fast_filename_prefix_match(
     folder_identifier = f"{tax_id}_{short_name}" if tax_id != "NO_TAXID" else "NO_TAXID"
 
     if status == "PENDING":
-        target_folder = storage_manager.get_raw_data_dir(company_code, domain, status="PENDING", merchant_folder=folder_identifier)
-        pipeline_action = "HOLD"
+        target_folder = storage_manager.get_raw_data_dir(company_code, target_doc_type, status="PENDING", merchant_folder=folder_identifier)
+        pipeline_action = PipelineAction.HOLD
     elif status == "IGNORED":
-        target_folder = storage_manager.get_raw_data_dir(company_code, domain, status="IGNORED", merchant_folder=folder_identifier)
-        pipeline_action = "IGNORE"
+        target_folder = storage_manager.get_raw_data_dir(company_code, target_doc_type, status="IGNORED", merchant_folder=folder_identifier)
+        pipeline_action = PipelineAction.IGNORE
     else:
         # APPROVED
-        target_folder = storage_manager.get_raw_data_dir(company_code, domain, merchant_folder=folder_identifier)
-        pipeline_action = "PROCEED"
+        target_folder = storage_manager.get_raw_data_dir(company_code, target_doc_type, merchant_folder=folder_identifier)
+        pipeline_action = PipelineAction.PROCEED
 
     os.makedirs(target_folder, exist_ok=True)
     logger.info(f"⚡ Zero-Cost Bypass: '{filename}' matched merchant '{merchant_name}' via prefix (Action: '{pipeline_action}').")
@@ -81,12 +84,8 @@ def render_page_one(file_path: str, output_dir: str = None) -> str:
             output_dir, f"_temp_p1_{os.path.splitext(os.path.basename(file_path))[0]}.jpg"
         ).replace("\\", "/")
 
-        doc = pymupdf.open(file_path)
-        if len(doc) > 0:
-            page = doc[0]
-            pix = page.get_pixmap(dpi=150)
-            pix.save(out_img_path)
-        doc.close()
+        pil_img = PDFService.render_page_to_pil(file_path, page_index=0, dpi=150)
+        pil_img.convert("RGB").save(out_img_path, format="JPEG", quality=85)
         return out_img_path
     else:
         return file_path
@@ -94,7 +93,7 @@ def render_page_one(file_path: str, output_dir: str = None) -> str:
 
 def offline_text_classifier(file_path: str) -> dict:
     """
-    Lightweight heuristic fallback classifier using PyMuPDF embedded text and regex.
+    Lightweight heuristic fallback classifier using PDFService embedded text and regex.
     """
     tax_id = ""
     merchant_name = ""
@@ -103,9 +102,8 @@ def offline_text_classifier(file_path: str) -> dict:
     ext = os.path.splitext(file_path)[1].lower()
     if ext == ".pdf":
         try:
-            doc = pymupdf.open(file_path)
-            if len(doc) > 0:
-                text = doc[0].get_text()
+            text = PDFService.extract_text(file_path, max_pages=1)
+            if text:
                 # Search for 13 digit tax id
                 tax_match = re.search(r"(?:tax\s*id|เลขประจำตัวผู้เสียภาษี|tax|เลขที่ผู้เสียภาษี)?\s*:?\s*(\d{13})", text, re.IGNORECASE)
                 if tax_match:
@@ -115,7 +113,6 @@ def offline_text_classifier(file_path: str) -> dict:
                 lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 3]
                 if lines:
                     merchant_name = lines[0]
-            doc.close()
         except Exception as e:
             logger.debug(f"Offline text scan failed: {e}")
 
@@ -133,9 +130,10 @@ def offline_text_classifier(file_path: str) -> dict:
     }
 
 
-def classify_drop_zone_document(
+def classify_document(
     file_path: str,
-    domain: str = "expense_receipt",
+    doc_type: str = None,
+    domain: str = None,
     company_code: Optional[str] = None,
     configs_dir: str = "configs"
 ) -> dict:
@@ -144,13 +142,14 @@ def classify_drop_zone_document(
     Extracts tax_id, merchant_name, and suggested_short_name, checks/creates merchants record,
     and returns routing instructions and pipeline action (PROCEED, HOLD, IGNORE).
     """
+    target_doc_type = doc_type or domain or "expense_receipt"
     # 0. Check Zero-Cost Rule Match via file_prefix or Tax ID in filename
-    fast_match = fast_filename_prefix_match(file_path, domain=domain, company_code=company_code)
+    fast_match = fast_filename_prefix_match(file_path, doc_type=target_doc_type, company_code=company_code)
     if fast_match:
         return fast_match
 
     comp = company_code or "C00000_SAMPLE"
-    preprocess_dir = storage_manager.get_preprocess_dir(comp, domain)
+    preprocess_dir = storage_manager.get_preprocess_dir(comp, target_doc_type)
 
     # 1. Render Page 1 only
     temp_p1_path = render_page_one(file_path, output_dir=preprocess_dir)
@@ -162,7 +161,7 @@ def classify_drop_zone_document(
     if api_key:
         try:
             from src.core.ai_service import ai_service
-            cfg_dir = get_doc_type_config_dir(domain, configs_dir)
+            cfg_dir = get_doc_type_config_dir(target_doc_type, configs_dir)
             classify_prompt_path = os.path.join(cfg_dir, "classify-prompt.txt")
             
             prompt_text = "Extract tax_id (13 digits), merchant_name, and suggested_short_name from this receipt/invoice."
@@ -221,23 +220,23 @@ def classify_drop_zone_document(
         folder_identifier = f"{tax_id}_{short_name}"
 
         if status == "PENDING":
-            target_folder = storage_manager.get_raw_data_dir(company_code, domain, status="PENDING", merchant_folder=folder_identifier)
-            pipeline_action = "HOLD"
+            target_folder = storage_manager.get_raw_data_dir(company_code, target_doc_type, status="PENDING", merchant_folder=folder_identifier)
+            pipeline_action = PipelineAction.HOLD
             logger.warning(f"Merchant '{merchant_name}' is in PENDING status. File held for review in '{target_folder}'.")
         elif status == "IGNORED":
-            target_folder = storage_manager.get_raw_data_dir(company_code, domain, status="IGNORED", merchant_folder=folder_identifier)
-            pipeline_action = "IGNORE"
+            target_folder = storage_manager.get_raw_data_dir(company_code, target_doc_type, status="IGNORED", merchant_folder=folder_identifier)
+            pipeline_action = PipelineAction.IGNORE
             logger.info(f"Merchant '{merchant_name}' is in IGNORED status. File moved to '{target_folder}'.")
         else:
             # APPROVED
-            target_folder = storage_manager.get_raw_data_dir(company_code, domain, merchant_folder=folder_identifier)
-            pipeline_action = "PROCEED"
+            target_folder = storage_manager.get_raw_data_dir(company_code, target_doc_type, merchant_folder=folder_identifier)
+            pipeline_action = PipelineAction.PROCEED
             logger.info(f"Merchant '{merchant_name}' is APPROVED. File ready in '{target_folder}'.")
     else:
         # No 13-digit Tax ID found -> slip / cash bill
         merchant = {"merchant_id": "merch_notax", "tax_id": "NO_TAXID", "status_code": "APPROVED", "short_name": "no_taxid"}
-        target_folder = storage_manager.get_raw_data_dir(company_code, domain, merchant_folder="NO_TAXID")
-        pipeline_action = "PROCEED"
+        target_folder = storage_manager.get_raw_data_dir(company_code, target_doc_type, merchant_folder="NO_TAXID")
+        pipeline_action = PipelineAction.PROCEED
         folder_identifier = "NO_TAXID"
         logger.info(f"No valid Tax ID detected for '{os.path.basename(file_path)}'. Routing to NO_TAXID folder.")
 
@@ -252,3 +251,6 @@ def classify_drop_zone_document(
         "target_folder": target_folder,
         "folder_identifier": folder_identifier
     }
+
+
+classify_drop_zone_document = classify_document

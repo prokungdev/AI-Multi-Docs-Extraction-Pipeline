@@ -65,7 +65,7 @@ if git diff --cached --name-only | grep -E "^.env$"; then
 fi
 
 # 2. Check for potential hardcoded secrets/API keys
-if git diff --cached | grep -iE "GEMINI_API_KEY=AIza|OPENAI_API_KEY=sk-"; then
+if git diff --cached | grep -iE "PROVIDER_API_KEY=AIza|SECRET_KEY=sk-"; then
     echo "[ERROR] Hardcoded API Key detected in staged diff! Commit aborted."
     exit 1
 fi
@@ -74,7 +74,7 @@ echo "[Git Hook] Pre-commit checks passed successfully!"
 exit 0
 ```
 
-### C. Primary AI Instructions (`GEMINI.md`)
+### C. Primary AI Agent Instructions (`AGENTS.md` / `GEMINI.md`)
 Must define:
 1. **Code Comment Language**: English for all code docstrings, comments, and technical docs.
 2. **Approval Requirements**: AI MUST present an Implementation Plan and wait for explicit user approval before modifying code files.
@@ -89,7 +89,7 @@ Must define:
 - Must establish universal, language-agnostic coding standards (English docstrings/comments, secret safety, clean code, semantic commit rules).
 
 ### F. System Health Check Routine (Recommended for Production-Grade)
-- Recommended to provide a zero-cost 1-Click health check entry point (e.g. `python main.py --step healthcheck` or `src/core/healthcheck.py`) to validate DB connectivity, environment API keys, and storage folder permissions prior to accepting user workloads.
+- Recommended to provide a zero-cost 1-Click health check entry point (e.g., `python -m app.healthcheck` or a dedicated healthcheck CLI command) to validate DB connectivity, dynamically resolve environment credential keys from configuration schemas, and execute storage write permission probes prior to accepting workloads.
 
 ---
 

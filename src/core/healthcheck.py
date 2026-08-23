@@ -2,7 +2,7 @@
 
 import os
 from dotenv import load_dotenv
-from loguru import logger
+from src.core.logger import logger
 from sqlalchemy import inspect
 
 from src.core.config_loader import load_system_settings, get_ai_provider_config
@@ -33,18 +33,9 @@ def check_api_ready(settings: dict) -> tuple[bool, str, list[str]]:
     provider = ai_cfg.get("active_provider", "gemini")
     api_key_env = ai_cfg.get("api_key_env", "GEMINI_API_KEY")
     api_key = os.getenv(api_key_env)
+    has_credentials = bool(api_key and api_key.strip())
 
-    # Check fallback credentials table if .env key is missing
-    if not api_key:
-        try:
-            from src.core.db import get_active_credentials
-            db_creds = get_active_credentials(provider, ai_cfg.get("default_model", "gemini-2.5-flash"))
-            if db_creds:
-                api_key = "DB_CREDENTIAL_FOUND"
-        except Exception:
-            pass
-
-    if not api_key:
+    if not has_credentials:
         remedy = f"Environment variable '{api_key_env}' is missing. Please set it in your .env file."
         remedies.append(remedy)
         return False, f"Missing API Key ('{api_key_env}')", remedies
@@ -52,9 +43,33 @@ def check_api_ready(settings: dict) -> tuple[bool, str, list[str]]:
     return True, f"Provider '{provider}' ready", []
 
 
+def check_storage_status(settings: dict) -> tuple[bool, str, list[str]]:
+    """
+    Checks storage root and log directory write permissions.
+    """
+    remedies = []
+    from src.core.constants import DefaultPath
+    storage_root = settings.get("storage_root", DefaultPath.STORAGE_ROOT)
+    logs_dir = settings.get("logging", {}).get("logs_dir", DefaultPath.LOGS_DIR)
+
+    for dir_path, label in [(storage_root, "Storage Root"), (logs_dir, "Logs Directory")]:
+        try:
+            os.makedirs(dir_path, exist_ok=True)
+            probe_file = os.path.join(dir_path, ".health_probe.tmp")
+            with open(probe_file, "w", encoding="utf-8") as pf:
+                pf.write("probe")
+            if os.path.exists(probe_file):
+                os.remove(probe_file)
+        except Exception as we:
+            remedies.append(f"Ensure directory '{dir_path}' has read/write permissions: {we}")
+            return False, f"{label} '{dir_path}' write error", remedies
+
+    return True, f"Writable ('{storage_root}', '{logs_dir}')", []
+
+
 def run_healthcheck(configs_dir: str = "configs") -> dict:
     """
-    Runs lightweight System Health Check (Database Status & API Ready).
+    Runs lightweight System Health Check (Database Status, API Ready, Storage Writable).
     Returns:
         dict containing 'healthy' boolean, 'status' string, 'checks' dict, and 'remedies' list.
     """
@@ -63,17 +78,20 @@ def run_healthcheck(configs_dir: str = "configs") -> dict:
 
     db_ok, db_msg = check_database_status()
     api_ok, api_msg, api_remedies = check_api_ready(settings)
+    storage_ok, storage_msg, storage_remedies = check_storage_status(settings)
 
-    all_healthy = db_ok and api_ok
+    all_healthy = db_ok and api_ok and storage_ok
+    remedies = api_remedies + storage_remedies
 
     return {
         "healthy": all_healthy,
         "status": "OK" if all_healthy else "ERROR",
         "checks": {
             "database": {"ok": db_ok, "message": db_msg},
-            "api_ready": {"ok": api_ok, "message": api_msg}
+            "api_ready": {"ok": api_ok, "message": api_msg},
+            "storage_ready": {"ok": storage_ok, "message": storage_msg}
         },
-        "remedies": api_remedies
+        "remedies": remedies
     }
 
 

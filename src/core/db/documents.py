@@ -4,12 +4,12 @@ import os
 import hashlib
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Tuple
-from loguru import logger
+from src.core.logger import logger
 from sqlalchemy import select, update, delete, or_, and_, desc, asc, func
 
 from .connection import get_db_session
 from .models import Company, ProcessedBatch, DocumentPage, Document, DocumentStatus
-from src.core.constants import DEFAULT_COMPANY_CODE, NO_TAX_LABEL, DEFAULT_DOC_TYPE
+from src.core.constants import DefaultIdentifier
 
 
 def calculate_file_hash(file_path: str) -> str:
@@ -44,8 +44,8 @@ def check_duplicate_document(file_hash: str, company_id: str = None) -> tuple[bo
                     "original_pdf_name": batch.original_filename,
                     "created_at": batch.created_at,
                     "status": first_doc.status_code if first_doc else "PENDING",
-                    "domain": first_doc.domain_id if first_doc else DEFAULT_DOC_TYPE,
-                    "source": first_doc.source_id if first_doc else NO_TAX_LABEL
+                    "domain": first_doc.domain_id if first_doc else DefaultIdentifier.DOC_TYPE,
+                    "source": first_doc.source_id if first_doc else DefaultIdentifier.NO_TAX_LABEL
                 }
                 return True, metadata
     except Exception as e:
@@ -65,7 +65,7 @@ def create_batch(batch_id: str, original_filename: str = None, total_pages: int 
         with get_db_session() as session:
             target_cid = company_id
             if not target_cid:
-                def_comp = session.scalars(select(Company).filter_by(company_code=DEFAULT_COMPANY_CODE)).first()
+                def_comp = session.scalars(select(Company).filter_by(company_code=DefaultIdentifier.COMPANY_CODE)).first()
                 if def_comp:
                     target_cid = def_comp.company_id
 
@@ -218,7 +218,7 @@ def create_document(
                 if batch_obj and batch_obj.company_id:
                     target_cid = batch_obj.company_id
                 else:
-                    def_comp = session.scalars(select(Company).filter_by(company_code=DEFAULT_COMPANY_CODE)).first()
+                    def_comp = session.scalars(select(Company).filter_by(company_code=DefaultIdentifier.COMPANY_CODE)).first()
                     if def_comp:
                         target_cid = def_comp.company_id
 

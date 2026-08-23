@@ -44,6 +44,22 @@ When interacting with external APIs, Generative AI models, or remote services:
   2. Wrap API calls with **Exponential Backoff Auto-Retry** for transient errors (HTTP 429 Rate Limits, 503 Service Unavailable, network timeouts).
   3. Attach real-time telemetry, token usage counting, and cost calculation hooks transparently.
 
+### 2.3 Namespaced Constants & Zero Static Aliases Modernization
+When global default variables or repeated parameter fallbacks (`param or default_fn()`) proliferate:
+- ❌ **Avoid**: Floating unorganized uppercase variables, lingering flat static aliases shadowing namespaced classes, and duplicate ternary fallback checks across multiple caller files.
+- ✅ **Adopt Namespaced Classes & Clean Consumption**:
+  1. Group related static paths into namespace classes (e.g. `DefaultPath`), identifiers into `DefaultIdentifier`, and app metadata into `AppMetadata`.
+  2. Modernize all consumer import call-sites to access constants directly via their namespaced classes (`DefaultPath.SETTINGS`).
+  3. Purge all legacy flat static aliases to eliminate architectural ambiguity and maintain a single Source of Truth.
+  4. Implement single-responsibility parameter resolver functions (`resolve_parameter(param)`) to enforce uniform fallback resolution everywhere.
+
+### 2.4 Sub-routine Extraction for Entity Ingestion Pipelines
+When loops or conditional branches create entities (e.g. multi-page file splits vs single files):
+- ❌ **Avoid**: Duplicating entity ID generation, database creation calls, and result list appending in both branches.
+- ✅ **Adopt Sub-routine Extraction**:
+  1. Extract the shared entity registration into a private helper function (`_register_entity(...)`).
+  2. Keep only the format-specific parsing logic in the respective branch.
+
 ---
 
 ## 🤖 3. Execution Workflow

@@ -8,7 +8,7 @@ from src.core.pipeline.stage_4_validation import validate_documents
 from src.core.pipeline.pipeline_reset import reset_pipeline_data
 from src.core.pipeline.pipeline_helpers import merge_chunk_payloads, validate_and_process_payload
 from src.core.healthcheck import run_healthcheck, print_healthcheck_report
-from src.core.constants import DEFAULT_COMPANY_CODE, DEFAULT_DOC_TYPE
+from src.core.constants import DefaultIdentifier
 
 
 # Backward-compatible stage aliases
@@ -19,27 +19,32 @@ run_validate = validate_documents
 run_transform_to_db = transform_to_db
 
 
-def run_export_outputs(domain: str = DEFAULT_DOC_TYPE, company_code: str = DEFAULT_COMPANY_CODE) -> Dict[str, Any]:
+def run_export_outputs(
+    doc_type: str = None,
+    domain: str = None,
+    company_code: str = DefaultIdentifier.COMPANY_CODE
+) -> Dict[str, Any]:
     """Exports approved and processed documents to registered format strategies."""
     from src.core.db import get_documents_for_export, get_company_by_code
     from src.core.exporters.registry import list_exporters
     from src.core.storage_manager import storage_manager
 
+    target_doc_type = doc_type or domain or DefaultIdentifier.DOC_TYPE
     comp = get_company_by_code(company_code)
     comp_id = comp["company_id"] if comp else None
-    approved_docs = get_documents_for_export(domain, company_id=comp_id)
+    approved_docs = get_documents_for_export(target_doc_type, company_id=comp_id)
 
     if not approved_docs:
-        return {"status": "SKIPPED", "message": f"No approved/processed documents to export for domain '{domain}'."}
+        return {"status": "SKIPPED", "message": f"No approved/processed documents to export for doc_type '{target_doc_type}'."}
 
-    exporters = list_exporters(domain)
-    output_dir = storage_manager.get_output_dir(company_code, domain)
+    exporters = list_exporters(target_doc_type)
+    output_dir = storage_manager.get_output_dir(company_code, target_doc_type)
     exported_files = {}
 
     for exp_meta in exporters:
         exp_id = exp_meta["exporter_id"]
         handler = exp_meta["handler"]
-        base_path = os.path.join(output_dir, f"{domain}_{exp_id}_export").replace("\\", "/")
+        base_path = os.path.join(output_dir, f"{target_doc_type}_{exp_id}_export").replace("\\", "/")
         res = handler.export(approved_docs, base_path)
         if res:
             exported_files[exp_id] = res
@@ -47,15 +52,20 @@ def run_export_outputs(domain: str = DEFAULT_DOC_TYPE, company_code: str = DEFAU
     return {"status": "SUCCESS", "exported_documents": len(approved_docs), "outputs": exported_files}
 
 
-def run_pipeline_all(domain: str = DEFAULT_DOC_TYPE, company_code: str = DEFAULT_COMPANY_CODE) -> Dict[str, Any]:
+def run_pipeline_all(
+    doc_type: str = None,
+    domain: str = None,
+    company_code: str = DefaultIdentifier.COMPANY_CODE
+) -> Dict[str, Any]:
     """Executes full pipeline stages from Stage 0 to Stage 4 end-to-end."""
+    target_doc_type = doc_type or domain or DefaultIdentifier.DOC_TYPE
     results = {}
     results["stage_0_init"] = init_system(company_code=company_code)
-    results["stage_1_ingestion"] = split_and_match(domain=domain, company_code=company_code)
-    results["stage_2_extraction"] = extract_documents(domain=domain, company_code=company_code)
-    results["stage_3_transformation"] = transform_to_db(domain=domain, company_code=company_code)
-    results["stage_4_validation"] = validate_documents(domain=domain, company_code=company_code)
-    results["export_outputs"] = run_export_outputs(domain=domain, company_code=company_code)
+    results["stage_1_ingestion"] = split_and_match(doc_type=target_doc_type, company_code=company_code)
+    results["stage_2_extraction"] = extract_documents(doc_type=target_doc_type, company_code=company_code)
+    results["stage_3_transformation"] = transform_to_db(doc_type=target_doc_type, company_code=company_code)
+    results["stage_4_validation"] = validate_documents(doc_type=target_doc_type, company_code=company_code)
+    results["export_outputs"] = run_export_outputs(doc_type=target_doc_type, company_code=company_code)
     return results
 
 

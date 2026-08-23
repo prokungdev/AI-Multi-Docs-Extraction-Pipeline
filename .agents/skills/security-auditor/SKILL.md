@@ -14,7 +14,7 @@ This skill guides the AI Agent to perform security static analysis, secret scann
 ## 🎯 1. Security Audit Dimensions
 
 1. **Secret & Credential Scanning**:
-   - Check for hardcoded API keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, AWS keys), private keys, or passwords.
+   - Check for hardcoded API keys (e.g., third-party AI provider keys, cloud access secrets, database credentials), private keys, or passwords.
    - Verify `.env` is listed in `.gitignore`.
 2. **Injection Vulnerabilities**:
    - Check for un-parameterized SQL queries (SQL Injection).

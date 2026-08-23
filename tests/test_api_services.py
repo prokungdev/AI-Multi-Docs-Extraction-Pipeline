@@ -43,6 +43,7 @@ class TestHealthcheckServices(unittest.TestCase):
         self.assertIn("checks", results)
         self.assertIn("database", results["checks"])
         self.assertIn("api_ready", results["checks"])
+        self.assertIn("storage_ready", results["checks"])
         self.assertTrue(results["healthy"])
         self.assertEqual(results["status"], "OK")
 
@@ -137,11 +138,13 @@ class TestFastAPIRestAPI(unittest.TestCase):
         Clean up any lingering test company directories and DB records.
         """
         # Clean from DB
+        # Clean from DB
         try:
             with get_db_session() as session:
-                test_comps = session.query(Company).filter(
+                stmt = select(Company).where(
                     (Company.company_code.like("C\\_%", escape="\\")) | (Company.company_code == "C99999_TEST")
-                ).all()
+                )
+                test_comps = session.scalars(stmt).all()
                 for c in test_comps:
                     session.delete(c)
         except Exception:
@@ -232,21 +235,59 @@ class TestSystemConfigurationValidation(unittest.TestCase):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
-    def test_05_missing_active_domains_fails(self):
-        """Test that missing active domains fails."""
+    def test_05_missing_active_doc_types_fails(self):
+        """Test that missing active doc_types fails."""
         from src.core.initializer import validate_settings_config
         import copy
         bad_dict = copy.deepcopy(self.valid_dict)
-        for d in bad_dict["domains"]:
+        for d in bad_dict.get("doc_types", []):
             d["is_active"] = False
         tmp_path = self._write_temp_settings(bad_dict)
         try:
             is_valid, errors = validate_settings_config(tmp_path)
             self.assertFalse(is_valid)
-            self.assertTrue(any("No active domains configured" in e for e in errors))
+            self.assertTrue(any("No active doc_types configured" in e for e in errors))
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+
+    def test_06_threshold_hierarchy_inversion_fails(self):
+        """Test that inverted confidence thresholds fail cross-field validation."""
+        from src.core.initializer import validate_settings_config
+        import copy
+        bad_dict = copy.deepcopy(self.valid_dict)
+        bad_dict["validation_thresholds"]["confidence_low"] = 0.90
+        bad_dict["validation_thresholds"]["confidence_high"] = 0.70
+        tmp_path = self._write_temp_settings(bad_dict)
+        try:
+            is_valid, errors = validate_settings_config(tmp_path)
+            self.assertFalse(is_valid)
+            self.assertTrue(any("Invalid threshold hierarchy" in e for e in errors))
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def test_07_pricing_parity_mismatch_fails(self):
+        """Test that configuring active AI model missing from pricing table fails."""
+        from src.core.initializer import validate_settings_config
+        import copy
+        bad_dict = copy.deepcopy(self.valid_dict)
+        bad_dict["ai_provider"]["gemini"]["model_name"] = "unpriced-experimental-model"
+        tmp_path = self._write_temp_settings(bad_dict)
+        try:
+            is_valid, errors = validate_settings_config(tmp_path)
+            self.assertFalse(is_valid)
+            self.assertTrue(any("missing pricing configuration" in e for e in errors))
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def test_08_storage_write_permission_probe(self):
+        """Test environment validation and write permission probes."""
+        from src.core.initializer import validate_environment
+        messages = validate_environment(self.valid_settings_path)
+        # Should not have write errors on standard local directories
+        self.assertFalse(any("is not writable" in m for m in messages))
 
 
 if __name__ == "__main__":

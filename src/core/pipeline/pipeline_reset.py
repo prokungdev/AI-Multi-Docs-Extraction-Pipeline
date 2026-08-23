@@ -1,12 +1,15 @@
 import os
-from loguru import logger
+from src.core.logger import logger
 
-from src.core.config_loader import load_system_settings, get_default_domain
+from src.core.config_loader import load_system_settings, get_default_doc_type
 from src.core.db import reset_pipeline_database
 
 
 def reset_pipeline_data(
-    domain: str = None, clear_storage_temp: bool = True, clear_database: bool = True
+    doc_type: str = None,
+    domain: str = None,
+    clear_storage_temp: bool = True,
+    clear_database: bool = True
 ) -> dict:
     """
     Resets the pipeline for a fresh interactive test run.
@@ -17,8 +20,7 @@ def reset_pipeline_data(
 
     settings = load_system_settings()
     storage_root = settings.get("storage_root", "storage")
-    if domain is None:
-        domain = get_default_domain()
+    target_doc_type = doc_type or domain or get_default_doc_type()
 
     res = {"database_reset": False, "storage_cleaned": False, "deleted_files_count": 0}
 
@@ -34,8 +36,8 @@ def reset_pipeline_data(
         folders_to_clean = []
         if os.path.exists(comp_root):
             for c in os.listdir(comp_root):
-                folders_to_clean.append(storage_manager.get_preprocess_dir(c, domain))
-                folders_to_clean.append(storage_manager.get_processing_dir(c, domain))
+                folders_to_clean.append(storage_manager.get_preprocess_dir(c, target_doc_type))
+                folders_to_clean.append(storage_manager.get_processing_dir(c, target_doc_type))
 
         deleted_count = 0
         for folder in folders_to_clean:

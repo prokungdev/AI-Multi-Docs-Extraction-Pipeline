@@ -2,8 +2,10 @@
 
 from typing import List, Dict, Any
 import pandas as pd
+from sqlalchemy import select, func
 from .base import BaseOutputExporter
 from src.core.db import get_db_session, Document
+from src.core.constants import DocumentStatusCode
 
 
 class ExpressExpenseExporter(BaseOutputExporter):
@@ -26,10 +28,11 @@ class ExpressExpenseExporter(BaseOutputExporter):
         """
         try:
             with get_db_session() as session:
-                count = session.query(Document).filter(
-                    Document.status_code == "APPROVED",
+                stmt = select(func.count()).select_from(Document).where(
+                    Document.status_code == DocumentStatusCode.APPROVED,
                     Document.domain_id == self.domain_id
-                ).count()
+                )
+                count = session.scalars(stmt).one()
                 return count + 1
         except Exception:
             return 1

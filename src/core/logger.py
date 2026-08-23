@@ -1,16 +1,61 @@
+"""
+Unified Application Logger Gateway.
+Abstracts the underlying logging engine behind an enterprise Adapter / Gateway.
+Allows swapping or extending logging engines without modifying business modules.
+"""
+
 import os
 import sys
-from loguru import logger
-from src.core.config_loader import load_system_settings
+import json
+from typing import Any, Optional
+from loguru import logger as _backend_logger
+from src.core.constants import DefaultPath
 
 
-def setup_logger(settings_path: str = "configs/settings.json"):
+class AppLogger:
     """
-    Initializes and configures the Loguru logger based on central configurations.
+    Standard Application Logger Adapter.
+    Delegates calls to configured logging provider while exposing a uniform API.
+    """
+
+    def __init__(self, backend=None):
+        self._backend = backend or _backend_logger
+
+    def debug(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        self._backend.debug(msg, *args, **kwargs)
+
+    def info(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        self._backend.info(msg, *args, **kwargs)
+
+    def warning(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        self._backend.warning(msg, *args, **kwargs)
+
+    def error(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        self._backend.error(msg, *args, **kwargs)
+
+    def critical(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        self._backend.critical(msg, *args, **kwargs)
+
+    def exception(self, msg: str, *args: Any, **kwargs: Any) -> None:
+        self._backend.exception(msg, *args, **kwargs)
+
+    def bind(self, **kwargs: Any) -> "AppLogger":
+        return AppLogger(self._backend.bind(**kwargs))
+
+    def opt(self, *args: Any, **kwargs: Any) -> "AppLogger":
+        return AppLogger(self._backend.opt(*args, **kwargs))
+
+    def catch(self, *args: Any, **kwargs: Any):
+        return self._backend.catch(*args, **kwargs)
+
+
+def setup_logger(settings_path: str = DefaultPath.SETTINGS) -> None:
+    """
+    Initializes and configures the underlying logger based on central configurations.
     Enforces dual logging: Console/File output and database logging.
     """
     # 1. Clear existing handlers
-    logger.remove()
+    _backend_logger.remove()
 
     # 2. Defaults in case of missing settings
     logs_dir = "logs"
@@ -21,7 +66,8 @@ def setup_logger(settings_path: str = "configs/settings.json"):
 
     if os.path.exists(settings_path):
         try:
-            settings = load_system_settings(settings_path)
+            with open(settings_path, "r", encoding="utf-8") as f:
+                settings = json.load(f)
             logging_cfg = settings.get("logging", {})
             logs_dir = logging_cfg.get("logs_dir", "logs")
             rotation = logging_cfg.get("rotation", "00:00")
@@ -50,7 +96,7 @@ def setup_logger(settings_path: str = "configs/settings.json"):
         )
         colorize = True
 
-    logger.add(
+    _backend_logger.add(
         sys.stderr,
         format=console_format,
         level=level,
@@ -59,7 +105,7 @@ def setup_logger(settings_path: str = "configs/settings.json"):
 
     # 4. Add Rotating File Sink
     log_file_path = os.path.join(logs_dir, "app.log")
-    logger.add(
+    _backend_logger.add(
         log_file_path,
         format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
         rotation=rotation,
@@ -79,8 +125,8 @@ def setup_logger(settings_path: str = "configs/settings.json"):
             func = record.get("function") or "main"
             created_at = record["time"].isoformat()
 
-            from src.core.db import get_db_session, ApplicationLog
-            with get_db_session() as session:
+            from src.core.db import get_log_db_session, ApplicationLog
+            with get_log_db_session() as session:
                 entry = ApplicationLog(
                     level=lvl,
                     message=text,
@@ -92,12 +138,22 @@ def setup_logger(settings_path: str = "configs/settings.json"):
         except Exception:
             pass
 
-    logger.add(
+    _backend_logger.add(
         db_sink,
         level=level,
         enqueue=True
     )
 
 
-# Automatically initialize the logger when this module is imported
+# Automatically initialize logging engine
 setup_logger()
+
+# Global AppLogger singleton instance
+logger = AppLogger(_backend_logger)
+
+
+def get_logger(name: Optional[str] = None) -> AppLogger:
+    """Returns a contextual AppLogger instance."""
+    if name:
+        return logger.bind(module=name)
+    return logger

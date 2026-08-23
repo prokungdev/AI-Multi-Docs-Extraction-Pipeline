@@ -10,20 +10,16 @@ import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Generator
-from loguru import logger
+from src.core.logger import logger
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from src.core.constants import (
-    DEFAULT_SETTINGS_PATH,
-    DEFAULT_STORAGE_ROOT,
-    DEFAULT_DATABASE_FILENAME,
-)
+from src.core.constants import DefaultPath
 
 # Project root directory (4 levels up from src/core/db/connection.py)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
-def get_database_config(settings_path: str = DEFAULT_SETTINGS_PATH) -> dict:
+def get_database_config(settings_path: str = DefaultPath.SETTINGS) -> dict:
     """
     Loads the database configuration block from settings.json.
     """
@@ -38,7 +34,7 @@ def get_database_config(settings_path: str = DEFAULT_SETTINGS_PATH) -> dict:
     return {}
 
 
-def get_database_url(settings_path: str = DEFAULT_SETTINGS_PATH) -> str:
+def get_database_url(settings_path: str = DefaultPath.SETTINGS) -> str:
     """
     Resolves database connection URL dynamically.
     Priority:
@@ -86,16 +82,24 @@ def get_database_url(settings_path: str = DEFAULT_SETTINGS_PATH) -> str:
     return f"sqlite:///{db_path}"
 
 
-def get_engine(settings_path: str = DEFAULT_SETTINGS_PATH):
+_engines: dict = {}
+_session_factories: dict = {}
+
+
+def get_engine(settings_path: str = DefaultPath.SETTINGS):
     """
-    Returns a configured Engine instance with connection pooling based on the resolved driver.
+    Returns a cached Engine instance per database URL with connection pooling.
+    Guarantees pool reuse in production while maintaining test DB isolation.
     """
     url = get_database_url(settings_path)
+    if url in _engines:
+        return _engines[url]
+
     db_cfg = get_database_config(settings_path)
     echo_sql = db_cfg.get("echo_sql", False)
 
     if url.startswith("sqlite"):
-        return create_engine(
+        new_engine = create_engine(
             url,
             connect_args={"check_same_thread": False},
             echo=echo_sql
@@ -108,7 +112,7 @@ def get_engine(settings_path: str = DEFAULT_SETTINGS_PATH):
         pool_recycle = pg_cfg.get("pool_recycle", 3600)
         pool_pre_ping = pg_cfg.get("pool_pre_ping", True)
 
-        return create_engine(
+        new_engine = create_engine(
             url,
             pool_size=pool_size,
             max_overflow=max_overflow,
@@ -117,20 +121,32 @@ def get_engine(settings_path: str = DEFAULT_SETTINGS_PATH):
             echo=echo_sql
         )
 
+    _engines[url] = new_engine
+    return new_engine
+
+
+def get_session_factory(settings_path: str = DefaultPath.SETTINGS) -> sessionmaker:
+    """Returns a cached sessionmaker factory for the active database engine."""
+    url = get_database_url(settings_path)
+    if url not in _session_factories:
+        eng = get_engine(settings_path)
+        _session_factories[url] = sessionmaker(autocommit=False, autoflush=False, bind=eng)
+    return _session_factories[url]
+
 
 engine = get_engine()
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = get_session_factory()
 
 
 @contextmanager
-def get_db_session() -> Generator[Session, None, None]:
+def get_db_session(settings_path: str = DefaultPath.SETTINGS) -> Generator[Session, None, None]:
     """
     Context manager for SQLAlchemy ORM sessions.
+    Reuses connection pool per database URL (zero pool churn in production).
     Automatically commits transactions, rolls back on exception, and closes session.
     """
-    current_engine = get_engine()
-    session_factory = sessionmaker(autocommit=False, autoflush=False, bind=current_engine)
-    session = session_factory()
+    factory = get_session_factory(settings_path)
+    session = factory()
     try:
         yield session
         session.commit()
@@ -150,7 +166,7 @@ def get_db_session_dep() -> Generator[Session, None, None]:
         yield session
 
 
-def get_db_connection(settings_path: str = DEFAULT_SETTINGS_PATH) -> sqlite3.Connection:
+def get_db_connection(settings_path: str = DefaultPath.SETTINGS) -> sqlite3.Connection:
     """
     Legacy helper: Establishes a raw connection to the centralized SQLite database.
     """
@@ -168,9 +184,78 @@ def get_db_connection(settings_path: str = DEFAULT_SETTINGS_PATH) -> sqlite3.Con
     return conn
 
 
-def get_log_db_connection(settings_path: str = DEFAULT_SETTINGS_PATH) -> sqlite3.Connection:
+def get_log_database_url(settings_path: str = DefaultPath.SETTINGS) -> str:
     """
-    Establishes a connection to the separate logs SQLite database (logs/logs.db).
+    Resolves log database connection URL pointing to logs/logs.db.
+    """
+    abs_settings_path = PROJECT_ROOT / settings_path if not os.path.isabs(settings_path) else Path(settings_path)
+    logs_dir = "logs"
+    if abs_settings_path.exists():
+        try:
+            with open(abs_settings_path, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+            logging_cfg = settings.get("logging", {})
+            logs_dir = logging_cfg.get("logs_dir", "logs")
+        except Exception:
+            pass
+
+    abs_logs_dir = PROJECT_ROOT / logs_dir if not os.path.isabs(logs_dir) else Path(logs_dir)
+    os.makedirs(abs_logs_dir, exist_ok=True)
+    db_path = str((abs_logs_dir / "logs.db").resolve()).replace("\\", "/")
+    return f"sqlite:///{db_path}"
+
+
+def get_log_engine(settings_path: str = DefaultPath.SETTINGS):
+    """
+    Returns a cached Engine instance for the log database (logs/logs.db).
+    """
+    url = get_log_database_url(settings_path)
+    if url in _engines:
+        return _engines[url]
+
+    new_engine = create_engine(
+        url,
+        connect_args={"check_same_thread": False},
+        echo=False
+    )
+    _engines[url] = new_engine
+    return new_engine
+
+
+def get_log_session_factory(settings_path: str = DefaultPath.SETTINGS) -> sessionmaker:
+    """Returns a cached sessionmaker factory for the log database engine."""
+    url = get_log_database_url(settings_path)
+    if url not in _session_factories:
+        eng = get_log_engine(settings_path)
+        _session_factories[url] = sessionmaker(autocommit=False, autoflush=False, bind=eng)
+    return _session_factories[url]
+
+
+log_engine = get_log_engine()
+LogSessionLocal = get_log_session_factory()
+
+
+@contextmanager
+def get_log_db_session(settings_path: str = DefaultPath.SETTINGS) -> Generator[Session, None, None]:
+    """
+    Context manager for SQLAlchemy ORM sessions on the log database (logs/logs.db).
+    Automatically commits transactions, rolls back on exception, and closes session.
+    """
+    factory = get_log_session_factory(settings_path)
+    session = factory()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def get_log_db_connection(settings_path: str = DefaultPath.SETTINGS) -> sqlite3.Connection:
+    """
+    Legacy helper: Establishes a raw connection to the separate logs SQLite database (logs/logs.db).
     """
     abs_settings_path = PROJECT_ROOT / settings_path if not os.path.isabs(settings_path) else Path(settings_path)
     logs_dir = "logs"
@@ -194,7 +279,7 @@ def get_log_db_connection(settings_path: str = DEFAULT_SETTINGS_PATH) -> sqlite3
 
 
 @contextmanager
-def get_db_connection_ctx(settings_path: str = DEFAULT_SETTINGS_PATH) -> Generator[sqlite3.Connection, None, None]:
+def get_db_connection_ctx(settings_path: str = DefaultPath.SETTINGS) -> Generator[sqlite3.Connection, None, None]:
     """
     Context manager for database connections that automatically handles closing.
     """
@@ -206,7 +291,7 @@ def get_db_connection_ctx(settings_path: str = DEFAULT_SETTINGS_PATH) -> Generat
 
 
 @contextmanager
-def get_log_db_connection_ctx(settings_path: str = DEFAULT_SETTINGS_PATH) -> Generator[sqlite3.Connection, None, None]:
+def get_log_db_connection_ctx(settings_path: str = DefaultPath.SETTINGS) -> Generator[sqlite3.Connection, None, None]:
     """
     Context manager for log database connections that automatically handles closing.
     """

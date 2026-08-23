@@ -6,9 +6,8 @@ from src.core.post_processor import apply_source_rules
 from src.core.storage_manager import StoragePathManager, storage_manager
 from src.core.config_loader import get_validation_thresholds
 from src.core.constants import (
-    DEFAULT_SETTINGS_PATH,
-    DEFAULT_COMPANY_CODE,
-    DEFAULT_DOC_TYPE,
+    DefaultPath,
+    DefaultIdentifier,
 )
 
 
@@ -18,10 +17,10 @@ class PipelineContext:
     Unified Data Transfer Object passed across all Pipeline Stages.
     Contains company scope, target doc_type, active batch tracking, and direct access to StoragePathManager.
     """
-    company_code: str = DEFAULT_COMPANY_CODE
-    doc_type: str = DEFAULT_DOC_TYPE
+    company_code: str = DefaultIdentifier.COMPANY_CODE
+    doc_type: str = DefaultIdentifier.DOC_TYPE
     batch_id: Optional[str] = None
-    settings_path: str = DEFAULT_SETTINGS_PATH
+    settings_path: str = DefaultPath.SETTINGS
     storage: StoragePathManager = field(default_factory=lambda: storage_manager)
     metadata: Dict[str, Any] = field(default_factory=dict)
     stats: Dict[str, int] = field(default_factory=lambda: {
@@ -112,15 +111,17 @@ def merge_chunk_payloads(payloads: list[dict]) -> dict:
 
 def validate_and_process_payload(
     payload: dict,
-    domain: str,
-    source: str,
-    settings_path: str = DEFAULT_SETTINGS_PATH
+    doc_type: str = None,
+    source: str = None,
+    domain: str = None,
+    settings_path: str = DefaultPath.SETTINGS
 ) -> tuple[dict, str, list[str]]:
     """
     Applies source validation rules, financial math checks, and sets review priority
     using strictly configured thresholds from settings.json.
     """
     validation_notes = []
+    target_dt = doc_type or domain or "expense_receipt"
     thresholds = get_validation_thresholds(settings_path)
     financial_tolerance = float(thresholds["financial_tolerance"])
     confidence_high = float(thresholds["confidence_high"])
@@ -128,7 +129,7 @@ def validate_and_process_payload(
     confidence_review = float(thresholds["confidence_review"])
 
     # 1. Apply Merchant Rules (Tax ID, Date BE->AD, Default Categories/Units)
-    processed_payload, req_review, review_reason = apply_source_rules(payload, domain, source)
+    processed_payload, req_review, review_reason = apply_source_rules(payload, doc_type=target_dt, source=source)
     if req_review and review_reason:
         validation_notes.append(review_reason)
 

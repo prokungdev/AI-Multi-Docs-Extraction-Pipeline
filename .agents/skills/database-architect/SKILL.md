@@ -102,3 +102,35 @@ class BaseDatabaseTestCase(unittest.TestCase):
             except Exception:
                 pass
 ```
+
+---
+
+## 🗑️ 6. Dormant / Dead Table Pruning & Anti-Patterns
+
+1. **Prune Superseded Tables**:
+   - When an application architecture evolves such that specific database tables are superseded by configuration schemas, environment variables, or centralized metadata gateways, the obsolete entity models and tables MUST be cleanly pruned.
+   - Do NOT retain dormant models or uncalled database structures that are disconnected from active business workflows.
+2. **Clean Query Helpers & Module Exports**:
+   - When dropping or retiring an entity model, all associated query helper functions, CRUD operations, and module exports in package `__init__.py` MUST be purged to eliminate dead code and invalid import risks.
+
+---
+
+## 🔄 7. Seed Data Synchronization & Code Constants Alignment
+
+1. **Strict Reference Table Parity**:
+   - Master reference tables seeded at system initialization (such as status codes, state machines, category lookups) MUST strictly mirror the application's centralized constants or strongly-typed Enums.
+   - **Zero State Drift Policy**: Every valid state or status code defined in business constants MUST exist in the corresponding database reference seed data.
+2. **Automated Column Migration for Schema Evolution**:
+   - When columns are renamed during model refactoring, the schema initialization routine MUST provide safe, automated schema migrations (e.g., `ALTER TABLE ... RENAME COLUMN`) to preserve existing database integrity and prevent runtime query errors.
+
+---
+
+## 🗄️ 8. Dual-Database Isolation: Operational vs Diagnostic Data
+
+1. **Storage Segregation**:
+   - High-throughput diagnostic logs (e.g., application event logs, system traces) MUST be isolated into a dedicated logging database file or storage cluster separate from the primary operational database (e.g. primary relational cluster / file).
+   - Prevents log volume surges from locking transactional business tables or bloating operational databases.
+2. **Distinct Declarative Metadata Bases**:
+   - Use distinct SQLAlchemy declarative metadata bases (e.g., `Base` for business domain entities, `LogBase` for logging and diagnostic entities) with isolated database engines and session factories.
+3. **Drop & Recreate Lifecycle Policy**:
+   - Schema initialization routines SHOULD provide a controlled `drop_and_recreate: bool = False` flag to allow developers and automated test harnesses to cleanly purge and re-bootstrap fresh operational tables on demand.

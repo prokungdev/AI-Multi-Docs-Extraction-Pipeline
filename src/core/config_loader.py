@@ -1,18 +1,17 @@
 import os
 import json
 from functools import lru_cache
-from loguru import logger
+from src.core.logger import logger
 from src.core.db import get_domains, get_sources
 from src.core.constants import (
-    DEFAULT_SETTINGS_PATH,
-    DEFAULT_STORAGE_ROOT,
-    DEFAULT_COMPANY_CODE,
-    DEFAULT_DOC_TYPE,
+    DefaultPath,
+    DefaultIdentifier,
+    AppMetadata,
 )
 
 
 @lru_cache(maxsize=4)
-def load_system_settings(settings_path: str = DEFAULT_SETTINGS_PATH) -> dict:
+def load_system_settings(settings_path: str = DefaultPath.SETTINGS) -> dict:
     """
     Loads central settings.json with caching.
     """
@@ -31,7 +30,19 @@ def load_system_settings(settings_path: str = DEFAULT_SETTINGS_PATH) -> dict:
 load_settings = load_system_settings
 
 
-def get_validation_thresholds(settings_path: str = DEFAULT_SETTINGS_PATH) -> dict:
+def get_app_metadata(settings_path: str = DefaultPath.SETTINGS) -> dict:
+    """
+    Returns application metadata (name, version, description) with static fallbacks.
+    """
+    settings = load_system_settings(settings_path)
+    return {
+        "app_name": settings.get("app_name", AppMetadata.NAME),
+        "app_version": settings.get("app_version", AppMetadata.VERSION),
+        "app_description": settings.get("app_description", AppMetadata.DESCRIPTION),
+    }
+
+
+def get_validation_thresholds(settings_path: str = DefaultPath.SETTINGS) -> dict:
     """
     Returns strict validation thresholds dictionary from settings.json.
     Raises KeyError immediately if required section is missing.
@@ -42,33 +53,49 @@ def get_validation_thresholds(settings_path: str = DEFAULT_SETTINGS_PATH) -> dic
     return settings["validation_thresholds"]
 
 
-def get_default_domain() -> str:
+def resolve_doc_type(doc_type: str = None) -> str:
     """
-    Returns the primary active doc_type/domain ID from configs/settings.json.
+    Resolves target doc_type with fallback to configured default.
     """
-    active = get_active_domains_hybrid()
-    if active:
-        return active[0].get("domain_id") or active[0].get("doc_type_id", DEFAULT_DOC_TYPE)
-    return DEFAULT_DOC_TYPE
+    if doc_type and str(doc_type).strip():
+        return str(doc_type).strip()
+    return get_default_doc_type()
+
+
+def resolve_company_code(company_code: str = None) -> str:
+    """
+    Resolves target company code with fallback to configured default.
+    """
+    if company_code and str(company_code).strip():
+        return str(company_code).strip()
+    return get_default_company_code()
 
 
 def get_default_doc_type() -> str:
     """
-    Alias for get_default_domain().
+    Returns the primary active doc_type ID from configs/settings.json or database.
     """
-    return get_default_domain()
+    active = get_active_doc_types()
+    if active:
+        return active[0].get("doc_type_id") or active[0].get("domain_id", DefaultIdentifier.DOC_TYPE)
+    return DefaultIdentifier.DOC_TYPE
 
 
-def get_active_domains_hybrid() -> list[dict]:
+def get_default_domain() -> str:
+    """Deprecated alias for get_default_doc_type()."""
+    return get_default_doc_type()
+
+
+def get_active_doc_types() -> list[dict]:
     """
-    Returns only doc_types/domains that are active from Database or settings.json.
+    Returns only doc_types that are active from Database or settings.json.
     """
     try:
         domains = get_domains()
         if domains:
             return [d for d in domains if d.get("is_active") == 1]
     except Exception as e:
-        logger.error(f"Error loading active domains from DB: {e}")
+        logger.error(f"Error loading active doc_types from DB: {e}")
 
     # Fallback to settings.json
     settings = load_system_settings()
@@ -79,8 +106,8 @@ def get_active_domains_hybrid() -> list[dict]:
             dt_id = dt.get("doc_type_id") or dt.get("domain_id")
             if dt_id:
                 result.append({
-                    "domain_id": dt_id,
                     "doc_type_id": dt_id,
+                    "domain_id": dt_id,
                     "display_name": dt.get("display_name", dt_id),
                     "is_active": 1,
                     "sort_order": dt.get("sort_order", 1)
@@ -88,62 +115,58 @@ def get_active_domains_hybrid() -> list[dict]:
     return result
 
 
-def get_active_doc_types() -> list[dict]:
-    """
-    Alias for get_active_domains_hybrid().
-    """
-    return get_active_domains_hybrid()
-
-
-def is_domain_active(domain_id: str) -> bool:
-    """
-    Checks if a domain/doc_type is active.
-    """
-    active_domains = get_active_domains_hybrid()
-    return any(
-        (d.get("domain_id") == domain_id or d.get("doc_type_id") == domain_id)
-        for d in active_domains
-    )
+def get_active_domains_hybrid() -> list[dict]:
+    """Deprecated alias for get_active_doc_types()."""
+    return get_active_doc_types()
 
 
 def is_doc_type_active(doc_type_id: str) -> bool:
     """
-    Alias for is_domain_active().
+    Checks if a doc_type is active.
     """
-    return is_domain_active(doc_type_id)
+    active_types = get_active_doc_types()
+    return any(
+        (d.get("doc_type_id") == doc_type_id or d.get("domain_id") == doc_type_id)
+        for d in active_types
+    )
 
 
-def get_active_sources_hybrid(domain_id: str) -> list[str]:
+def is_domain_active(domain_id: str) -> bool:
+    """Deprecated alias for is_doc_type_active()."""
+    return is_doc_type_active(domain_id)
+
+
+def get_active_sources_hybrid(doc_type_id: str) -> list[str]:
     """
-    Returns a list of active sources for a doc_type/domain.
+    Returns a list of active sources for a doc_type.
     Defaults to ['_default'] when standardized doc_types configs are used.
     """
     try:
-        db_sources = get_sources(domain_id)
+        db_sources = get_sources(doc_type_id)
         active_sources = [s["source_id"] for s in db_sources if s["is_active"] == 1]
         if active_sources:
             return active_sources
     except Exception as e:
-        logger.error(f"Error loading active sources for '{domain_id}': {e}")
+        logger.error(f"Error loading active sources for '{doc_type_id}': {e}")
     return ["_default"]
 
 
-def is_source_active(domain_id: str, source_id: str) -> bool:
+def is_source_active(doc_type_id: str, source_id: str) -> bool:
     """
     Checks if a source is active.
     """
     if source_id in ["_default", "default", "standard"]:
         return True
-    active_sources = get_active_sources_hybrid(domain_id)
+    active_sources = get_active_sources_hybrid(doc_type_id)
     return source_id in active_sources
 
 
 def get_default_company_code() -> str:
     """
-    Returns the default company code from settings.json or defaults to 'C00000_SAMPLE'.
+    Returns the default company code from settings.json or defaults to DefaultIdentifier.COMPANY_CODE.
     """
     settings = load_system_settings()
-    return settings.get("default_company_code", "C00000_SAMPLE")
+    return settings.get("default_company_code", DefaultIdentifier.COMPANY_CODE)
 
 
 def get_company_storage_dir(company_code: str = None, storage_root: str = None) -> str:
@@ -152,7 +175,7 @@ def get_company_storage_dir(company_code: str = None, storage_root: str = None) 
     """
     if storage_root is None:
         settings = load_system_settings()
-        storage_root = settings.get("storage_root", DEFAULT_STORAGE_ROOT)
+        storage_root = settings.get("storage_root", DefaultPath.STORAGE_ROOT)
     code = company_code or get_default_company_code()
     return os.path.join(storage_root, "companies", code)
 
@@ -173,20 +196,13 @@ def get_doc_type_config_dir(doc_type_id: str, company_code: str = None, configs_
     Performs layered lookup:
       1. Checks configs/companies/{company_code}/doc_types/{doc_type_id} if company_code is provided.
       2. Falls back to configs/doc_types/{doc_type_id} (system standard).
-      3. Falls back to configs/domains/{doc_type_id} (legacy standard).
     """
     if company_code:
         company_specific = os.path.join(configs_dir, "companies", company_code, "doc_types", doc_type_id)
         if os.path.exists(company_specific):
             return company_specific
 
-    primary = os.path.join(configs_dir, "doc_types", doc_type_id)
-    if os.path.exists(primary):
-        return primary
-    fallback = os.path.join(configs_dir, "domains", doc_type_id)
-    if os.path.exists(fallback):
-        return fallback
-    return primary
+    return os.path.join(configs_dir, "doc_types", doc_type_id)
 
 
 def load_doc_type_schema(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> dict:

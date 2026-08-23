@@ -37,10 +37,10 @@ def main():
         help="Target client company code (e.g. 'C00000_SAMPLE', 'C00001_TRD'). Defaults to configured default company."
     )
     parser.add_argument(
-        "--domain", "-d",
+        "--doc-type", "--domain", "-d",
         type=str,
         default=None,
-        help="Target document domain (default: configured default active domain, e.g., 'expense_receipt')"
+        help="Target document type (default: configured default active doc_type, e.g., 'expense_receipt')"
     )
     parser.add_argument(
         "--file", "-f",
@@ -57,7 +57,7 @@ def main():
     args = parser.parse_args()
     step = args.step
     company_code = args.company_code or get_default_company_code()
-    domain = args.domain
+    doc_type = args.doc_type
     input_file = args.file
     use_async = args.async_mode
     
@@ -69,19 +69,19 @@ def main():
         success = init_system()
         sys.exit(0 if success else 1)
     elif step == "split":
-        res = split_and_match(domain=domain, input_file=input_file, company_code=company_code)
+        res = split_and_match(doc_type=doc_type, input_file=input_file, company_code=company_code)
         sys.exit(0)
     elif step == "extract":
         if use_async:
-            res = asyncio.run(async_extract_documents(domain=domain, company_code=company_code))
+            res = asyncio.run(async_extract_documents(doc_type=doc_type, company_code=company_code))
         else:
-            res = extract_documents(domain=domain, company_code=company_code)
+            res = extract_documents(doc_type=doc_type, company_code=company_code)
         sys.exit(0 if res.get("success", True) else 1)
     elif step == "validate":
-        res = validate_documents(domain=domain, company_code=company_code)
+        res = validate_documents(doc_type=doc_type, company_code=company_code)
         sys.exit(0)
     elif step == "transform":
-        res = transform_to_db(domain=domain, company_code=company_code)
+        res = transform_to_db(doc_type=doc_type, company_code=company_code)
         sys.exit(0)
     else:
         parser.print_help()

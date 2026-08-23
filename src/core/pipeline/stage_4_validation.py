@@ -1,10 +1,10 @@
 import os
 import json
-from loguru import logger
+from src.core.logger import logger
 
 from src.core.config_loader import (
     load_system_settings,
-    get_default_domain,
+    get_default_doc_type,
     get_default_company_code,
     get_company_pipeline_folder,
 )
@@ -13,7 +13,11 @@ from src.core.models import DocumentStatus
 from src.core.pipeline.pipeline_helpers import validate_and_process_payload
 
 
-def validate_documents(domain: str = None, company_code: str = None) -> dict:
+def validate_documents(
+    doc_type: str = None,
+    domain: str = None,
+    company_code: str = None
+) -> dict:
     """
     Stage 4: Validation & Post-Processing.
     Applies merchant rules, Tax ID verification, date conversions (BE->AD), math checks, and sets priority.
@@ -25,11 +29,10 @@ def validate_documents(domain: str = None, company_code: str = None) -> dict:
     comp_info = get_company_by_code(comp_code)
     company_id = comp_info["company_id"] if comp_info else None
 
-    if domain is None:
-        domain = get_default_domain()
+    target_doc_type = doc_type or domain or get_default_doc_type()
 
     from src.core.storage_manager import storage_manager
-    queue_dir = storage_manager.get_processing_dir(comp_code, domain)
+    queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)
 
     try:
         pages = get_pages_by_status([DocumentStatus.EXTRACTED.value], company_id=company_id)
@@ -50,8 +53,8 @@ def validate_documents(domain: str = None, company_code: str = None) -> dict:
             storage_path = p["storage_path"]
 
             folder_name = os.path.basename(storage_path)
-            from src.core.constants import NO_TAX_LABEL
-            source = NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
+            from src.core.constants import DefaultIdentifier
+            source = DefaultIdentifier.NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
 
             image_basename = os.path.splitext(os.path.basename(image_path))[0]
             json_filename = f"{image_basename}.json"
@@ -71,7 +74,7 @@ def validate_documents(domain: str = None, company_code: str = None) -> dict:
                 logger.error(f"Failed to read JSON at {json_path}: {read_err}")
                 continue
 
-            processed_payload, new_status, notes = validate_and_process_payload(raw_payload, domain, source)
+            processed_payload, new_status, notes = validate_and_process_payload(raw_payload, target_doc_type, source)
 
             try:
                 with open(json_path, "w", encoding="utf-8") as wf:

@@ -2,11 +2,11 @@ import os
 import json
 import asyncio
 from dotenv import load_dotenv
-from loguru import logger
+from src.core.logger import logger
 
 from src.core.config_loader import (
     load_system_settings,
-    get_default_domain,
+    get_default_doc_type,
     get_default_company_code,
     get_company_pipeline_folder,
     get_ai_provider_config,
@@ -23,7 +23,12 @@ from src.core.pipeline.pipeline_helpers import merge_chunk_payloads
 from src.core.utils import chunk_list
 
 
-def extract_documents(domain: str = None, source: str = None, company_code: str = None) -> dict:
+def extract_documents(
+    doc_type: str = None,
+    domain: str = None,
+    source: str = None,
+    company_code: str = None
+) -> dict:
     """
     Stage 3: AI Document Extraction.
     Extracts structured JSON data from preprocessed images and saves to 04_processing.
@@ -38,11 +43,10 @@ def extract_documents(domain: str = None, source: str = None, company_code: str 
 
     ai_cfg = get_ai_provider_config(settings)
     max_images = ai_cfg.get("max_images_per_request", 50)
-    if domain is None:
-        domain = get_default_domain()
+    target_doc_type = doc_type or domain or get_default_doc_type()
 
     from src.core.storage_manager import storage_manager
-    queue_dir = storage_manager.get_processing_dir(comp_code, domain)
+    queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)
 
     try:
         batches = get_unextracted_batches(
@@ -66,8 +70,8 @@ def extract_documents(domain: str = None, source: str = None, company_code: str 
 
             # Resolve source
             folder_name = os.path.basename(storage_path)
-            from src.core.constants import NO_TAX_LABEL
-            batch_source = NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
+            from src.core.constants import DefaultIdentifier
+            batch_source = DefaultIdentifier.NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
             if source and source != batch_source:
                 continue
 
@@ -92,7 +96,7 @@ def extract_documents(domain: str = None, source: str = None, company_code: str 
                     payload = extract_document_data(
                         image_paths=chunk,
                         source=batch_source,
-                        domain=domain,
+                        doc_type=target_doc_type,
                         batch_id=batch_id,
                         chunk_index=chunk_idx,
                     )
@@ -130,7 +134,12 @@ def extract_documents(domain: str = None, source: str = None, company_code: str 
         return {"success": False, "error": str(e)}
 
 
-async def async_extract_documents(domain: str = None, source: str = None, company_code: str = None) -> dict:
+async def async_extract_documents(
+    doc_type: str = None,
+    domain: str = None,
+    source: str = None,
+    company_code: str = None
+) -> dict:
     """
     Stage 3 (Async): Concurrent AI Document Extraction.
     Uses asyncio.gather and Semaphore to extract structured JSON data concurrently.
@@ -147,11 +156,10 @@ async def async_extract_documents(domain: str = None, source: str = None, compan
     max_images = ai_cfg.get("max_images_per_request", 50)
     max_concurrent = ai_cfg.get("max_concurrent_requests", 5)
 
-    if domain is None:
-        domain = get_default_domain()
+    target_doc_type = doc_type or domain or get_default_doc_type()
 
-    queue_dir = get_company_pipeline_folder(comp_code, "04_processing").replace("\\", "/")
-    os.makedirs(queue_dir, exist_ok=True)
+    from src.core.storage_manager import storage_manager
+    queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)
 
     try:
         batches = get_unextracted_batches([DocumentStatus.PREPROCESSED.value, DocumentStatus.PENDING.value])
@@ -170,8 +178,8 @@ async def async_extract_documents(domain: str = None, source: str = None, compan
             storage_path = b["storage_path"]
 
             folder_name = os.path.basename(storage_path)
-            from src.core.constants import NO_TAX_LABEL
-            batch_source = NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
+            from src.core.constants import DefaultIdentifier
+            batch_source = DefaultIdentifier.NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
             if source and source != batch_source:
                 return False
 
@@ -191,7 +199,7 @@ async def async_extract_documents(domain: str = None, source: str = None, compan
                     payload = await async_extract_document_data(
                         image_paths=chunk,
                         source=batch_source,
-                        domain=domain,
+                        doc_type=target_doc_type,
                         batch_id=batch_id,
                         chunk_index=chunk_idx,
                         semaphore=semaphore,

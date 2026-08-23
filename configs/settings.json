@@ -1,4 +1,7 @@
 {
+  "app_name": "AI Multi-Docs Extraction Pipeline",
+  "app_version": "1.0.0",
+  "app_description": "RESTful API Backend & Pipeline Engine for Document Extraction",
   "storage_root": "storage",
   "default_company_code": "C00000_SAMPLE",
   "pipeline_folders": [
@@ -18,20 +21,6 @@
     },
     {
       "doc_type_id": "tax_invoice",
-      "display_name": "ใบกำกับภาษีเต็มรูป (Tax Invoice)",
-      "is_active": true,
-      "sort_order": 2
-    }
-  ],
-  "domains": [
-    {
-      "domain_id": "expense_receipt",
-      "display_name": "ใบเสร็จรับเงินค่าใช้จ่าย (Expense Receipt)",
-      "is_active": true,
-      "sort_order": 1
-    },
-    {
-      "domain_id": "tax_invoice",
       "display_name": "ใบกำกับภาษีเต็มรูป (Tax Invoice)",
       "is_active": true,
       "sort_order": 2

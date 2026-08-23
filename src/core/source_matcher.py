@@ -1,22 +1,22 @@
 import os
 import json
 import re
-import pymupdf as fitz
 from PIL import Image
-from google import genai
-from google.genai import types
-from loguru import logger
-from src.core.constants import NO_TAX_LABEL
+from src.core.logger import logger
+from src.core.constants import DefaultIdentifier
+from src.core.ai_service import ai_service
+from src.core.pdf_service import PDFService
 
 
-def load_merchant_rules(domain: str, configs_dir: str = "configs") -> dict:
+def load_merchant_rules(doc_type: str = None, configs_dir: str = "configs") -> dict:
     """
-    Loads rules.json for each merchant source under configs/domains/{domain}/sources/.
+    Loads rules.json for each merchant source under configs/doc_types/{doc_type}/sources/.
     
     Returns:
         A dictionary mapping source names to their rules (keywords and tax_ids).
     """
-    sources_dir = os.path.join(configs_dir, "domains", domain, "sources")
+    target_dt = doc_type or "expense_receipt"
+    sources_dir = os.path.join(configs_dir, "doc_types", target_dt, "sources")
     if not os.path.exists(sources_dir):
         return {}
         
@@ -84,29 +84,16 @@ def match_source_by_text(text: str, merchant_rules: dict) -> str | None:
 
 def match_source_by_vision(image_path: str, merchant_rules: dict, settings: dict = None) -> str:
     """
-    Fallback classifier using Gemini Vision. Sends the receipt image
-    along with candidate rules to identify the source merchant.
+    Fallback classifier using Vision AI via unified AIService.
+    Sends the receipt image along with candidate rules to identify the source merchant.
     
     Returns:
-        The identified source name, or '_default' if undetermined.
+        The identified source name, or DefaultIdentifier.NO_TAX_LABEL if undetermined.
     """
-    if settings is None:
-        from src.core.config_loader import load_system_settings
-        settings = load_system_settings()
+    if not os.path.exists(image_path):
+        logger.warning(f"Image path does not exist for vision source matching: {image_path}")
+        return DefaultIdentifier.NO_TAX_LABEL
         
-    ai_cfg = settings.get("ai_provider", {})
-    provider = ai_cfg.get("active_provider", "gemini")
-    provider_cfg = ai_cfg.get(provider, {})
-    model_name = provider_cfg.get("model_name", "gemini-3.5-flash")
-    api_key_env = provider_cfg.get("api_key_env", "GEMINI_API_KEY")
-    api_key = os.getenv(api_key_env)
-    
-    if not api_key:
-        logger.warning(f"API key environment variable '{api_key_env}' is not set. Cannot perform vision source matching.")
-        return NO_TAX_LABEL
-        
-    client = genai.Client(api_key=api_key)
-    
     # Format candidate merchants and rules for the model prompt
     rules_summary = ""
     for source_name, rules in merchant_rules.items():
@@ -121,49 +108,48 @@ def match_source_by_vision(image_path: str, merchant_rules: dict, settings: dict
     Instructions:
     - Compare the merchant name, logo, tax ID, or items in the image against the rules above.
     - If a match is found, reply with ONLY the matching merchant identifier string.
-    - If the receipt does not match any candidate rules, reply with '_default'.
+    - If the receipt does not match any candidate rules, reply with '{DefaultIdentifier.NO_TAX_LABEL}'.
     - Do not output any explanation or extra text. Output exactly one word.
     """
     
     try:
         image = Image.open(image_path)
-        response = client.models.generate_content(
-            model=model_name,
-            contents=[image, prompt]
+        raw_result = ai_service.generate_raw_content(
+            prompt=prompt,
+            images=[image],
+            temperature=0.0
         )
-        matched_source = response.text.strip().lower()
+        matched_source = raw_result.strip().lower()
         
         # Verify the returned source is one of our candidate sources
         if matched_source in merchant_rules:
             return matched_source
             
     except Exception as e:
-        logger.error(f"Error during Gemini Vision source matching: {e}")
+        logger.error(f"Error during AI Vision source matching: {e}")
         
-    return NO_TAX_LABEL
+    return DefaultIdentifier.NO_TAX_LABEL
 
-def match_source(file_path: str, domain: str, first_page_image_path: str | None = None, settings: dict = None) -> str:
+
+def match_source(
+    file_path: str,
+    doc_type: str = None,
+    domain: str = None,
+    first_page_image_path: str | None = None,
+    settings: dict = None
+) -> str:
     """
     Matches the source of the document (PDF or Image) by first extracting digital text,
-    and then falling back to Gemini Vision classification if text extraction fails.
-    
-    Args:
-        file_path: Path to the input file (can be PDF or PNG/JPG image).
-        domain: The domain category (e.g. 'expense_receipt').
-        first_page_image_path: Optional path to the pre-rendered first page image of a PDF
-                               (used for vision fallback).
-        settings: Optional system settings dictionary.
-                               
-    Returns:
-        The matched merchant source identifier, or 'no_tax'.
+    and then falling back to AI Vision classification if text extraction fails.
     """
     if settings is None:
         from src.core.config_loader import load_system_settings
         settings = load_system_settings()
         
-    merchant_rules = load_merchant_rules(domain)
+    target_dt = doc_type or domain or "expense_receipt"
+    merchant_rules = load_merchant_rules(doc_type=target_dt)
     if not merchant_rules:
-        return NO_TAX_LABEL
+        return DefaultIdentifier.NO_TAX_LABEL
         
     filename = os.path.basename(file_path)
     
@@ -178,11 +164,7 @@ def match_source(file_path: str, domain: str, first_page_image_path: str | None 
     # 2. Try to extract digital text if it's a PDF
     if file_path.lower().endswith(".pdf"):
         try:
-            doc = fitz.open(file_path)
-            # Combine text from all pages (or just the first page to be fast)
-            for page in doc:
-                extracted_text += page.get_text()
-            doc.close()
+            extracted_text = PDFService.extract_text(file_path)
         except Exception as e:
             logger.warning(f"Failed to extract digital text from PDF: {e}")
             
@@ -202,4 +184,4 @@ def match_source(file_path: str, domain: str, first_page_image_path: str | None 
         elif first_page_image_path and os.path.exists(first_page_image_path):
             return match_source_by_vision(first_page_image_path, merchant_rules, settings=settings)
             
-    return NO_TAX_LABEL
+    return DefaultIdentifier.NO_TAX_LABEL

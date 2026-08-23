@@ -2,15 +2,11 @@ import os
 import json
 import re
 import shutil
-import logging
 import pandas as pd
 from datetime import datetime
+from src.core.logger import logger
 
-try:
-    from loguru import logger
-except ImportError:
-    logger = logging.getLogger("post_processor")
-
+from sqlalchemy import select
 from src.core.db import (
     get_db_session,
     get_document_pages,
@@ -22,6 +18,7 @@ from src.core.db import (
 )
 from src.core.transformer import transform_data
 from src.core.config_loader import load_source_rules
+from src.core.constants import DocumentStatusCode
 
 def normalize_date_to_ad(date_str: str, source_era: str = "BE") -> str:
     """
@@ -54,7 +51,7 @@ def normalize_date_to_ad(date_str: str, source_era: str = "BE") -> str:
         
     return clean_date
 
-def apply_source_rules(payload: dict, domain: str, source: str) -> tuple[dict, bool, str | None]:
+def apply_source_rules(payload: dict, doc_type: str = None, source: str = None, domain: str = None) -> tuple[dict, bool, str | None]:
     """
     Applies source-specific post-processing rules onto extracted JSON payload.
     
@@ -64,7 +61,8 @@ def apply_source_rules(payload: dict, domain: str, source: str) -> tuple[dict, b
     if not isinstance(payload, dict):
         return payload, False, None
 
-    rules = load_source_rules(domain, source)
+    target_dt = doc_type or domain or "expense_receipt"
+    rules = load_source_rules(target_dt, source)
     post_rules = rules.get("post_processing_rules", {})
     allowed_tax_ids = [t.replace(" ", "").replace("-", "") for t in rules.get("tax_ids", []) if t]
     
@@ -76,7 +74,8 @@ def apply_source_rules(payload: dict, domain: str, source: str) -> tuple[dict, b
     extracted_tax_id = merchant_obj.get("tax_id") or payload.get("tax_id", "")
     clean_extracted_tax_id = extracted_tax_id.replace(" ", "").replace("-", "").strip() if extracted_tax_id else ""
 
-    if source != "_default" and allowed_tax_ids:
+    from src.core.constants import DefaultIdentifier
+    if source not in ("_default", DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID) and allowed_tax_ids:
         if not clean_extracted_tax_id:
             requires_review = True
             review_reasons.append(f"ไม่พบเลขประจำตัวผู้เสียภาษีผู้ขายในเอกสาร (ต้องการ Tax ID ของ '{source}')")
@@ -137,30 +136,41 @@ def apply_source_rules(payload: dict, domain: str, source: str) -> tuple[dict, b
     review_reason_str = " | ".join(review_reasons) if review_reasons else None
     return payload, requires_review, review_reason_str
 
-def archive_and_export_document(document_id: str, payload: dict, original_pdf_name: str,
-                                domain_id: str, source_id: str, settings: dict, conn=None, **kwargs) -> bool:
+
+def archive_and_export_document(
+    document_id: str,
+    payload: dict,
+    original_pdf_name: str,
+    doc_type_id: str = None,
+    domain_id: str = None,
+    source_id: str = None,
+    settings: dict = None,
+    **kwargs
+) -> bool:
     """
     Performs file archiving and report exporting for an approved document.
     Copies raw file and split pages to 05_archive, and updates flattened outputs in 06_output.
     """
     from src.core.storage_manager import storage_manager
+    target_dt = doc_type_id or domain_id or "expense_receipt"
     comp_code = kwargs.get("company_code") or "C00000_SAMPLE"
     
     # 1. Archiving Files
     current_month = datetime.now().strftime("%Y-%m")
-    month_archive_raw = storage_manager.get_archive_dir(comp_code, domain_id, year_month=current_month, sub="raw")
-    month_archive_json = storage_manager.get_archive_dir(comp_code, domain_id, year_month=current_month, sub="verified_json")
+    month_archive_raw = storage_manager.get_archive_dir(comp_code, target_dt, year_month=current_month, sub="raw")
+    month_archive_json = storage_manager.get_archive_dir(comp_code, target_dt, year_month=current_month, sub="verified_json")
     
     # Find and copy original file from raw_data or drop_zone
     raw_dirs = [
-        storage_manager.get_raw_data_dir(comp_code, domain_id),
-        storage_manager.get_drop_zone_dir(comp_code, domain_id),
+        storage_manager.get_raw_data_dir(comp_code, target_dt),
+        storage_manager.get_drop_zone_dir(comp_code, target_dt),
     ]
     for r_dir in raw_dirs:
         if os.path.exists(r_dir):
             for root_dir, _, files in os.walk(r_dir):
                 for f in files:
-                    if os.path.splitext(f)[0] == original_pdf_name.split(".")[0]:
+                    safe_stem = os.path.basename(original_pdf_name).split(".")[0]
+                    if os.path.splitext(f)[0] == safe_stem:
                         src_f = os.path.join(root_dir, f).replace("\\", "/")
                         dst_f = os.path.join(month_archive_raw, f).replace("\\", "/")
                         shutil.copy(src_f, dst_f)
@@ -178,14 +188,15 @@ def archive_and_export_document(document_id: str, payload: dict, original_pdf_na
     with open(archive_json_path, "w", encoding="utf-8") as jf:
         json.dump(payload, jf, ensure_ascii=False, indent=2)
         
-    # 2. Append to Registered Domain Exporters (Output to 06_output)
+    # 2. Append to Registered DocType Exporters (Output to 06_output)
     try:
-        from src.core.exporters import get_domain_exporters
-        exporters_list = get_domain_exporters(domain_id)
+        from src.core.exporters import get_doc_type_exporters
+        exporters_list = get_doc_type_exporters(target_dt)
         
         doc_data = {
             "payload": payload,
-            "domain_id": domain_id,
+            "domain_id": target_dt,
+            "doc_type_id": target_dt,
             "document_id": document_id,
             "original_pdf_name": original_pdf_name
         }
@@ -200,8 +211,8 @@ def archive_and_export_document(document_id: str, payload: dict, original_pdf_na
                 if df_new.empty:
                     continue
                     
-                output_dir = storage_manager.get_output_dir(comp_code, domain_id)
-                output_file_base = os.path.join(output_dir, f"{domain_id}_{exporter_id}_export").replace("\\", "/")
+                output_dir = storage_manager.get_output_dir(comp_code, target_dt)
+                output_file_base = os.path.join(output_dir, f"{target_dt}_{exporter_id}_export").replace("\\", "/")
                 handler.export([doc_data], output_file_base, **kwargs)
             except Exception as te:
                 logger.error(f"Failed to auto-export for exporter {exporter_id}: {te}")
@@ -210,8 +221,15 @@ def archive_and_export_document(document_id: str, payload: dict, original_pdf_na
         
     return True
 
-def post_process_document(document_id: str, payload: dict, source_id: str, domain_id: str,
-                          settings: dict, conn=None) -> dict:
+def post_process_document(
+    document_id: str,
+    payload: dict,
+    source_id: str = None,
+    doc_type_id: str = None,
+    domain_id: str = None,
+    settings: dict = None,
+    conn=None
+) -> dict:
     """
     Performs math validations, assigns review priority, evaluates auto-approval rules,
     and archives/exports the document if auto-approved.
@@ -220,6 +238,7 @@ def post_process_document(document_id: str, payload: dict, source_id: str, domai
     Returns:
         A dict containing resulting metadata and status_code.
     """
+    target_dt = doc_type_id or domain_id or "expense_receipt"
     # 1. Parse extraction_metadata returned by Gemini
     ext_meta = payload.get("extraction_metadata", {})
     overall_confidence = float(ext_meta.get("overall_confidence", 0.70))
@@ -274,7 +293,7 @@ def post_process_document(document_id: str, payload: dict, source_id: str, domai
         review_priority = "LOW"
         
     # 5. Auto-Approval Rules Evaluation
-    rules = load_source_rules(domain_id, source_id)
+    rules = load_source_rules(target_dt, source_id)
     auto_approve_enabled = rules.get("auto_approve_enabled", False)
     auto_approve_min_confidence = float(rules.get("auto_approve_min_confidence", 0.90))
     always_review = rules.get("always_review", not auto_approve_enabled)
@@ -288,21 +307,24 @@ def post_process_document(document_id: str, payload: dict, source_id: str, domai
         and is_complete
     )
     
-    status_code = "PROCESSED"
+    status_code = DocumentStatusCode.PROCESSED
     auto_approved = 0
     
     # Fetch original filename for archiving
     original_pdf_name = "document.pdf"
     try:
         with get_db_session() as session:
-            doc_batch = session.query(ProcessedBatch.original_pdf_name).join(
-                Document, Document.batch_id == ProcessedBatch.batch_id
-            ).filter(Document.document_id == document_id).first()
-            if doc_batch:
-                original_pdf_name = doc_batch[0]
+            stmt = (
+                select(ProcessedBatch.original_pdf_name)
+                .join(Document, Document.batch_id == ProcessedBatch.batch_id)
+                .where(Document.document_id == document_id)
+            )
+            result = session.scalars(stmt).first()
+            if result:
+                original_pdf_name = result
             
         if eligible_for_auto_approve:
-            status_code = "APPROVED"
+            status_code = DocumentStatusCode.APPROVED
             auto_approved = 1
             logger.info(f"Document '{document_id}' qualified for Auto-Approval. Starting archiving and exporting...")
             
@@ -323,10 +345,9 @@ def post_process_document(document_id: str, payload: dict, source_id: str, domai
                 document_id=document_id,
                 payload=payload,
                 original_pdf_name=original_pdf_name,
-                domain_id=domain_id,
+                doc_type_id=target_dt,
                 source_id=source_id,
-                settings=settings,
-                conn=conn
+                settings=settings
             )
         else:
             logger.info(f"Document '{document_id}' requires manual review (Priority: {review_priority}).")

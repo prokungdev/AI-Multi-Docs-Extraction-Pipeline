@@ -1,11 +1,11 @@
 import os
 import json
 import uuid
-from loguru import logger
+from src.core.logger import logger
 
 from src.core.config_loader import (
     load_system_settings,
-    get_default_domain,
+    get_default_doc_type,
     get_default_company_code,
     get_company_pipeline_folder,
 )
@@ -21,7 +21,11 @@ from src.core.models import DocumentStatus
 from src.core.post_processor import post_process_document
 
 
-def transform_to_db(domain: str = None, company_code: str = None) -> dict:
+def transform_to_db(
+    doc_type: str = None,
+    domain: str = None,
+    company_code: str = None
+) -> dict:
     """
     Stage 5: Database Transformation.
     Imports verified/review-needed records from 04_processing into relational SQLite tables.
@@ -33,11 +37,10 @@ def transform_to_db(domain: str = None, company_code: str = None) -> dict:
     comp_info = get_company_by_code(comp_code)
     company_id = comp_info["company_id"] if comp_info else None
 
-    if domain is None:
-        domain = get_default_domain()
+    target_doc_type = doc_type or domain or get_default_doc_type()
 
     from src.core.storage_manager import storage_manager
-    queue_dir = storage_manager.get_processing_dir(comp_code, domain)
+    queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)
 
     try:
         pages = get_pages_by_status([
@@ -62,8 +65,8 @@ def transform_to_db(domain: str = None, company_code: str = None) -> dict:
             storage_path = p["storage_path"]
 
             folder_name = os.path.basename(storage_path)
-            from src.core.constants import NO_TAX_LABEL
-            source = NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
+            from src.core.constants import DefaultIdentifier
+            source = DefaultIdentifier.NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
 
             image_basename = os.path.splitext(os.path.basename(image_path))[0]
             json_filename = f"{image_basename}.json"
@@ -93,7 +96,7 @@ def transform_to_db(domain: str = None, company_code: str = None) -> dict:
                 document_id=document_id,
                 payload=extracted_data,
                 source_id=source,
-                domain_id=domain,
+                doc_type_id=target_doc_type,
                 settings=settings,
             )
             status_code = post_result.get("status_code", DocumentStatus.PROCESSED.value)
@@ -122,7 +125,7 @@ def transform_to_db(domain: str = None, company_code: str = None) -> dict:
                 document_id=document_id,
                 company_id=company_id,
                 batch_id=batch_id,
-                domain_id=domain,
+                doc_type_id=target_doc_type,
                 source_id=source,
                 status_code=status_code,
                 doc_number=doc_number,

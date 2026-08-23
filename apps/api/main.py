@@ -9,11 +9,14 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from apps.api.routers import health, companies
+from src.core.config_loader import get_app_metadata
+
+app_meta = get_app_metadata()
 
 app = FastAPI(
-    title="AI Multi-Docs Extraction Pipeline REST API",
-    description="RESTful API Backend for Document Extraction Pipeline, supporting Next.js Web & Mobile clients.",
-    version="1.0.0",
+    title=f"{app_meta['app_name']} REST API",
+    description=app_meta["app_description"],
+    version=app_meta["app_version"],
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -38,7 +41,8 @@ def root_endpoint():
     Root endpoint returning service identity and API documentation link.
     """
     return {
-        "service": "AI Multi-Docs Extraction Pipeline REST API",
+        "service": f"{app_meta['app_name']} REST API",
+        "version": app_meta["app_version"],
         "status": "online",
         "docs_url": "/docs",
         "health_check": "/api/v1/health"

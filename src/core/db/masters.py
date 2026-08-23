@@ -5,21 +5,20 @@ import json
 import uuid
 import re
 from datetime import datetime, timezone
-from loguru import logger
+from src.core.logger import logger
 from sqlalchemy import select, delete, func
 
 from .connection import get_db_session
 from .models import (
     Company,
     DocumentSource,
-    ApiCredential,
     Merchant,
     MerchantStatus,
     Document,
     ExpenseReceipt,
     ExpenseReceiptItem
 )
-from src.core.constants import DEFAULT_COMPANY_CODE, DEFAULT_SETTINGS_PATH
+from src.core.constants import DefaultIdentifier, DefaultPath
 
 
 def get_or_create_default_company() -> dict:
@@ -28,12 +27,12 @@ def get_or_create_default_company() -> dict:
     """
     try:
         with get_db_session() as session:
-            stmt = select(Company).filter_by(company_code=DEFAULT_COMPANY_CODE)
+            stmt = select(Company).filter_by(company_code=DefaultIdentifier.COMPANY_CODE)
             comp = session.scalars(stmt).first()
             if not comp:
                 comp = Company(
                     company_id=str(uuid.uuid4()),
-                    company_code=DEFAULT_COMPANY_CODE,
+                    company_code=DefaultIdentifier.COMPANY_CODE,
                     company_name="บริษัท ตัวอย่างทดสอบ จำกัด (สำนักงานใหญ่)",
                     short_name="SAMPLE",
                     tax_id="0000000000000",
@@ -45,15 +44,9 @@ def get_or_create_default_company() -> dict:
             return comp.to_dict()
     except Exception as e:
         logger.error(f"Failed to get or create default company: {e}")
-        return {
-            "company_id": "c0000000-0000-0000-0000-000000000000",
-            "company_code": DEFAULT_COMPANY_CODE,
-            "company_name": "บริษัท ตัวอย่างทดสอบ จำกัด (สำนักงานใหญ่)",
-            "short_name": "SAMPLE",
-            "tax_id": "0000000000000",
-            "branch_code": "00000",
-            "is_active": 1
-        }
+        raise RuntimeError(
+            f"Cannot initialize default company. Database may be unavailable: {e}"
+        ) from e
 
 
 def create_company(company_code: str, company_name: str, short_name: str = None,
@@ -165,9 +158,9 @@ def update_company(company_id: str, **kwargs) -> bool:
         return False
 
 
-def get_domains(settings_path: str = DEFAULT_SETTINGS_PATH) -> list[dict]:
+def get_doc_types(settings_path: str = DefaultPath.SETTINGS) -> list[dict]:
     """
-    Returns list of doc_types/domains from configs/settings.json.
+    Returns list of doc_types from configs/settings.json.
     """
     if not os.path.exists(settings_path):
         logger.warning(f"Settings configuration file not found at: {settings_path}")
@@ -175,67 +168,77 @@ def get_domains(settings_path: str = DEFAULT_SETTINGS_PATH) -> list[dict]:
     try:
         from src.core.config_loader import load_system_settings
         settings = load_system_settings(settings_path)
-        domains = settings.get("doc_types") or settings.get("domains", [])
-        formatted_domains = []
-        for d in domains:
+        doc_types = settings.get("doc_types") or settings.get("domains", [])
+        formatted_doc_types = []
+        for d in doc_types:
             d_id = d.get("doc_type_id") or d.get("domain_id")
             if d_id:
-                formatted_domains.append({
-                    "domain_id": d_id,
+                formatted_doc_types.append({
                     "doc_type_id": d_id,
+                    "domain_id": d_id,
                     "display_name": d.get("display_name", d_id),
                     "is_active": 1 if d.get("is_active", True) else 0,
                     "sort_order": d.get("sort_order", 0)
                 })
-        formatted_domains.sort(key=lambda x: x["sort_order"])
-        return formatted_domains
+        formatted_doc_types.sort(key=lambda x: x["sort_order"])
+        return formatted_doc_types
     except Exception as e:
-        logger.error(f"Failed to load doc_types/domains from settings.json: {e}")
+        logger.error(f"Failed to load doc_types from settings.json: {e}")
         return []
 
 
-def get_sources(domain_id: str) -> list[dict]:
+def get_domains(settings_path: str = DefaultPath.SETTINGS) -> list[dict]:
+    """Deprecated alias for get_doc_types()."""
+    return get_doc_types(settings_path)
+
+
+def get_sources(doc_type_id: str) -> list[dict]:
     """
-    Returns list of sources for a domain from database using Pure SQLAlchemy 2.0 ORM.
+    Returns list of sources for a doc_type from database using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            stmt = select(DocumentSource).where(DocumentSource.domain_id == domain_id)
+            stmt = select(DocumentSource).where(DocumentSource.doc_type_id == doc_type_id)
             sources = session.scalars(stmt).all()
             return [s.to_dict() for s in sources]
     except Exception as e:
-        logger.error(f"Failed to load sources for domain '{domain_id}': {e}")
+        logger.error(f"Failed to load sources for doc_type '{doc_type_id}': {e}")
         return []
 
 
-def update_domain_active_status(domain_id: str, is_active: int, settings_path: str = DEFAULT_SETTINGS_PATH) -> bool:
+def update_doc_type_active_status(doc_type_id: str, is_active: int, settings_path: str = DefaultPath.SETTINGS) -> bool:
     """
-    Updates the is_active status of a domain in settings.json.
+    Updates the is_active status of a doc_type in settings.json.
     """
     try:
         if not os.path.exists(settings_path):
             return False
         with open(settings_path, "r", encoding="utf-8") as f:
             settings = json.load(f)
-        domains = settings.get("doc_types") or settings.get("domains", [])
-        for d in domains:
-            if d.get("doc_type_id") == domain_id or d.get("domain_id") == domain_id:
+        doc_types = settings.get("doc_types") or settings.get("domains", [])
+        for d in doc_types:
+            if d.get("doc_type_id") == doc_type_id or d.get("domain_id") == doc_type_id:
                 d["is_active"] = bool(is_active)
         with open(settings_path, "w", encoding="utf-8") as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)
         return True
     except Exception as e:
-        logger.error(f"Failed to update domain active status: {e}")
+        logger.error(f"Failed to update doc_type active status: {e}")
         return False
 
 
-def update_source_active_status(source_id: str, domain_id: str, is_active: int) -> bool:
+def update_domain_active_status(domain_id: str, is_active: int, settings_path: str = DefaultPath.SETTINGS) -> bool:
+    """Deprecated alias for update_doc_type_active_status()."""
+    return update_doc_type_active_status(domain_id, is_active, settings_path)
+
+
+def update_source_active_status(source_id: str, doc_type_id: str, is_active: int) -> bool:
     """
     Updates the is_active status of a source using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            stmt = select(DocumentSource).filter_by(source_id=source_id, domain_id=domain_id)
+            stmt = select(DocumentSource).filter_by(source_id=source_id, doc_type_id=doc_type_id)
             src = session.scalars(stmt).first()
             if src:
                 src.is_active = is_active
@@ -246,45 +249,6 @@ def update_source_active_status(source_id: str, domain_id: str, is_active: int) 
         return False
 
 
-def get_active_credentials() -> list[dict]:
-    """
-    Retrieves all active API credentials ordered by error_count asc, last_active_at asc.
-    """
-    try:
-        with get_db_session() as session:
-            stmt = select(ApiCredential).where(
-                ApiCredential.is_active == 1
-            ).order_by(
-                ApiCredential.error_count.asc(),
-                ApiCredential.last_active_at.asc()
-            )
-            creds = session.scalars(stmt).all()
-            return [c.to_dict() for c in creds]
-    except Exception as e:
-        logger.error(f"Failed to get active credentials: {e}")
-        return []
-
-
-def update_credential_status(credential_id: str, last_active_at: str = None, error_count: int = None, is_active: int = None) -> bool:
-    """
-    Updates status, error_count, and last_active_at timestamp for a credential using Pure SQLAlchemy 2.0 ORM.
-    """
-    try:
-        with get_db_session() as session:
-            stmt = select(ApiCredential).filter_by(credential_id=credential_id)
-            cred = session.scalars(stmt).first()
-            if not cred:
-                return False
-            if last_active_at is not None:
-                cred.last_active_at = last_active_at
-            if error_count is not None:
-                cred.error_count = error_count
-            if is_active is not None:
-                cred.is_active = is_active
-            return True
-    except Exception as e:
-        logger.error(f"Failed to update credential status for '{credential_id}': {e}")
-        return False
 
 
 def sanitize_short_name(name: str) -> str:
@@ -477,7 +441,7 @@ def get_or_create_merchant_auto(
             # Fallback to default company if company_id is None
             target_company_id = company_id
             if not target_company_id:
-                def_comp = session.scalars(select(Company).filter_by(company_code=DEFAULT_COMPANY_CODE)).first()
+                def_comp = session.scalars(select(Company).filter_by(company_code=DefaultIdentifier.COMPANY_CODE)).first()
                 if def_comp:
                     target_company_id = def_comp.company_id
 
@@ -637,7 +601,7 @@ def upsert_merchant(merchant_data: dict) -> bool:
                 merchant.updated_at = now_str
             else:
                 if not target_cid:
-                    def_comp = session.scalars(select(Company).filter_by(company_code=DEFAULT_COMPANY_CODE)).first()
+                    def_comp = session.scalars(select(Company).filter_by(company_code=DefaultIdentifier.COMPANY_CODE)).first()
                     if def_comp:
                         target_cid = def_comp.company_id
 
@@ -726,7 +690,7 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
                 if doc and doc.company_id:
                     target_cid = doc.company_id
                 else:
-                    def_comp = session.scalars(select(Company).filter_by(company_code=DEFAULT_COMPANY_CODE)).first()
+                    def_comp = session.scalars(select(Company).filter_by(company_code=DefaultIdentifier.COMPANY_CODE)).first()
                     if def_comp:
                         target_cid = def_comp.company_id
 

@@ -1,8 +1,8 @@
 import os
 import re
-import pymupdf as fitz
 from PIL import Image, ImageOps
-from loguru import logger
+from src.core.logger import logger
+from src.core.pdf_service import PDFService
 
 def sanitize_filename_part(text: str) -> str:
     """
@@ -16,7 +16,6 @@ def sanitize_filename_part(text: str) -> str:
 
 def format_page_filename(
     pattern: str = "{doc_type}_{tax_id}_{original_filename}_{batch_id}_p{page_no}",
-    domain: str = "expense_receipt",
     doc_type: str = None,
     tax_id: str = "",
     source: str = "_uncategorized",
@@ -24,7 +23,8 @@ def format_page_filename(
     page_no: int = 1,
     batch_id: str = "",
     doc_no: str = "",
-    image_format: str = "jpg"
+    image_format: str = "jpg",
+    domain: str = None
 ) -> str:
     """
     Formats split page filename based on configurable pattern.
@@ -135,31 +135,21 @@ def split_pdf(pdf_path: str, output_dir: str, dpi: int = 150, image_format: str 
     ext = image_format.lower().replace(".", "")
     image_paths = []
     
-    doc = fitz.open(pdf_path)
-    expected_page_count = len(doc)
-    try:
-        for page_num in range(expected_page_count):
-            page = doc.load_page(page_num)
-            pix = page.get_pixmap(dpi=dpi)
-            
-            # Convert PyMuPDF pixmap to PIL Image
-            mode = "RGBA" if pix.alpha else "RGB"
-            pil_img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
-            
-            output_filename = f"temp_{base_name}_page_{page_num + 1}.{ext}"
-            output_path = os.path.join(output_dir, output_filename).replace("\\", "/")
-            
-            resize_and_save_image(
-                pil_img=pil_img,
-                output_path=output_path,
-                image_format=ext,
-                quality=quality,
-                max_dimension=max_dimension
-            )
-            image_paths.append(output_path)
-            
-    finally:
-        doc.close()
+    expected_page_count = PDFService.get_page_count(pdf_path)
+    for page_num in range(expected_page_count):
+        pil_img = PDFService.render_page_to_pil(pdf_path, page_index=page_num, dpi=dpi)
+        
+        output_filename = f"temp_{base_name}_page_{page_num + 1}.{ext}"
+        output_path = os.path.join(output_dir, output_filename).replace("\\", "/")
+        
+        resize_and_save_image(
+            pil_img=pil_img,
+            output_path=output_path,
+            image_format=ext,
+            quality=quality,
+            max_dimension=max_dimension
+        )
+        image_paths.append(output_path)
         
     # Strict validation: verify generated image count matches PDF page count
     if len(image_paths) != expected_page_count:
@@ -211,24 +201,7 @@ def extract_pdf_page_to_pdf(pdf_path: str, page_num: int, output_path: str) -> N
     """
     Extracts a single page (1-indexed) from a PDF and saves it as a new single-page PDF file.
     """
-    if not os.path.exists(pdf_path):
-        raise FileNotFoundError(f"Input PDF file not found at: {pdf_path}")
-        
-    doc = fitz.open(pdf_path)
-    try:
-        idx = page_num - 1
-        if idx < 0 or idx >= len(doc):
-            raise IndexError(f"Page number {page_num} is out of range for PDF with {len(doc)} pages.")
-            
-        new_doc = fitz.open()
-        new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
-        
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        new_doc.save(output_path)
-        new_doc.close()
-        logger.info(f"Extracted page {page_num} to '{output_path}'")
-    finally:
-        doc.close()
+    PDFService.extract_page_to_pdf(pdf_path=pdf_path, page_num=page_num, output_path=output_path)
 
 # ==============================================================================
 # Asynchronous Concurrency Wrappers

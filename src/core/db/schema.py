@@ -2,15 +2,15 @@
 
 import os
 from pathlib import Path
-from loguru import logger
+from src.core.logger import logger
 
-from .connection import engine, get_engine, get_db_session, PROJECT_ROOT
+from .connection import engine, get_engine, get_log_engine, get_db_session, PROJECT_ROOT
 from .models import (
     Base,
+    LogBase,
     Company,
     DocumentStatus,
     DocumentSource,
-    ApiCredential,
     ExpenseReceiptItem,
     ExpenseReceipt,
     DocumentPage,
@@ -24,25 +24,46 @@ from .models import (
 
 def initialize_log_db_schema(settings_path: str = "configs/settings.json"):
     """
-    Initializes the logging database schema via Base metadata.
+    Initializes the logging database schema in logs/logs.db via LogBase metadata.
     """
     try:
-        current_engine = get_engine()
-        Base.metadata.create_all(current_engine)
+        current_log_engine = get_log_engine(settings_path)
+        LogBase.metadata.create_all(current_log_engine)
     except Exception as e:
         logger.warning(f"Failed to initialize log database schema: {e}")
 
 
-def initialize_db_schema():
+def initialize_db_schema(drop_and_recreate: bool = False):
     """
-    Creates relational database schema for all models via SQLAlchemy Base Metadata
+    Creates relational database schema for all operational models via SQLAlchemy Base Metadata
     and performs lightweight schema migrations for newly added columns.
+    If drop_and_recreate is True, drops all operational tables first for a clean fresh start.
     """
     try:
         current_engine = get_engine()
+        if drop_and_recreate:
+            logger.warning("Dropping all existing operational database tables for clean fresh start...")
+            with current_engine.connect() as conn:
+                if str(current_engine.url).startswith("sqlite"):
+                    res = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+                    all_tables = [r[0] for r in res.fetchall()]
+                    conn.exec_driver_sql("PRAGMA foreign_keys = OFF;")
+                    for t in all_tables:
+                        conn.exec_driver_sql(f"DROP TABLE IF EXISTS {t}")
+                    conn.exec_driver_sql("PRAGMA foreign_keys = ON;")
+                else:
+                    Base.metadata.drop_all(current_engine)
+
         Base.metadata.create_all(current_engine)
 
         with current_engine.connect() as conn:
+            # Drop obsolete/dormant tables and segregated tables from operational database
+            try:
+                conn.exec_driver_sql("DROP TABLE IF EXISTS api_credentials")
+                conn.exec_driver_sql("DROP TABLE IF EXISTS application_logs")
+            except Exception as drop_err:
+                logger.debug(f"Note on dropping obsolete tables: {drop_err}")
+
             # 1. Merchants table migrations
             try:
                 res = conn.exec_driver_sql("PRAGMA table_info(merchants)")
@@ -63,17 +84,6 @@ def initialize_db_schema():
                     conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN updated_at VARCHAR(50)")
             except Exception as mig_err:
                 logger.debug(f"Merchants schema migration note: {mig_err}")
-
-            # 2. Api Credentials table migrations
-            try:
-                res = conn.exec_driver_sql("PRAGMA table_info(api_credentials)")
-                existing_cols = [row[1] for row in res.fetchall()]
-                if "created_at" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE api_credentials ADD COLUMN created_at VARCHAR(50)")
-                if "updated_at" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE api_credentials ADD COLUMN updated_at VARCHAR(50)")
-            except Exception as mig_err:
-                logger.debug(f"Api Credentials schema migration note: {mig_err}")
 
             # 3. Documents table migrations
             try:
@@ -129,6 +139,15 @@ def initialize_db_schema():
             except Exception as mig_err:
                 logger.debug(f"Api Call Logs schema migration note: {mig_err}")
 
+            # 7. Document sources table migrations
+            try:
+                res = conn.exec_driver_sql("PRAGMA table_info(document_sources)")
+                existing_cols = [row[1] for row in res.fetchall()]
+                if "domain_id" in existing_cols and "doc_type_id" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE document_sources RENAME COLUMN domain_id TO doc_type_id")
+            except Exception as mig_err:
+                logger.debug(f"Document Sources schema migration note: {mig_err}")
+
             conn.commit()
 
         logger.info("Relational database schema initialized successfully via SQLAlchemy Base metadata.")
@@ -175,8 +194,9 @@ def seed_initial_data(configs_dir: str = "configs"):
                 ("NEEDS_REVIEW", "Needs Review", "Document requires manual review before approval."),
                 ("PROCESSED", "Processed", "AI successfully extracted document payload, waiting for human audit."),
                 ("APPROVED", "Approved", "Document payload approved and verified for financial export."),
-                ("EXPORTED", "Exported", "Document is exported to destination systems."),
-                ("FAILED", "Failed", "Extraction or validation failed completely.")
+                ("FAILED", "Failed", "Extraction or validation failed completely."),
+                ("IGNORED", "Ignored", "Document merchant is marked as ignored and skipped from processing."),
+                ("EXPORTED", "Exported", "Document is exported to destination systems.")
             ]
             for code, name, desc_text in statuses:
                 status_obj = session.scalars(select(DocumentStatus).filter_by(status_code=code)).first()
@@ -186,16 +206,14 @@ def seed_initial_data(configs_dir: str = "configs"):
             # 3. Discover and seed document sources
             abs_configs_dir = PROJECT_ROOT / configs_dir if not os.path.isabs(configs_dir) else Path(configs_dir)
             doc_types_dir = str(abs_configs_dir / "doc_types")
-            if not os.path.exists(doc_types_dir):
-                doc_types_dir = str(abs_configs_dir / "domains")
 
             if os.path.exists(doc_types_dir):
                 for dt_id in os.listdir(doc_types_dir):
                     dt_path = os.path.join(doc_types_dir, dt_id)
                     if os.path.isdir(dt_path) and not dt_id.startswith("."):
-                        def_src = session.scalars(select(DocumentSource).filter_by(source_id="NO_TAXID", domain_id=dt_id)).first()
+                        def_src = session.scalars(select(DocumentSource).filter_by(source_id="NO_TAXID", doc_type_id=dt_id)).first()
                         if not def_src:
-                            session.add(DocumentSource(source_id="NO_TAXID", domain_id=dt_id, display_name="No Tax ID / Cash Slip", is_active=1))
+                            session.add(DocumentSource(source_id="NO_TAXID", doc_type_id=dt_id, display_name="No Tax ID / Cash Slip", is_active=1))
 
                         sources_dir = os.path.join(dt_path, "sources")
                         if os.path.exists(sources_dir):
@@ -203,27 +221,14 @@ def seed_initial_data(configs_dir: str = "configs"):
                                 entry_path = os.path.join(sources_dir, entry)
                                 if os.path.isdir(entry_path) and not entry.startswith("_"):
                                     display_name = entry.replace("_", " ").title()
-                                    s_obj = session.scalars(select(DocumentSource).filter_by(source_id=entry, domain_id=dt_id)).first()
+                                    s_obj = session.scalars(select(DocumentSource).filter_by(source_id=entry, doc_type_id=dt_id)).first()
                                     if not s_obj:
-                                        session.add(DocumentSource(source_id=entry, domain_id=dt_id, display_name=display_name, is_active=1))
+                                        session.add(DocumentSource(source_id=entry, doc_type_id=dt_id, display_name=display_name, is_active=1))
             else:
                 for fallback_dt in ["expense_receipt", "tax_invoice"]:
-                    def_src = session.scalars(select(DocumentSource).filter_by(source_id="NO_TAXID", domain_id=fallback_dt)).first()
+                    def_src = session.scalars(select(DocumentSource).filter_by(source_id="NO_TAXID", doc_type_id=fallback_dt)).first()
                     if not def_src:
-                        session.add(DocumentSource(source_id="NO_TAXID", domain_id=fallback_dt, display_name="No Tax ID / Cash Slip", is_active=1))
-
-            # 4. Seed default API credentials
-            cred_obj = session.scalars(select(ApiCredential).filter_by(credential_id="cred_gemini_default")).first()
-            if not cred_obj:
-                session.add(ApiCredential(
-                    credential_id="cred_gemini_default",
-                    provider="gemini",
-                    model_name="gemini-3.5-flash",
-                    api_key_env="GEMINI_API_KEY",
-                    is_active=1,
-                    last_active_at=None,
-                    error_count=0
-                ))
+                        session.add(DocumentSource(source_id="NO_TAXID", doc_type_id=fallback_dt, display_name="No Tax ID / Cash Slip", is_active=1))
 
         logger.info("Database seeding completed.")
     except Exception as e:

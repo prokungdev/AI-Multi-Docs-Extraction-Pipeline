@@ -3,42 +3,54 @@ from .base import BaseOutputExporter
 from .json_adapter import JsonConfigExporter
 from .express_adapter import ExpressExpenseExporter
 
-# Global Registry mapping domain_id -> { exporter_id -> BaseOutputExporter instance }
+# Global Registry mapping doc_type_id -> { exporter_id -> BaseOutputExporter instance }
 _REGISTRY: Dict[str, Dict[str, BaseOutputExporter]] = {
     "expense_receipt": {
-        "google_sheet_summary": JsonConfigExporter(domain_id="expense_receipt", template_name="google_sheet_summary"),
-        "accounting_line_items": JsonConfigExporter(domain_id="expense_receipt", template_name="accounting_line_items"),
-        "express_pv": ExpressExpenseExporter(domain_id="expense_receipt")
+        "google_sheet_summary": JsonConfigExporter(doc_type_id="expense_receipt", template_name="google_sheet_summary"),
+        "accounting_line_items": JsonConfigExporter(doc_type_id="expense_receipt", template_name="accounting_line_items"),
+        "express_pv": ExpressExpenseExporter(doc_type_id="expense_receipt")
     },
     "tax_invoice": {
-        "google_sheet_summary": JsonConfigExporter(domain_id="tax_invoice", template_name="google_sheet_summary"),
-        "accounting_line_items": JsonConfigExporter(domain_id="tax_invoice", template_name="accounting_line_items"),
-        "express_pv": ExpressExpenseExporter(domain_id="tax_invoice")
+        "google_sheet_summary": JsonConfigExporter(doc_type_id="tax_invoice", template_name="google_sheet_summary"),
+        "accounting_line_items": JsonConfigExporter(doc_type_id="tax_invoice", template_name="accounting_line_items"),
+        "express_pv": ExpressExpenseExporter(doc_type_id="tax_invoice")
     }
 }
 
 
-def register_exporter(domain_id: str, exporter_id: str, exporter_instance: BaseOutputExporter):
-    """Dynamically registers an exporter instance under a specific domain."""
-    if domain_id not in _REGISTRY:
-        _REGISTRY[domain_id] = {}
-    _REGISTRY[domain_id][exporter_id] = exporter_instance
+def register_exporter(
+    exporter_id: str,
+    exporter_instance: BaseOutputExporter,
+    doc_type_id: str = None,
+    domain_id: str = None
+):
+    """Dynamically registers an exporter instance under a specific doc_type."""
+    target_dt = doc_type_id or domain_id or "expense_receipt"
+    if target_dt not in _REGISTRY:
+        _REGISTRY[target_dt] = {}
+    _REGISTRY[target_dt][exporter_id] = exporter_instance
 
 
-def get_exporter(domain_id: str, exporter_id: str) -> BaseOutputExporter:
-    """Retrieves the exporter instance for the given domain and exporter ID."""
-    domain_exporters = _REGISTRY.get(domain_id, {})
-    exporter = domain_exporters.get(exporter_id)
+def get_exporter(
+    doc_type_id: str = None,
+    exporter_id: str = None,
+    domain_id: str = None
+) -> BaseOutputExporter:
+    """Retrieves the exporter instance for the given doc_type and exporter ID."""
+    target_dt = doc_type_id or domain_id or "expense_receipt"
+    doc_type_exporters = _REGISTRY.get(target_dt, {})
+    exporter = doc_type_exporters.get(exporter_id)
     if not exporter:
-        raise ValueError(f"Exporter '{exporter_id}' not found for domain '{domain_id}'")
+        raise ValueError(f"Exporter '{exporter_id}' not found for doc_type '{target_dt}'")
     return exporter
 
 
-def list_exporters(domain_id: str) -> List[Dict[str, Any]]:
-    """Lists metadata of all registered exporters for the given domain."""
-    domain_exporters = _REGISTRY.get(domain_id, {})
+def list_exporters(doc_type_id: str = None, domain_id: str = None) -> List[Dict[str, Any]]:
+    """Lists metadata of all registered exporters for the given doc_type."""
+    target_dt = doc_type_id or domain_id or "expense_receipt"
+    doc_type_exporters = _REGISTRY.get(target_dt, {})
     results = []
-    for exporter_id, inst in domain_exporters.items():
+    for exporter_id, inst in doc_type_exporters.items():
         results.append({
             "exporter_id": exporter_id,
             "name": getattr(inst, "display_name", exporter_id.replace("_", " ").title()),
@@ -50,3 +62,4 @@ def list_exporters(domain_id: str) -> List[Dict[str, Any]]:
 
 # Alias for backward compatibility
 get_domain_exporters = list_exporters
+list_doc_type_exporters = list_exporters
