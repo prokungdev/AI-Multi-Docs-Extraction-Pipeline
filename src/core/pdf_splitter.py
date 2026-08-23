@@ -23,19 +23,18 @@ def format_page_filename(
     page_no: int = 1,
     batch_id: str = "",
     doc_no: str = "",
-    image_format: str = "jpg",
-    domain: str = None
+    image_format: str = "jpg"
 ) -> str:
     """
     Formats split page filename based on configurable pattern.
-    Supported placeholders: {doc_type}, {domain}, {tax_id}, {source}, {original_filename}, {original_name},
+    Supported placeholders: {doc_type}, {tax_id}, {source}, {original_filename}, {original_name},
     {page_no}, {batch_id}, {short_batch_id}, {doc_no}.
     If tax_id is not provided or empty, it defaults to 'no_tax'.
     """
     ext = image_format.lower().replace(".", "")
     orig_base = os.path.splitext(os.path.basename(original_filename))[0] if original_filename else "document"
     clean_orig = sanitize_filename_part(orig_base)
-    effective_doc_type = doc_type or domain or "expense_receipt"
+    effective_doc_type = doc_type or "expense_receipt"
     clean_doc_type = sanitize_filename_part(effective_doc_type)
     
     # Process tax_id with 'no_tax' fallback

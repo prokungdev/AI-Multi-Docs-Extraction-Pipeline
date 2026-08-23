@@ -15,7 +15,6 @@ from src.core.pipeline.pipeline_helpers import validate_and_process_payload
 
 def validate_documents(
     doc_type: str = None,
-    domain: str = None,
     company_code: str = None
 ) -> dict:
     """
@@ -29,7 +28,7 @@ def validate_documents(
     comp_info = get_company_by_code(comp_code)
     company_id = comp_info["company_id"] if comp_info else None
 
-    target_doc_type = doc_type or domain or get_default_doc_type()
+    target_doc_type = doc_type or get_default_doc_type()
 
     from src.core.storage_manager import storage_manager
     queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)

@@ -28,6 +28,11 @@ All relational database models and schema definitions MUST strictly follow these
 - **Boolean Flags**: Must start with **`is_`** prefix (e.g., `is_active`, `is_locked`, `is_manually_edited`, `is_auto_approved`, `is_verified`).
 - **Financial & Quantity Fields**: Use explicit full words (e.g., `quantity`, `unit_price`, `subtotal`, `discount_amount`, `vat_amount`, `net_amount`).
 
+### 1.3 Prefixed Primary Key Identifier Standard (Stripe-Style Pattern)
+- **Standard Format**: Primary Key string columns (`{singular_table}_id`) MUST use prefixed entity identifiers: `<entity_prefix>_<entropy_hex>` (e.g. `12` to `16` hexadecimal characters derived from UUID4, such as `doc_c4e5a5799901`, `batch_b8f2a1d933e4`, `merch_99a81e320f11`).
+- **Centralized Entity Prefixes**: All entity prefixes MUST be declared in a centralized constants namespace class (`EntityIdPrefix`).
+- **Benefits**: Visual entity identification in logs and database views, cross-entity type-safety in API endpoints, compact index size, and zero collision across distributed nodes.
+
 ---
 
 ## 💾 2. Pure SQLAlchemy 2.0 ORM Policy
@@ -75,7 +80,9 @@ All relational database models and schema definitions MUST strictly follow these
 
 ---
 
-## 🛡️ 5. Windows OS Resource Cleanup in Unit Tests
+## 🛡️ 5. Zero-Tolerance Test Database Isolation & Resource Teardown
+
+All automated test suites interacting with a database MUST execute against an isolated temporary database. **NEVER execute tests or perform test CRUD operations directly against development or production database instances.**
 
 When running automated test suites on Windows operating systems, SQLite file locks can prevent temporary test databases from being deleted in `tearDownClass`.
 
@@ -87,6 +94,12 @@ import unittest
 from my_app.core.db import get_engine
 
 class BaseDatabaseTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Always isolate test database to a unique temporary file or in-memory instance
+        cls.test_db_path = os.path.join(tempfile.gettempdir(), f"test_db_{uuid.uuid4().hex[:8]}.db")
+        os.environ["DB_PATH_OVERRIDE"] = cls.test_db_path
+
     @classmethod
     def tearDownClass(cls):
         # 1. Dispose engine connections and connection pool

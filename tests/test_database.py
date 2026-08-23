@@ -19,11 +19,12 @@ from src.core.db import (
     update_document_to_failed,
     update_document_payload,
     search_documents,
-    get_domains,
+    get_doc_types,
     get_sources,
-    update_domain_active_status,
+    update_doc_type_active_status,
     update_source_active_status,
 )
+from sqlalchemy import select
 from src.core.db.connection import get_db_session, get_engine, get_database_url
 from src.core.db.models import (
     Base,
@@ -72,12 +73,12 @@ class TestDatabase(unittest.TestCase):
 
         seed_initial_data()
 
-        # Verify default domains and sources are seeded dynamically
-        domains = get_domains()
-        self.assertGreater(len(domains), 0)
-        domain_id = domains[0]["domain_id"]
+        # Verify default doc_types and sources are seeded dynamically
+        doc_types = get_doc_types()
+        self.assertGreater(len(doc_types), 0)
+        dt_id = doc_types[0]["doc_type_id"]
 
-        sources = get_sources(domain_id)
+        sources = get_sources(dt_id)
         self.assertGreater(len(sources), 0)
         source_ids = [s["source_id"] for s in sources]
         self.assertIn("NO_TAXID", source_ids)
@@ -87,10 +88,10 @@ class TestDatabase(unittest.TestCase):
         batch_id = "test_batch_123"
         file_hash = "mock_sha256_hash_value"
 
-        # Resolve active domain & source dynamically
-        domains = get_domains()
-        test_domain = domains[0]["domain_id"] if domains else "test_domain"
-        sources = get_sources(test_domain)
+        # Resolve active doc_type & source dynamically
+        doc_types = get_doc_types()
+        test_doc_type = doc_types[0]["doc_type_id"] if doc_types else "expense_receipt"
+        sources = get_sources(test_doc_type)
         test_source = sources[0]["source_id"] if sources else "NO_TAXID"
 
         # 1. Create Batch
@@ -98,7 +99,7 @@ class TestDatabase(unittest.TestCase):
             batch_id=batch_id,
             original_filename="test_document.pdf",
             total_pages=2,
-            storage_path=f"storage/companies/C00000_SAMPLE/{test_domain}/05_archive/2026-08/raw",
+            storage_path=f"storage/companies/C00000_SAMPLE/{test_doc_type}/05_archive/2026-08/raw",
             file_hash=file_hash
         )
         self.assertTrue(success)
@@ -110,8 +111,8 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(meta["original_filename"], "test_document.pdf")
 
         # 3. Create Pages
-        p1 = create_page("page_1", batch_id, 1, f"storage/companies/C00000_SAMPLE/{test_domain}/03_preprocess/p1.png", "PENDING")
-        p2 = create_page("page_2", batch_id, 2, f"storage/companies/C00000_SAMPLE/{test_domain}/03_preprocess/p2.png", "PENDING")
+        p1 = create_page("page_1", batch_id, 1, f"storage/companies/C00000_SAMPLE/{test_doc_type}/03_preprocess/p1.png", "PENDING")
+        p2 = create_page("page_2", batch_id, 2, f"storage/companies/C00000_SAMPLE/{test_doc_type}/03_preprocess/p2.png", "PENDING")
         self.assertTrue(p1)
         self.assertTrue(p2)
 
@@ -120,7 +121,7 @@ class TestDatabase(unittest.TestCase):
         success = create_document(
             document_id=doc_id,
             batch_id=batch_id,
-            domain_id=test_domain,
+            doc_type_id=test_doc_type,
             source_id=test_source,
             status_code="PROCESSED",
             doc_number="DOC-001",
@@ -146,7 +147,7 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(len(pages), 2)
 
         # 6. Fetch pending documents
-        pending = get_pending_documents(test_domain)
+        pending = get_pending_documents(test_doc_type)
         self.assertGreater(len(pending), 0)
         self.assertEqual(pending[0]["document_id"], doc_id)
 
@@ -155,16 +156,16 @@ class TestDatabase(unittest.TestCase):
         batch_id = "test_batch_123"
         doc_id = "test_doc_456"
 
-        domains = get_domains()
-        test_domain = domains[0]["domain_id"] if domains else "test_domain"
-        sources = get_sources(test_domain)
-        test_source = sources[0]["source_id"] if sources else "_default"
+        doc_types = get_doc_types()
+        test_doc_type = doc_types[0]["doc_type_id"] if doc_types else "expense_receipt"
+        sources = get_sources(test_doc_type)
+        test_source = sources[0]["source_id"] if sources else "NO_TAXID"
 
         # Ensure document exists
         create_document(
             document_id=doc_id,
             batch_id=batch_id,
-            domain_id=test_domain,
+            doc_type_id=test_doc_type,
             source_id=test_source,
             status_code="PROCESSED",
             doc_number="DOC-001",
@@ -211,17 +212,17 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(doc["confirmed_by"], "test_user")
 
         # Verify it is no longer in pending documents list
-        pending = get_pending_documents(test_domain)
+        pending = get_pending_documents(test_doc_type)
         doc_ids = [d["document_id"] for d in pending]
         self.assertNotIn(doc_id, doc_ids)
 
     def test_04_admin_toggles(self):
-        """Test toggling is_active for domains and sources dynamically."""
-        domains = get_domains()
-        self.assertGreater(len(domains), 0)
-        test_domain = domains[0]["domain_id"]
+        """Test toggling is_active for doc_types and sources dynamically."""
+        doc_types = get_doc_types()
+        self.assertGreater(len(doc_types), 0)
+        test_doc_type = doc_types[0]["doc_type_id"]
 
-        sources = get_sources(test_domain)
+        sources = get_sources(test_doc_type)
         self.assertGreater(len(sources), 0)
         target_src = sources[0]
         src_id = target_src["source_id"]
@@ -231,11 +232,11 @@ class TestDatabase(unittest.TestCase):
         new_status = 0 if initial_status == 1 else 1
 
         # Toggle status
-        success = update_source_active_status(src_id, test_domain, new_status)
+        success = update_source_active_status(src_id, test_doc_type, new_status)
         self.assertTrue(success)
 
         # Verify status changed
-        updated_sources = get_sources(test_domain)
+        updated_sources = get_sources(test_doc_type)
         updated_src = [s for s in updated_sources if s["source_id"] == src_id][0]
         self.assertEqual(updated_src["is_active"], new_status)
 
@@ -272,7 +273,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
             session.add(batch)
 
         with get_db_session() as session:
-            queried_batch = session.query(ProcessedBatch).filter_by(batch_id=batch_id).first()
+            queried_batch = session.scalars(select(ProcessedBatch).filter_by(batch_id=batch_id)).first()
             self.assertIsNotNone(queried_batch)
             self.assertEqual(queried_batch.original_filename, "test_orm_doc.pdf")
             self.assertEqual(queried_batch.file_hash, file_hash)
@@ -295,7 +296,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
             session.add(merchant)
 
         with get_db_session() as session:
-            fetched_merchant = session.query(Merchant).filter_by(merchant_id=merchant_id).first()
+            fetched_merchant = session.scalars(select(Merchant).filter_by(merchant_id=merchant_id)).first()
             self.assertIsNotNone(fetched_merchant)
             self.assertEqual(fetched_merchant.merchant_name, "ORM Test Merchant Co., Ltd.")
             self.assertEqual(fetched_merchant.status_code, MerchantStatus.APPROVED.value)

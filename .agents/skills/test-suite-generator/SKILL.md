@@ -21,8 +21,10 @@ When executed, the generated test suites MUST adhere to the following principles
    - **Happy Path**: Normal valid inputs and standard expected workflows.
    - **Edge Cases**: Empty inputs, null/none values, invalid data types, boundary values, and large payloads.
    - **Error Handling**: Exception handling, failure response codes, and invalid parameters.
-3. **Realistic Mocking & Isolation**:
-   - Mock external network calls (e.g. AI API endpoints, third-party HTTP APIs) and external databases so tests run deterministically, fast, and in isolation.
+3. **🛡️ Zero-Tolerance Dual Test Isolation (Database + Storage Isolation)**:
+   - **Database Isolation (Zero DB Leakage)**: All tests interacting with a database MUST execute against an isolated temporary database (via environment variable override, isolated temporary SQLite file, or In-Memory database). NEVER connect or perform CRUD operations against development, staging, or production database instances.
+   - **File & Storage Isolation (Zero Storage Pollution)**: NEVER write test artifacts, temporary mock images, test PDFs, or dummy settings into the project's real storage root directory. All test file generation MUST use the operating system's standard temporary directory (`tempfile.mkdtemp()` or test runner temporary path fixtures).
+   - **Guaranteed Resource Teardown**: Every test class creating databases or files MUST implement explicit cleanup in `tearDownClass` / `tearDown` (e.g. `shutil.rmtree()`, disposing database connection pools/engines, and forcing garbage collection to release OS file locks on Windows).
 4. **Decoupled & Generic Test Data**:
    - **Domain Agnostic**: NEVER hardcode specific company names, vendor IDs, or environment-specific folder names in test code.
    - **Generic Mock Identifiers**: Use generic placeholders (e.g. `mock_source`, `sample_entity`, `test_vendor_01`) or resolve parameters dynamically from project configuration.
@@ -40,6 +42,7 @@ When executed, the generated test suites MUST adhere to the following principles
 3. **Propose Test Structure**:
    - Outline planned test cases and file target locations following repo conventions.
 4. **Generate Test Suite**:
-   - Create clean, decoupled test files using generic mock data and dynamic configuration resolution.
-5. **Verify Execution**:
-   - Run test runner to verify all generated tests pass cleanly with zero warnings or failures.
+   - Create clean, decoupled test files using generic mock data and dynamic configuration resolution with 100% isolated temp database and storage paths.
+5. **Verify Execution & Zero Leakage**:
+   - Run test runner to verify all generated tests pass cleanly with zero warnings, zero failures, and zero test artifacts left in project storage.
+

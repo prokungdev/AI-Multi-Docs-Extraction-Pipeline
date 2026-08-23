@@ -9,7 +9,6 @@ from src.core.config_loader import (
     resolve_company_code,
     get_company_storage_dir,
     get_company_pipeline_folder,
-    is_source_active,
     get_image_processing_config,
     get_supported_extensions,
 )
@@ -20,9 +19,15 @@ from src.core.db import (
     create_page,
     get_company_by_code,
 )
-from src.core.constants import DocumentStatusCode, PipelineStageFolder
+from src.core.constants import (
+    DocumentStatusCode,
+    MerchantStatusCode,
+    PipelineStageFolder,
+    EntityIdPrefix,
+    generate_entity_id,
+)
 from src.core.pdf_splitter import split_pdf, process_raw_image, format_page_filename
-from src.core.source_matcher import match_source
+from src.core.classifier import classify_document
 from src.core.storage_manager import storage_manager
 
 
@@ -33,7 +38,7 @@ def _register_preprocessed_page(
     created_pages: list[str]
 ) -> str:
     """Helper to record preprocessed page record in database and tracking list."""
-    page_id = str(uuid.uuid4())
+    page_id = generate_entity_id(EntityIdPrefix.PAGE)
     create_page(
         page_id=page_id,
         batch_id=batch_id,
@@ -47,7 +52,6 @@ def _register_preprocessed_page(
 
 def split_and_match(
     doc_type: str = None,
-    domain: str = None,
     input_file: str = None,
     input_pdf: str = None,
     company_code: str = None
@@ -99,14 +103,14 @@ def split_and_match(
         if os.path.exists(raw_data_dir):
             for entry in os.listdir(raw_data_dir):
                 entry_path = os.path.join(raw_data_dir, entry).replace("\\", "/")
-                if os.path.isdir(entry_path) and entry not in ["PENDING", "IGNORED"]:
+                if os.path.isdir(entry_path) and entry not in [MerchantStatusCode.PENDING, MerchantStatusCode.IGNORED]:
                     scan_dirs.append(entry_path)
 
         for s_dir in scan_dirs:
             if os.path.exists(s_dir):
                 for root_dir, _, files in os.walk(s_dir):
                     norm_root = root_dir.replace("\\", "/")
-                    if "/PENDING" in norm_root or "/IGNORED" in norm_root:
+                    if f"/{MerchantStatusCode.PENDING}" in norm_root or f"/{MerchantStatusCode.IGNORED}" in norm_root:
                         continue
                     for file in files:
                         file_ext = os.path.splitext(file)[1].lower()
@@ -126,8 +130,9 @@ def split_and_match(
         filename = os.path.basename(file_path)
         file_ext = os.path.splitext(filename)[1].lower()
         is_pdf = file_ext == ".pdf"
+        batch_id = generate_entity_id(EntityIdPrefix.BATCH)
 
-        logger.info(f"\n--- Processing: {filename} ({'PDF Document' if is_pdf else 'Direct Image'}) [Company: {comp_code}] ---")
+        logger.info(f"\n--- Processing: {filename} ({'PDF Document' if is_pdf else 'Direct Image'}) [Batch: {batch_id}] [Company: {comp_code}] ---")
 
         # 1. Check Duplicate
         file_hash = calculate_file_hash(file_path)
@@ -138,45 +143,46 @@ def split_and_match(
             )
             continue
 
-        # 2. Fast AI Classifier & Gatekeeper Routing for Drop Zone files
+        # 2. Fast AI Classifier & Gatekeeper Routing
         from src.core.constants import DefaultIdentifier, PipelineAction, PipelineStageFolder
         dest_file_path = file_path
         dest_folder = os.path.dirname(file_path)
         matched_source = DefaultIdentifier.NO_TAX_LABEL
         pipeline_action = PipelineAction.PROCEED
 
-        if PipelineStageFolder.DROP_ZONE in file_path or "01_raw_inbox" in file_path:
-            try:
-                from src.core.classifier import classify_document
-                cls_res = classify_document(file_path, doc_type=target_doc_type, configs_dir="configs")
-                target_folder = cls_res.get("target_folder", raw_data_dir)
-                pipeline_action = cls_res.get("pipeline_action", PipelineAction.PROCEED)
-                
+        try:
+            cls_res = classify_document(
+                file_path,
+                doc_type=target_doc_type,
+                company_code=comp_code,
+                company_id=company_id,
+                batch_id=batch_id,
+                configs_dir="configs",
+            )
+            target_folder = cls_res.get("target_folder", raw_data_dir)
+            pipeline_action = cls_res.get("pipeline_action", PipelineAction.PROCEED)
+
+            if PipelineStageFolder.DROP_ZONE in file_path or "01_raw_inbox" in file_path:
                 dest_file_path = os.path.join(target_folder, filename).replace("\\", "/")
                 dest_folder = target_folder
                 if os.path.abspath(file_path) != os.path.abspath(dest_file_path):
                     os.makedirs(target_folder, exist_ok=True)
                     shutil.move(file_path, dest_file_path)
-                    
-                matched_source = cls_res.get("folder_identifier", DefaultIdentifier.NO_TAX_LABEL)
 
-                if pipeline_action == PipelineAction.HOLD:
-                    logger.warning(f"File '{filename}' held in '{target_folder}' awaiting merchant approval.")
-                    continue
-                elif pipeline_action == PipelineAction.IGNORE:
-                    logger.info(f"File '{filename}' belongs to IGNORED merchant. Moving to '{target_folder}' and skipping.")
-                    continue
-            except Exception as cl_err:
-                logger.warning(f"Classifier note: {cl_err}")
-                dest_file_path = file_path
-                dest_folder = os.path.dirname(file_path)
-        else:
-            matched_source = match_source(dest_file_path, doc_type=target_doc_type, settings=settings)
-            if not is_source_active(target_doc_type, matched_source):
-                matched_source = DefaultIdentifier.NO_TAX_LABEL
+            matched_source = cls_res.get("folder_identifier", DefaultIdentifier.NO_TAX_LABEL)
+
+            if pipeline_action == PipelineAction.HOLD:
+                logger.warning(f"File '{filename}' held in '{target_folder}' awaiting merchant approval.")
+                continue
+            elif pipeline_action == PipelineAction.IGNORE:
+                logger.info(f"File '{filename}' belongs to IGNORED merchant. Moving to '{target_folder}' and skipping.")
+                continue
+        except Exception as cl_err:
+            logger.warning(f"Classifier note: {cl_err}")
+            dest_file_path = file_path
+            dest_folder = os.path.dirname(file_path)
 
         # 3. Process Pages (PDF Splitting or Direct Image Processing)
-        batch_id = str(uuid.uuid4())
         created_pages = []
 
         if is_pdf:
@@ -287,17 +293,16 @@ def release_pending_merchant_files(
     doc_type: str = None,
     tax_id: str = None,
     short_name: str = None,
-    domain: str = None,
     company_code: str = None
 ) -> list[dict]:
     """
     Releases all held files for an approved merchant from 02_raw_data/PENDING/{tax_id}_{short_name}
     to 02_raw_data/{tax_id}_{short_name} and runs split_and_match on them.
     """
-    target_doc_type = doc_type or domain or get_default_doc_type()
+    target_doc_type = doc_type or get_default_doc_type()
     comp_code = company_code or get_default_company_code()
     folder_name = f"{tax_id}_{short_name}"
-    pending_folder = storage_manager.get_raw_data_dir(comp_code, target_doc_type, status="PENDING", merchant_folder=folder_name)
+    pending_folder = storage_manager.get_raw_data_dir(comp_code, target_doc_type, status=MerchantStatusCode.PENDING, merchant_folder=folder_name)
     approved_folder = storage_manager.get_raw_data_dir(comp_code, target_doc_type, merchant_folder=folder_name)
     
     if not os.path.exists(pending_folder) or not os.listdir(pending_folder):

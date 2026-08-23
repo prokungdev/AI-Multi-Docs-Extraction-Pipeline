@@ -12,6 +12,7 @@ from src.core.db import (
     get_company_by_code,
     create_company,
     update_company,
+    delete_company,
 )
 from src.core.initializer import initialize_storage_directories
 
@@ -73,13 +74,19 @@ def create_new_company(
     if existing:
         raise HTTPException(status_code=409, detail=f"Company with code '{payload.company_code}' already exists")
 
-    created = create_company(
-        company_code=payload.company_code,
-        company_name=payload.company_name,
-        short_name=payload.short_name,
-        tax_id=payload.tax_id,
-        branch_code=payload.branch_code,
-    )
+    try:
+        created = create_company(
+            company_code=payload.company_code,
+            company_name=payload.company_name,
+            short_name=payload.short_name,
+            tax_id=payload.tax_id,
+            branch_code=payload.branch_code,
+        )
+    except ValueError as val_err:
+        raise HTTPException(status_code=409, detail=str(val_err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=f"Failed to create company record: {err}")
+
     if not created:
         raise HTTPException(status_code=500, detail="Failed to create company record")
 
@@ -108,8 +115,29 @@ def update_company_details(
     if not update_fields:
         return existing
 
-    success = update_company(company_id, **update_fields)
+    try:
+        success = update_company(company_id, **update_fields)
+    except ValueError as val_err:
+        raise HTTPException(status_code=409, detail=str(val_err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=f"Failed to update company record: {err}")
+
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update company record")
 
     return get_company(company_id)
+
+
+@router.delete("/{company_id_or_code}", summary="Delete a company")
+def delete_company_endpoint(
+    company_id_or_code: str,
+    db: Session = Depends(get_db_session_dep)
+):
+    """
+    Deletes a company record by UUID company_id or unique company_code.
+    """
+    success = delete_company(company_id_or_code)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Company '{company_id_or_code}' not found or failed to delete")
+    return {"status": "success", "message": f"Company '{company_id_or_code}' deleted successfully"}
+

@@ -59,15 +59,23 @@ logs/*
 !logs/.gitkeep
 
 # Local Staging & Pipeline Storage
-# Ignore all files under storage recursively (PDF, PNG, JSON, DB files)
-storage/**/*
-
-# Do not ignore .gitkeep files to maintain the workspace folder structure in Git
+# Ignore all storage runtime contents by default
+storage/**
+!storage/
+!storage/**/
 !storage/**/.gitkeep
+
+# Ignore dynamic company workspaces created at runtime
+storage/companies/*
+
+# Explicitly keep and track C00000_SAMPLE template workspace and sample assets
+!storage/companies/C00000_SAMPLE/
+!storage/companies/C00000_SAMPLE/**
 
 # Exclude SQLite Database files explicitly
 storage/**/pipeline.db
 storage/**/*.db
+
 
 
 # Output exports

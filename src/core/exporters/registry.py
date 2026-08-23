@@ -18,14 +18,16 @@ _REGISTRY: Dict[str, Dict[str, BaseOutputExporter]] = {
 }
 
 
+from src.core.constants import DefaultIdentifier
+
+
 def register_exporter(
     exporter_id: str,
     exporter_instance: BaseOutputExporter,
-    doc_type_id: str = None,
-    domain_id: str = None
+    doc_type_id: str = None
 ):
     """Dynamically registers an exporter instance under a specific doc_type."""
-    target_dt = doc_type_id or domain_id or "expense_receipt"
+    target_dt = doc_type_id or DefaultIdentifier.DOC_TYPE
     if target_dt not in _REGISTRY:
         _REGISTRY[target_dt] = {}
     _REGISTRY[target_dt][exporter_id] = exporter_instance
@@ -33,11 +35,10 @@ def register_exporter(
 
 def get_exporter(
     doc_type_id: str = None,
-    exporter_id: str = None,
-    domain_id: str = None
+    exporter_id: str = None
 ) -> BaseOutputExporter:
     """Retrieves the exporter instance for the given doc_type and exporter ID."""
-    target_dt = doc_type_id or domain_id or "expense_receipt"
+    target_dt = doc_type_id or DefaultIdentifier.DOC_TYPE
     doc_type_exporters = _REGISTRY.get(target_dt, {})
     exporter = doc_type_exporters.get(exporter_id)
     if not exporter:
@@ -45,9 +46,9 @@ def get_exporter(
     return exporter
 
 
-def list_exporters(doc_type_id: str = None, domain_id: str = None) -> List[Dict[str, Any]]:
+def list_exporters(doc_type_id: str = None) -> List[Dict[str, Any]]:
     """Lists metadata of all registered exporters for the given doc_type."""
-    target_dt = doc_type_id or domain_id or "expense_receipt"
+    target_dt = doc_type_id or DefaultIdentifier.DOC_TYPE
     doc_type_exporters = _REGISTRY.get(target_dt, {})
     results = []
     for exporter_id, inst in doc_type_exporters.items():
@@ -58,8 +59,3 @@ def list_exporters(doc_type_id: str = None, domain_id: str = None) -> List[Dict[
             "has_custom_params": getattr(inst, "has_custom_params", False)
         })
     return results
-
-
-# Alias for backward compatibility
-get_domain_exporters = list_exporters
-list_doc_type_exporters = list_exporters

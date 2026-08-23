@@ -20,6 +20,13 @@ from .models import (
     ApiCallLog,
     ApplicationLog
 )
+from src.core.constants import (
+    DefaultCompany,
+    DefaultIdentifier,
+    DocumentStatusCode,
+    EntityIdPrefix,
+    generate_entity_id,
+)
 
 
 def initialize_log_db_schema(settings_path: str = "configs/settings.json"):
@@ -163,17 +170,16 @@ def seed_initial_data(configs_dir: str = "configs"):
     from sqlalchemy import select, update
     try:
         with get_db_session() as session:
-            # 1. Seed default sandbox company (C00000_SAMPLE)
-            default_company = session.scalars(select(Company).filter_by(company_code="C00000_SAMPLE")).first()
+            # 1. Seed default sandbox company
+            default_company = session.scalars(select(Company).filter_by(company_code=DefaultCompany.CODE)).first()
             if not default_company:
-                import uuid
                 default_company = Company(
-                    company_id=str(uuid.uuid4()),
-                    company_code="C00000_SAMPLE",
-                    company_name="บริษัท ตัวอย่างทดสอบ จำกัด (สำนักงานใหญ่)",
-                    short_name="SAMPLE",
-                    tax_id="0000000000000",
-                    branch_code="00000",
+                    company_id=generate_entity_id(EntityIdPrefix.COMPANY),
+                    company_code=DefaultCompany.CODE,
+                    company_name=DefaultCompany.NAME,
+                    short_name=DefaultCompany.SHORT_NAME,
+                    tax_id=DefaultCompany.TAX_ID,
+                    branch_code=DefaultCompany.BRANCH_CODE,
                     is_active=1
                 )
                 session.add(default_company)
@@ -188,14 +194,14 @@ def seed_initial_data(configs_dir: str = "configs"):
 
             # 2. Seed document statuses
             statuses = [
-                ("PENDING", "Pending Review", "Document is waiting for initial preprocessing or splitting."),
-                ("PREPROCESSED", "Preprocessed", "Document is split and matched, ready for AI extraction."),
-                ("EXTRACTED", "Extracted", "AI successfully extracted document payload to JSON file, waiting for DB insertion."),
-                ("NEEDS_REVIEW", "Needs Review", "Document requires manual review before approval."),
-                ("PROCESSED", "Processed", "AI successfully extracted document payload, waiting for human audit."),
-                ("APPROVED", "Approved", "Document payload approved and verified for financial export."),
-                ("FAILED", "Failed", "Extraction or validation failed completely."),
-                ("IGNORED", "Ignored", "Document merchant is marked as ignored and skipped from processing."),
+                (DocumentStatusCode.PENDING, "Pending Review", "Document is waiting for initial preprocessing or splitting."),
+                (DocumentStatusCode.PREPROCESSED, "Preprocessed", "Document is split and matched, ready for AI extraction."),
+                (DocumentStatusCode.EXTRACTED, "Extracted", "AI successfully extracted document payload to JSON file, waiting for DB insertion."),
+                (DocumentStatusCode.NEEDS_REVIEW, "Needs Review", "Document requires manual review before approval."),
+                (DocumentStatusCode.PROCESSED, "Processed", "AI successfully extracted document payload, waiting for human audit."),
+                (DocumentStatusCode.APPROVED, "Approved", "Document payload approved and verified for financial export."),
+                (DocumentStatusCode.FAILED, "Failed", "Extraction or validation failed completely."),
+                (DocumentStatusCode.IGNORED, "Ignored", "Document merchant is marked as ignored and skipped from processing."),
                 ("EXPORTED", "Exported", "Document is exported to destination systems.")
             ]
             for code, name, desc_text in statuses:
@@ -211,9 +217,9 @@ def seed_initial_data(configs_dir: str = "configs"):
                 for dt_id in os.listdir(doc_types_dir):
                     dt_path = os.path.join(doc_types_dir, dt_id)
                     if os.path.isdir(dt_path) and not dt_id.startswith("."):
-                        def_src = session.scalars(select(DocumentSource).filter_by(source_id="NO_TAXID", doc_type_id=dt_id)).first()
+                        def_src = session.scalars(select(DocumentSource).filter_by(source_id=DefaultIdentifier.NO_TAX_ID, doc_type_id=dt_id)).first()
                         if not def_src:
-                            session.add(DocumentSource(source_id="NO_TAXID", doc_type_id=dt_id, display_name="No Tax ID / Cash Slip", is_active=1))
+                            session.add(DocumentSource(source_id=DefaultIdentifier.NO_TAX_ID, doc_type_id=dt_id, display_name="No Tax ID / Cash Slip", is_active=1))
 
                         sources_dir = os.path.join(dt_path, "sources")
                         if os.path.exists(sources_dir):
@@ -226,9 +232,9 @@ def seed_initial_data(configs_dir: str = "configs"):
                                         session.add(DocumentSource(source_id=entry, doc_type_id=dt_id, display_name=display_name, is_active=1))
             else:
                 for fallback_dt in ["expense_receipt", "tax_invoice"]:
-                    def_src = session.scalars(select(DocumentSource).filter_by(source_id="NO_TAXID", doc_type_id=fallback_dt)).first()
+                    def_src = session.scalars(select(DocumentSource).filter_by(source_id=DefaultIdentifier.NO_TAX_ID, doc_type_id=fallback_dt)).first()
                     if not def_src:
-                        session.add(DocumentSource(source_id="NO_TAXID", doc_type_id=fallback_dt, display_name="No Tax ID / Cash Slip", is_active=1))
+                        session.add(DocumentSource(source_id=DefaultIdentifier.NO_TAX_ID, doc_type_id=fallback_dt, display_name="No Tax ID / Cash Slip", is_active=1))
 
         logger.info("Database seeding completed.")
     except Exception as e:

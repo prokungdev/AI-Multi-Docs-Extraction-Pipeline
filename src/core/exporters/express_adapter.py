@@ -5,7 +5,7 @@ import pandas as pd
 from sqlalchemy import select, func
 from .base import BaseOutputExporter
 from src.core.db import get_db_session, Document
-from src.core.constants import DocumentStatusCode
+from src.core.constants import DocumentStatusCode, DefaultIdentifier
 
 
 class ExpressExpenseExporter(BaseOutputExporter):
@@ -19,7 +19,7 @@ class ExpressExpenseExporter(BaseOutputExporter):
 
     # Default fallback account code mapping
     DEFAULT_ACCOUNT_MAPPING = {
-        "NO_TAXID": {"acc_code": "5999-99", "desc": "Miscellaneous Expense"}
+        DefaultIdentifier.NO_TAX_ID: {"acc_code": "5999-99", "desc": "Miscellaneous Expense"}
     }
 
     def get_next_sequence_number(self) -> int:
@@ -60,11 +60,11 @@ class ExpressExpenseExporter(BaseOutputExporter):
         rows = []
         for idx, doc in enumerate(approved_docs):
             voucher_no = self.generate_running_number(prefix, idx, start_no)
-            source_id = doc.get("source_id", "NO_TAXID")
+            source_id = doc.get("source_id", DefaultIdentifier.NO_TAX_ID)
 
             mapping = self.DEFAULT_ACCOUNT_MAPPING.get(
                 source_id,
-                self.DEFAULT_ACCOUNT_MAPPING["NO_TAXID"]
+                self.DEFAULT_ACCOUNT_MAPPING[DefaultIdentifier.NO_TAX_ID]
             )
 
             # Resolve financial values

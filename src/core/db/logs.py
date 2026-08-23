@@ -16,7 +16,7 @@ class ApiCallLogCreate(BaseModel):
     Structured DTO for recording AI / API calls and telemetry in the database.
     """
     log_id: str = Field(description="Unique identifier for the API call log")
-    batch_id: str = Field(description="Parent batch ID associated with the call")
+    batch_id: Optional[str] = Field(default=None, description="Parent batch ID associated with the call")
     credential_id: Optional[str] = Field(default=None, description="ID of credential used")
     provider: str = Field(description="AI service provider (e.g. gemini, openai)")
     model_name: str = Field(description="Model identifier")

@@ -17,8 +17,8 @@ from src.core.db import (
     ProcessedBatch
 )
 from src.core.transformer import transform_data
-from src.core.config_loader import load_source_rules
-from src.core.constants import DocumentStatusCode
+from src.core.config_loader import load_doc_type_rules
+from src.core.constants import DocumentStatusCode, DefaultIdentifier
 
 def normalize_date_to_ad(date_str: str, source_era: str = "BE") -> str:
     """
@@ -51,9 +51,9 @@ def normalize_date_to_ad(date_str: str, source_era: str = "BE") -> str:
         
     return clean_date
 
-def apply_source_rules(payload: dict, doc_type: str = None, source: str = None, domain: str = None) -> tuple[dict, bool, str | None]:
+def apply_source_rules(payload: dict, doc_type: str = None, source: str = None) -> tuple[dict, bool, str | None]:
     """
-    Applies source-specific post-processing rules onto extracted JSON payload.
+    Applies doc_type post-processing rules onto extracted JSON payload.
     
     Returns:
         tuple of (updated_payload, requires_review, review_reason)
@@ -61,8 +61,8 @@ def apply_source_rules(payload: dict, doc_type: str = None, source: str = None, 
     if not isinstance(payload, dict):
         return payload, False, None
 
-    target_dt = doc_type or domain or "expense_receipt"
-    rules = load_source_rules(target_dt, source)
+    target_dt = doc_type or DefaultIdentifier.DOC_TYPE
+    rules = load_doc_type_rules(target_dt)
     post_rules = rules.get("post_processing_rules", {})
     allowed_tax_ids = [t.replace(" ", "").replace("-", "") for t in rules.get("tax_ids", []) if t]
     
@@ -74,15 +74,14 @@ def apply_source_rules(payload: dict, doc_type: str = None, source: str = None, 
     extracted_tax_id = merchant_obj.get("tax_id") or payload.get("tax_id", "")
     clean_extracted_tax_id = extracted_tax_id.replace(" ", "").replace("-", "").strip() if extracted_tax_id else ""
 
-    from src.core.constants import DefaultIdentifier
-    if source not in ("_default", DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID) and allowed_tax_ids:
+    if source not in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID) and allowed_tax_ids:
         if not clean_extracted_tax_id:
             requires_review = True
-            review_reasons.append(f"ไม่พบเลขประจำตัวผู้เสียภาษีผู้ขายในเอกสาร (ต้องการ Tax ID ของ '{source}')")
+            review_reasons.append(f"Seller Tax ID not found in document (Required Tax ID for '{source}')")
         elif clean_extracted_tax_id not in allowed_tax_ids:
             requires_review = True
             review_reasons.append(
-                f"เลขประจำตัวผู้เสียภาษีผู้ขาย ('{extracted_tax_id}') ไม่ตรงกับรายการ Tax ID ที่ได้รับอนุมัติในกฎของ '{source}'"
+                f"Seller Tax ID ('{extracted_tax_id}') does not match approved Tax IDs for '{source}'"
             )
 
     # 2. Date Normalization (BE -> AD)
@@ -142,7 +141,6 @@ def archive_and_export_document(
     payload: dict,
     original_pdf_name: str,
     doc_type_id: str = None,
-    domain_id: str = None,
     source_id: str = None,
     settings: dict = None,
     **kwargs
@@ -152,7 +150,7 @@ def archive_and_export_document(
     Copies raw file and split pages to 05_archive, and updates flattened outputs in 06_output.
     """
     from src.core.storage_manager import storage_manager
-    target_dt = doc_type_id or domain_id or "expense_receipt"
+    target_dt = doc_type_id or DefaultIdentifier.DOC_TYPE
     comp_code = kwargs.get("company_code") or "C00000_SAMPLE"
     
     # 1. Archiving Files
@@ -190,12 +188,11 @@ def archive_and_export_document(
         
     # 2. Append to Registered DocType Exporters (Output to 06_output)
     try:
-        from src.core.exporters import get_doc_type_exporters
-        exporters_list = get_doc_type_exporters(target_dt)
+        from src.core.exporters import list_exporters
+        exporters_list = list_exporters(target_dt)
         
         doc_data = {
             "payload": payload,
-            "domain_id": target_dt,
             "doc_type_id": target_dt,
             "document_id": document_id,
             "original_pdf_name": original_pdf_name
@@ -264,13 +261,13 @@ def post_process_document(
     validation_notes = []
     if net_discrepancy:
         has_ambiguous_fields = 1
-        validation_notes.append("สูตรการเงินไม่ถูกต้อง (Subtotal - Discount + VAT != Net)")
+        validation_notes.append("Financial formula mismatch (Subtotal - Discount + VAT != Net)")
     if items_discrepancy:
         has_ambiguous_fields = 1
-        validation_notes.append("ผลรวมรายการสินค้าไม่ตรงกับยอดก่อนหักส่วนลด (Sum items != Subtotal)")
+        validation_notes.append("Item sum does not match subtotal before discount (Sum items != Subtotal)")
         
     if validation_notes:
-        note_suffix = " [ตรวจสอบเพิ่มเติม: " + ", ".join(validation_notes) + "]"
+        note_suffix = " [Validation Alert: " + ", ".join(validation_notes) + "]"
         if note_suffix not in confidence_notes:
             confidence_notes += note_suffix
             
@@ -293,7 +290,7 @@ def post_process_document(
         review_priority = "LOW"
         
     # 5. Auto-Approval Rules Evaluation
-    rules = load_source_rules(target_dt, source_id)
+    rules = load_doc_type_rules(target_dt)
     auto_approve_enabled = rules.get("auto_approve_enabled", False)
     auto_approve_min_confidence = float(rules.get("auto_approve_min_confidence", 0.90))
     always_review = rules.get("always_review", not auto_approve_enabled)

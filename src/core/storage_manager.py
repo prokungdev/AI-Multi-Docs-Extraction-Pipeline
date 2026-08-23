@@ -112,10 +112,6 @@ class StoragePathManager:
         """Returns processing queue directory: storage/companies/{c}/{dt}/04_processing."""
         return self.get_stage_dir(PipelineStageFolder.PROCESSING, company_code, doc_type)
 
-    def get_extracted_dir(self, company_code: Optional[str] = None, doc_type: Optional[str] = None) -> str:
-        """Alias for get_processing_dir for extracted JSON payloads."""
-        return self.get_processing_dir(company_code, doc_type)
-
     def get_archive_dir(
         self,
         company_code: Optional[str] = None,

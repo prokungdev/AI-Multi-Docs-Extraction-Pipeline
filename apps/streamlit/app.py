@@ -18,13 +18,12 @@ if project_root not in sys.path:
 
 # Import core modules
 from src.core.pdf_splitter import split_pdf
-from src.core.source_matcher import match_source
 from src.core.extractor import extract_document_data
 from src.core.transformer import transform_data
 from src.core.constants import DefaultPath
 from src.core.initializer import (
     validate_settings_config,
-    validate_domain_config,
+    validate_doc_type_config,
     validate_environment,
     initialize_storage_directories
 )
@@ -32,7 +31,6 @@ from src.core.logger import setup_logger
 from src.core.config_loader import (
     load_system_settings,
     get_active_doc_types,
-    get_active_sources_hybrid,
     get_default_company_code,
     get_company_storage_dir,
     get_company_pipeline_folder,
@@ -48,12 +46,12 @@ from src.core.db import (
     update_document_payload,
     update_document_to_failed,
     search_documents,
-    get_domains,
+    get_doc_types,
     get_sources,
-    update_domain_active_status,
+    update_doc_type_active_status,
     update_source_active_status,
     get_pending_merchants,
-    get_all_merchants,
+    get_merchants,
     approve_merchant,
     ignore_merchant,
     upsert_merchant,
@@ -760,7 +758,7 @@ def main_app():
 
         st.divider()
         st.subheader(f"📋 รายชื่อร้านค้าทั้งหมดของบริษัท {selected_company_code} (Merchant Directory)")
-        all_merchants = get_all_merchants(company_id=selected_company_id)
+        all_merchants = get_merchants(company_id=selected_company_id)
         if all_merchants:
             df_m = pd.DataFrame(all_merchants)
             cols_to_show = [c for c in ["merchant_id", "tax_id", "merchant_name", "short_name", "status", "approved_by", "created_at"] if c in df_m.columns]
@@ -801,21 +799,32 @@ def main_app():
             df_display = df_res[[
                 "document_id", "doc_number", "doc_date", "entity_name", 
                 "total_amount", "status_code", "is_manually_edited", "confirmed_at"
-            ]].copy()
-            df_display.columns = [
-                "ID เอกสาร", "เลขที่เอกสาร", "วันที่ทำรายการ", "ชื่อร้านค้า", 
-                "ยอดเงินสุทธิ", "สถานะ", "แก้ไขด้วยคน", "วันอนุมัติ"
-            ]
-            
-            st.markdown(f"**พบลัพธ์ทั้งหมด {len(results)} รายการ**")
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
+        st.subheader("🔍 ค้นหาและตรวจสอบข้อมูลเอกสารย้อนหลัง (Audit Search)")
+        col_s1, col_s2, col_s3 = st.columns(3)
+        with col_s1:
+            search_query = st.text_input("คำค้นหา (ชื่อร้าน / เลขใบเสร็จ / เลขผู้เสียภาษี)", "")
+        with col_s2:
+            status_filter = st.selectbox("สถานะเอกสาร", ["ทั้งหมด", "EXTRACTED", "APPROVED", "FAILED", "NEEDS_REVIEW"])
+        with col_s3:
+            search_btn = st.button("ค้นหาข้อมูล", use_container_width=True)
+
+        if search_btn or search_query:
+            status_arg = None if status_filter == "ทั้งหมด" else status_filter
+            search_results = search_documents(query=search_query, status=status_arg)
+            if search_results:
+                st.success(f"พบข้อมูลทั้งหมด {len(search_results)} รายการ")
+                df_search = pd.DataFrame(search_results)
+                cols_to_display = [c for c in ["document_id", "doc_type_id", "merchant_name", "tax_id", "receipt_number", "status_code", "created_at"] if c in df_search.columns]
+                st.dataframe(df_search[cols_to_display], use_container_width=True, hide_index=True)
+            else:
+                st.info("ไม่พบข้อมูลเอกสารตามเงื่อนไขที่ระบุ")
             
             # Select row for detail preview
-            doc_ids = [r["document_id"] for r in results]
+            doc_ids = [r["document_id"] for r in search_results]
             select_detail_id = st.selectbox("เลือกเอกสารเพื่อดูรายละเอียดและภาพสแกน", doc_ids, format_func=lambda x: f"เอกสาร ID: {x[:8]}...")
             
             if select_detail_id:
-                selected_result = [r for r in results if r["document_id"] == select_detail_id][0]
+                selected_result = [r for r in search_results if r["document_id"] == select_detail_id][0]
                 
                 col_det1, col_det2 = st.columns([1.0, 1.2])
                 with col_det1:
@@ -917,11 +926,11 @@ def main_app():
 
         # 2. Manage doc_types
         st.markdown("#### 📂 2. จัดการประเภทเอกสาร (Manage Doc Types)")
-        all_doc_types = get_domains()
+        all_doc_types = get_doc_types()
         
         # Draw columns/grid for doc_types
         for d in all_doc_types:
-            dt_id = d.get("doc_type_id") or d.get("domain_id")
+            dt_id = d.get("doc_type_id")
             col_d_name, col_d_toggle = st.columns([3, 1])
             with col_d_name:
                 st.write(f"**{d['display_name']}** (ID: `{dt_id}`)")
@@ -929,7 +938,7 @@ def main_app():
                 is_act = d["is_active"] == 1
                 toggle_val = st.checkbox("เปิดใช้งาน", value=is_act, key=f"doc_type_toggle_{dt_id}")
                 if toggle_val != is_act:
-                    update_domain_active_status(dt_id, 1 if toggle_val else 0)
+                    update_doc_type_active_status(dt_id, 1 if toggle_val else 0)
                     st.toast(f"อัปเดตประเภทเอกสาร {dt_id} เป็น {'เปิด' if toggle_val else 'ปิด'} เรียบร้อย", icon="⚙️")
                     st.cache_data.clear()
                     st.rerun()

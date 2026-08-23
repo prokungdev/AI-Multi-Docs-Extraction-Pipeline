@@ -18,7 +18,13 @@ from .models import (
     ExpenseReceipt,
     ExpenseReceiptItem
 )
-from src.core.constants import DefaultIdentifier, DefaultPath
+from src.core.constants import (
+    DefaultIdentifier,
+    DefaultCompany,
+    DefaultPath,
+    EntityIdPrefix,
+    generate_entity_id,
+)
 
 
 def get_or_create_default_company() -> dict:
@@ -27,16 +33,16 @@ def get_or_create_default_company() -> dict:
     """
     try:
         with get_db_session() as session:
-            stmt = select(Company).filter_by(company_code=DefaultIdentifier.COMPANY_CODE)
+            stmt = select(Company).filter_by(company_code=DefaultCompany.CODE)
             comp = session.scalars(stmt).first()
             if not comp:
                 comp = Company(
-                    company_id=str(uuid.uuid4()),
-                    company_code=DefaultIdentifier.COMPANY_CODE,
-                    company_name="บริษัท ตัวอย่างทดสอบ จำกัด (สำนักงานใหญ่)",
-                    short_name="SAMPLE",
-                    tax_id="0000000000000",
-                    branch_code="00000",
+                    company_id=generate_entity_id(EntityIdPrefix.COMPANY),
+                    company_code=DefaultCompany.CODE,
+                    company_name=DefaultCompany.NAME,
+                    short_name=DefaultCompany.SHORT_NAME,
+                    tax_id=DefaultCompany.TAX_ID,
+                    branch_code=DefaultCompany.BRANCH_CODE,
                     is_active=1
                 )
                 session.add(comp)
@@ -56,7 +62,8 @@ def create_company(company_code: str, company_name: str, short_name: str = None,
     Creates a new client company entity in the database.
     """
     clean_code = company_code.strip().upper()
-    cid = company_id or str(uuid.uuid4())
+    clean_tax_id = tax_id.strip() if tax_id and tax_id.strip() else None
+    cid = company_id or generate_entity_id(EntityIdPrefix.COMPANY)
     s_name = (short_name or clean_code.split("_")[-1]).strip().upper()
     now_str = datetime.now(timezone.utc).isoformat()
 
@@ -68,12 +75,20 @@ def create_company(company_code: str, company_name: str, short_name: str = None,
                 logger.warning(f"Company code '{clean_code}' already exists.")
                 return existing.to_dict()
 
+            if clean_tax_id:
+                stmt_tax = select(Company).filter_by(tax_id=clean_tax_id)
+                existing_tax = session.scalars(stmt_tax).first()
+                if existing_tax:
+                    error_msg = f"Tax ID '{clean_tax_id}' already registered for company '{existing_tax.company_code}'."
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+
             comp = Company(
                 company_id=cid,
                 company_code=clean_code,
                 company_name=company_name.strip(),
                 short_name=s_name,
-                tax_id=tax_id.strip() if tax_id else None,
+                tax_id=clean_tax_id,
                 branch_code=branch_code.strip() if branch_code else "00000",
                 is_active=is_active,
                 created_at=now_str
@@ -148,6 +163,17 @@ def update_company(company_id: str, **kwargs) -> bool:
             comp = session.scalars(stmt).first()
             if not comp:
                 return False
+
+            if "tax_id" in kwargs and kwargs["tax_id"]:
+                new_tax = kwargs["tax_id"].strip()
+                stmt_tax = select(Company).where(
+                    Company.tax_id == new_tax,
+                    Company.company_id != company_id
+                )
+                existing_tax = session.scalars(stmt_tax).first()
+                if existing_tax:
+                    raise ValueError(f"Tax ID '{new_tax}' already registered for company '{existing_tax.company_code}'.")
+
             for k, v in kwargs.items():
                 if hasattr(comp, k):
                     setattr(comp, k, v)
@@ -155,6 +181,27 @@ def update_company(company_id: str, **kwargs) -> bool:
             return True
     except Exception as e:
         logger.error(f"Failed to update company '{company_id}': {e}")
+        return False
+
+
+def delete_company(company_id_or_code: str) -> bool:
+    """
+    Deletes a company record by UUID company_id or unique company_code.
+    Pure SQLAlchemy 2.0 pattern.
+    """
+    try:
+        with get_db_session() as session:
+            stmt = select(Company).where(
+                (Company.company_id == company_id_or_code) |
+                (func.upper(Company.company_code) == company_id_or_code.strip().upper())
+            )
+            comp = session.scalars(stmt).first()
+            if not comp:
+                return False
+            session.delete(comp)
+            return True
+    except Exception as e:
+        logger.error(f"Failed to delete company '{company_id_or_code}': {e}")
         return False
 
 
@@ -187,9 +234,6 @@ def get_doc_types(settings_path: str = DefaultPath.SETTINGS) -> list[dict]:
         return []
 
 
-def get_domains(settings_path: str = DefaultPath.SETTINGS) -> list[dict]:
-    """Deprecated alias for get_doc_types()."""
-    return get_doc_types(settings_path)
 
 
 def get_sources(doc_type_id: str) -> list[dict]:
@@ -227,9 +271,6 @@ def update_doc_type_active_status(doc_type_id: str, is_active: int, settings_pat
         return False
 
 
-def update_domain_active_status(domain_id: str, is_active: int, settings_path: str = DefaultPath.SETTINGS) -> bool:
-    """Deprecated alias for update_doc_type_active_status()."""
-    return update_doc_type_active_status(domain_id, is_active, settings_path)
 
 
 def update_source_active_status(source_id: str, doc_type_id: str, is_active: int) -> bool:
@@ -296,9 +337,6 @@ def get_merchants(company_id: str = None) -> list[dict]:
         return []
 
 
-def get_all_merchants(company_id: str = None) -> list[dict]:
-    """Alias for get_merchants()."""
-    return get_merchants(company_id=company_id)
 
 
 def get_pending_merchants(company_id: str = None) -> list[dict]:
@@ -465,7 +503,7 @@ def get_or_create_merchant_auto(
                 return existing.to_dict(), False
 
             # 3. Create new merchant in PENDING status
-            merchant_id = f"merch_{uuid.uuid4().hex[:8]}"
+            merchant_id = generate_entity_id(EntityIdPrefix.MERCHANT)
             raw_short_name = suggested_short_name or sanitize_short_name(clean_name)
             base_short_name = raw_short_name
             candidate_short_name = base_short_name
@@ -495,12 +533,12 @@ def get_or_create_merchant_auto(
     except Exception as e:
         logger.error(f"Failed in get_or_create_merchant_auto for '{merchant_name}': {e}")
         return {
-            "merchant_id": f"merch_fallback_{uuid.uuid4().hex[:6]}",
+            "merchant_id": generate_entity_id(EntityIdPrefix.MERCHANT),
             "company_id": company_id,
             "tax_id": clean_tax_id,
             "merchant_name": clean_name,
-            "short_name": "merchant",
-            "file_prefix": "merchant",
+            "short_name": DefaultIdentifier.DEFAULT_SHORT_NAME,
+            "file_prefix": DefaultIdentifier.DEFAULT_SHORT_NAME,
             "status_code": MerchantStatus.PENDING.value,
             "created_at": now_str
         }, True
@@ -579,7 +617,7 @@ def upsert_merchant(merchant_data: dict) -> bool:
         with get_db_session() as session:
             m_id = merchant_data.get("merchant_id")
             if not m_id:
-                m_id = f"merch_{uuid.uuid4().hex[:8]}"
+                m_id = generate_entity_id(EntityIdPrefix.MERCHANT)
 
             stmt = select(Merchant).filter_by(merchant_id=m_id)
             merchant = session.scalars(stmt).first()
@@ -707,7 +745,7 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
             # 2. Match merchant in merchants
             merchant_id = match_merchant(tax_id, merchant_name, company_id=target_cid)
             if not merchant_id:
-                merchant_id = f"mer_{uuid.uuid4().hex[:12]}"
+                merchant_id = generate_entity_id(EntityIdPrefix.MERCHANT)
                 short_name = sanitize_short_name(merchant_name)
                 new_m = Merchant(
                     merchant_id=merchant_id,
@@ -730,7 +768,7 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
                 session.delete(r)
             session.flush()
 
-            receipt_id = f"rcpt_{uuid.uuid4().hex[:12]}"
+            receipt_id = generate_entity_id(EntityIdPrefix.RECEIPT)
 
             # 4. Save Header
             subtotal = totals_obj.get("subtotal", 0.0)
@@ -772,7 +810,7 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
                 total_price = item.get("total_price", 0.0)
 
                 detail_item = ExpenseReceiptItem(
-                    item_id=f"itm_{uuid.uuid4().hex[:12]}",
+                    item_id=generate_entity_id(EntityIdPrefix.ITEM),
                     receipt_id=receipt_id,
                     item_name=item_name,
                     quantity=float(qty),

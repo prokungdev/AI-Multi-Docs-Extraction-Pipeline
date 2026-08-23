@@ -3,17 +3,12 @@ import json
 import copy
 from PIL import Image
 from src.core.logger import logger
-from src.core.config_loader import load_source_ai_config, load_system_settings, get_ai_provider_config
+from src.core.config_loader import load_doc_type_ai_config, load_system_settings, get_ai_provider_config, get_default_doc_type
 from src.core.ai_service import ai_service
 
 def clean_schema_for_structured_output(schema: dict) -> dict:
-    """
-    Converts a standard JSON Schema dictionary into the OpenAPI schema format
-    required by multimodal LLM APIs (e.g. uppercase types, removing root meta keys).
-    """
+    """Converts a standard JSON Schema dictionary into the OpenAPI uppercase schema format."""
     schema_copy = copy.deepcopy(schema)
-    
-    # Remove root-level metadata keys that LLM providers do not support
     schema_copy.pop("$schema", None)
     schema_copy.pop("title", None)
     
@@ -21,11 +16,9 @@ def clean_schema_for_structured_output(schema: dict) -> dict:
         if not isinstance(d, dict):
             return d
             
-        # Convert type values to uppercase (e.g., 'object' -> 'OBJECT')
         if "type" in d and isinstance(d["type"], str):
             d["type"] = d["type"].upper()
             
-        # Recursively traverse nested items and properties
         for k, v in d.items():
             if isinstance(v, dict):
                 convert_types(v)
@@ -38,27 +31,20 @@ def clean_schema_for_structured_output(schema: dict) -> dict:
     return convert_types(schema_copy)
 
 
-# Backward compatibility alias
-clean_schema_for_gemini = clean_schema_for_structured_output
-
 def extract_document_data(
     image_paths: str | list[str],
     source: str,
     doc_type: str = None,
-    domain: str = None,
     configs_dir: str = "configs",
     batch_id: str = None,
-    chunk_index: int = 1
+    chunk_index: int = 1,
+    company_id: str = None,
 ) -> dict:
-    """
-    Extracts structured data from one or more image files using the configured
-    multimodal vision AI provider and doc_type-specific prompt/schema configurations.
-    """
-    target_doc_type = doc_type or domain or "expense_receipt"
+    """Extracts structured data from document images using multimodal AI and configured schemas."""
+    target_doc_type = doc_type or get_default_doc_type()
     if isinstance(image_paths, str):
         image_paths = [image_paths]
 
-    # Load settings to check max_images_per_request
     settings_path = os.path.join(configs_dir, "settings.json")
     settings = load_system_settings(settings_path)
     ai_cfg = get_ai_provider_config(settings)
@@ -69,23 +55,12 @@ def extract_document_data(
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    # Resolve AI provider and model configuration for this source
-    provider, model_name = load_source_ai_config(target_doc_type, source, settings)
-    logger.info(f"AI Config resolved for source '{source}': Provider='{provider}', Model='{model_name}'")
+    # Resolve AI provider and model configuration for this doc_type
+    provider, model_name = load_doc_type_ai_config(target_doc_type, settings)
+    logger.info(f"AI Config resolved for doc_type '{target_doc_type}' (source '{source}'): Provider='{provider}', Model='{model_name}'")
 
     from src.core.config_loader import load_doc_type_schema, load_doc_type_prompt
-    raw_schema = load_doc_type_schema(target_doc_type, configs_dir)
-    if not raw_schema:
-        # Fallback to direct path check
-        dt_dir = os.path.join(configs_dir, "doc_types", target_doc_type)
-        if not os.path.exists(dt_dir):
-            dt_dir = os.path.join(configs_dir, "domains", target_doc_type)
-        schema_path = os.path.join(dt_dir, "schema.json")
-        if os.path.exists(schema_path):
-            with open(schema_path, "r", encoding="utf-8") as f:
-                raw_schema = json.load(f)
-        else:
-            raise FileNotFoundError(f"Schema file not found for doc_type: {target_doc_type}")
+    raw_schema = load_doc_type_schema(target_doc_type, configs_dir=configs_dir)
         
     # 1. Clean the schema for structured output
     cleaned_schema = clean_schema_for_structured_output(raw_schema)
@@ -208,7 +183,10 @@ def extract_document_data(
     # 4. Resolve active credentials from settings
     ai_provider_cfg = settings.get("ai_provider", {})
     provider_cfg = ai_provider_cfg.get(provider, {})
-    default_env_var = provider_cfg.get("api_key_env", "GEMINI_API_KEY")
+    default_env_var = provider_cfg.get("api_key_env")
+    if not default_env_var:
+        raise ValueError(f"Missing required 'api_key_env' for AI provider '{provider}' in {settings_path}")
+
     credentials = [{
         "credential_id": "default",
         "provider": provider,
@@ -228,6 +206,7 @@ def extract_document_data(
         model_name=model_name,
         batch_id=batch_id,
         chunk_index=chunk_index,
+        company_id=company_id,
     )
     return extracted_data
 
@@ -242,17 +221,17 @@ async def async_extract_document_data(
     image_paths: str | list[str],
     source: str,
     doc_type: str = None,
-    domain: str = None,
     configs_dir: str = "configs",
     batch_id: str = None,
     chunk_index: int = 1,
+    company_id: str = None,
     semaphore: asyncio.Semaphore = None
 ) -> dict:
     """
     Asynchronously extracts structured data from image files using AI
     while enforcing concurrency limits via asyncio.Semaphore.
     """
-    target_doc_type = doc_type or domain or "expense_receipt"
+    target_doc_type = doc_type or get_default_doc_type()
     if semaphore:
         async with semaphore:
             return await asyncio.to_thread(
@@ -262,7 +241,8 @@ async def async_extract_document_data(
                 doc_type=target_doc_type,
                 configs_dir=configs_dir,
                 batch_id=batch_id,
-                chunk_index=chunk_index
+                chunk_index=chunk_index,
+                company_id=company_id,
             )
     else:
         return await asyncio.to_thread(
@@ -272,5 +252,6 @@ async def async_extract_document_data(
             doc_type=target_doc_type,
             configs_dir=configs_dir,
             batch_id=batch_id,
-            chunk_index=chunk_index
+            chunk_index=chunk_index,
+            company_id=company_id,
         )

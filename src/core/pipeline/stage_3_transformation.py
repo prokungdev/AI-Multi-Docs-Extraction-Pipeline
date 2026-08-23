@@ -18,12 +18,12 @@ from src.core.db import (
     get_company_by_code,
 )
 from src.core.models import DocumentStatus
+from src.core.constants import EntityIdPrefix, generate_entity_id
 from src.core.post_processor import post_process_document
 
 
 def transform_to_db(
     doc_type: str = None,
-    domain: str = None,
     company_code: str = None
 ) -> dict:
     """
@@ -37,7 +37,7 @@ def transform_to_db(
     comp_info = get_company_by_code(comp_code)
     company_id = comp_info["company_id"] if comp_info else None
 
-    target_doc_type = doc_type or domain or get_default_doc_type()
+    target_doc_type = doc_type or get_default_doc_type()
 
     from src.core.storage_manager import storage_manager
     queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)
@@ -66,7 +66,7 @@ def transform_to_db(
 
             folder_name = os.path.basename(storage_path)
             from src.core.constants import DefaultIdentifier
-            source = DefaultIdentifier.NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
+            source = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
 
             image_basename = os.path.splitext(os.path.basename(image_path))[0]
             json_filename = f"{image_basename}.json"
@@ -91,7 +91,7 @@ def transform_to_db(
                 failed_count += 1
                 continue
 
-            document_id = str(uuid.uuid4())
+            document_id = generate_entity_id(EntityIdPrefix.DOCUMENT)
             post_result = post_process_document(
                 document_id=document_id,
                 payload=extracted_data,

@@ -21,7 +21,6 @@ run_transform_to_db = transform_to_db
 
 def run_export_outputs(
     doc_type: str = None,
-    domain: str = None,
     company_code: str = DefaultIdentifier.COMPANY_CODE
 ) -> Dict[str, Any]:
     """Exports approved and processed documents to registered format strategies."""
@@ -29,7 +28,7 @@ def run_export_outputs(
     from src.core.exporters.registry import list_exporters
     from src.core.storage_manager import storage_manager
 
-    target_doc_type = doc_type or domain or DefaultIdentifier.DOC_TYPE
+    target_doc_type = doc_type or DefaultIdentifier.DOC_TYPE
     comp = get_company_by_code(company_code)
     comp_id = comp["company_id"] if comp else None
     approved_docs = get_documents_for_export(target_doc_type, company_id=comp_id)
@@ -54,11 +53,10 @@ def run_export_outputs(
 
 def run_pipeline_all(
     doc_type: str = None,
-    domain: str = None,
     company_code: str = DefaultIdentifier.COMPANY_CODE
 ) -> Dict[str, Any]:
     """Executes full pipeline stages from Stage 0 to Stage 4 end-to-end."""
-    target_doc_type = doc_type or domain or DefaultIdentifier.DOC_TYPE
+    target_doc_type = doc_type or DefaultIdentifier.DOC_TYPE
     results = {}
     results["stage_0_init"] = init_system(company_code=company_code)
     results["stage_1_ingestion"] = split_and_match(doc_type=target_doc_type, company_code=company_code)

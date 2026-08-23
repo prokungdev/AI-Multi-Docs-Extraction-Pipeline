@@ -32,8 +32,8 @@ def get_pricing_config() -> Dict[str, Any]:
         exchange_rate = pricing_cfg.get("exchange_rate_thb", DEFAULT_EXCHANGE_RATE_THB)
 
         ai_cfg = settings.get("ai_provider", {})
-        active_prov = ai_cfg.get("active_provider", "gemini")
-        prov_cfg = ai_cfg.get(active_prov, {})
+        active_prov = ai_cfg.get("active_provider")
+        prov_cfg = ai_cfg.get(active_prov, {}) if active_prov else {}
         billing_tier = prov_cfg.get("billing_tier") or ai_cfg.get("billing_tier", "paid")
 
         return {

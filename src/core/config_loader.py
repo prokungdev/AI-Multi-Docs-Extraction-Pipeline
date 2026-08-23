@@ -2,7 +2,7 @@ import os
 import json
 from functools import lru_cache
 from src.core.logger import logger
-from src.core.db import get_domains, get_sources
+from src.core.db import get_doc_types
 from src.core.constants import (
     DefaultPath,
     DefaultIdentifier,
@@ -12,28 +12,19 @@ from src.core.constants import (
 
 @lru_cache(maxsize=4)
 def load_system_settings(settings_path: str = DefaultPath.SETTINGS) -> dict:
-    """
-    Loads central settings.json with caching.
-    """
+    """Loads central system settings from JSON with LRU caching."""
     if not os.path.exists(settings_path):
-        logger.warning(f"Settings file not found at: {settings_path}")
-        return {}
+        raise FileNotFoundError(f"Required system configuration file not found at: '{settings_path}'")
     try:
         with open(settings_path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        logger.error(f"Failed to parse settings.json: {e}")
-        return {}
-
-
-# Backward compatibility alias
-load_settings = load_system_settings
+        logger.error(f"Failed to parse settings.json at '{settings_path}': {e}")
+        raise
 
 
 def get_app_metadata(settings_path: str = DefaultPath.SETTINGS) -> dict:
-    """
-    Returns application metadata (name, version, description) with static fallbacks.
-    """
+    """Returns application metadata with fallback to static constants."""
     settings = load_system_settings(settings_path)
     return {
         "app_name": settings.get("app_name", AppMetadata.NAME),
@@ -43,10 +34,7 @@ def get_app_metadata(settings_path: str = DefaultPath.SETTINGS) -> dict:
 
 
 def get_validation_thresholds(settings_path: str = DefaultPath.SETTINGS) -> dict:
-    """
-    Returns strict validation thresholds dictionary from settings.json.
-    Raises KeyError immediately if required section is missing.
-    """
+    """Returns validation thresholds dictionary from settings.json."""
     settings = load_system_settings(settings_path)
     if "validation_thresholds" not in settings:
         raise KeyError("Required configuration 'validation_thresholds' is missing in settings.json.")
@@ -81,33 +69,27 @@ def get_default_doc_type() -> str:
     return DefaultIdentifier.DOC_TYPE
 
 
-def get_default_domain() -> str:
-    """Deprecated alias for get_default_doc_type()."""
-    return get_default_doc_type()
-
-
 def get_active_doc_types() -> list[dict]:
     """
     Returns only doc_types that are active from Database or settings.json.
     """
     try:
-        domains = get_domains()
-        if domains:
-            return [d for d in domains if d.get("is_active") == 1]
+        doc_types = get_doc_types()
+        if doc_types:
+            return [d for d in doc_types if d.get("is_active") == 1]
     except Exception as e:
         logger.error(f"Error loading active doc_types from DB: {e}")
 
     # Fallback to settings.json
     settings = load_system_settings()
-    doc_types = settings.get("doc_types") or settings.get("domains", [])
+    doc_types = settings.get("doc_types", [])
     result = []
     for dt in doc_types:
         if isinstance(dt, dict) and dt.get("is_active", True):
-            dt_id = dt.get("doc_type_id") or dt.get("domain_id")
+            dt_id = dt.get("doc_type_id")
             if dt_id:
                 result.append({
                     "doc_type_id": dt_id,
-                    "domain_id": dt_id,
                     "display_name": dt.get("display_name", dt_id),
                     "is_active": 1,
                     "sort_order": dt.get("sort_order", 1)
@@ -115,50 +97,13 @@ def get_active_doc_types() -> list[dict]:
     return result
 
 
-def get_active_domains_hybrid() -> list[dict]:
-    """Deprecated alias for get_active_doc_types()."""
-    return get_active_doc_types()
-
-
 def is_doc_type_active(doc_type_id: str) -> bool:
     """
     Checks if a doc_type is active.
     """
     active_types = get_active_doc_types()
-    return any(
-        (d.get("doc_type_id") == doc_type_id or d.get("domain_id") == doc_type_id)
-        for d in active_types
-    )
+    return any(d.get("doc_type_id") == doc_type_id for d in active_types)
 
-
-def is_domain_active(domain_id: str) -> bool:
-    """Deprecated alias for is_doc_type_active()."""
-    return is_doc_type_active(domain_id)
-
-
-def get_active_sources_hybrid(doc_type_id: str) -> list[str]:
-    """
-    Returns a list of active sources for a doc_type.
-    Defaults to ['_default'] when standardized doc_types configs are used.
-    """
-    try:
-        db_sources = get_sources(doc_type_id)
-        active_sources = [s["source_id"] for s in db_sources if s["is_active"] == 1]
-        if active_sources:
-            return active_sources
-    except Exception as e:
-        logger.error(f"Error loading active sources for '{doc_type_id}': {e}")
-    return ["_default"]
-
-
-def is_source_active(doc_type_id: str, source_id: str) -> bool:
-    """
-    Checks if a source is active.
-    """
-    if source_id in ["_default", "default", "standard"]:
-        return True
-    active_sources = get_active_sources_hybrid(doc_type_id)
-    return source_id in active_sources
 
 
 def get_default_company_code() -> str:
@@ -205,118 +150,136 @@ def get_doc_type_config_dir(doc_type_id: str, company_code: str = None, configs_
     return os.path.join(configs_dir, "doc_types", doc_type_id)
 
 
-def load_doc_type_schema(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> dict:
+def get_doctype_file_path(
+    doc_type_id: str,
+    file_key: str,
+    company_code: str = None,
+    configs_dir: str = "configs",
+    settings_path: str = DefaultPath.SETTINGS
+) -> str:
     """
-    Loads extract-schema.json (or schema.json fallback) for a doc_type with company layered fallback.
+    Resolves the exact file path for a doc_type based on settings.json 'files' configuration.
+    Fail-Fast: Raises KeyError or FileNotFoundError if doc_type, file_key, or file on disk is missing.
     """
+    settings = load_system_settings(settings_path)
+    doc_types = settings.get("doc_types", [])
+    matched_dt = next((dt for dt in doc_types if dt.get("doc_type_id") == doc_type_id), None)
+    if not matched_dt:
+        raise KeyError(f"DocType '{doc_type_id}' is not registered in 'doc_types' within '{settings_path}'")
+
+    files_cfg = matched_dt.get("files")
+    if not files_cfg or not isinstance(files_cfg, dict):
+        raise KeyError(f"Missing required 'files' configuration for doc_type '{doc_type_id}' in '{settings_path}'")
+
+    file_name = files_cfg.get(file_key)
+    if not file_name:
+        raise KeyError(f"File key '{file_key}' is not defined in 'files' for doc_type '{doc_type_id}' in '{settings_path}'")
+
     cfg_dir = get_doc_type_config_dir(doc_type_id, company_code=company_code, configs_dir=configs_dir)
-    for candidate in ["extract-schema.json", "schema.json"]:
-        schema_path = os.path.join(cfg_dir, candidate)
-        if os.path.exists(schema_path):
-            try:
-                with open(schema_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error(f"Error loading schema for '{doc_type_id}' (company '{company_code}'): {e}")
-    return {}
+    full_path = os.path.join(cfg_dir, file_name).replace("\\", "/")
+    if not os.path.exists(full_path):
+        raise FileNotFoundError(
+            f"Configured file '{file_name}' (key: '{file_key}') for doc_type '{doc_type_id}' not found at: '{full_path}'"
+        )
+
+    return full_path
+
+
+def load_doc_type_schema(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> dict:
+    """Loads extraction JSON schema for a doc_type."""
+    schema_path = get_doctype_file_path(doc_type_id, "extract_schema", company_code=company_code, configs_dir=configs_dir)
+    with open(schema_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_doc_type_classify_schema(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> dict:
+    """Loads classifier JSON schema for a doc_type."""
+    schema_path = get_doctype_file_path(doc_type_id, "classify_schema", company_code=company_code, configs_dir=configs_dir)
+    with open(schema_path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def load_doc_type_prompt(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> str:
-    """
-    Loads extract-prompt.txt (or prompt.txt fallback) for a doc_type with company layered fallback.
-    """
-    cfg_dir = get_doc_type_config_dir(doc_type_id, company_code=company_code, configs_dir=configs_dir)
-    for candidate in ["extract-prompt.txt", "prompt.txt"]:
-        prompt_path = os.path.join(cfg_dir, candidate)
-        if os.path.exists(prompt_path):
-            try:
-                with open(prompt_path, "r", encoding="utf-8") as f:
-                    return f.read().strip()
-            except Exception as e:
-                logger.error(f"Error loading prompt for '{doc_type_id}' (company '{company_code}'): {e}")
-    return ""
+    """Loads extraction prompt text for a doc_type."""
+    prompt_path = get_doctype_file_path(doc_type_id, "extract_prompt", company_code=company_code, configs_dir=configs_dir)
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        return f.read().strip()
 
 
 def load_doc_type_classify_prompt(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> str:
-    """
-    Loads classify-prompt.txt for a doc_type with company layered fallback.
-    """
-    cfg_dir = get_doc_type_config_dir(doc_type_id, company_code=company_code, configs_dir=configs_dir)
-    prompt_path = os.path.join(cfg_dir, "classify-prompt.txt")
-    if os.path.exists(prompt_path):
-        try:
-            with open(prompt_path, "r", encoding="utf-8") as f:
-                return f.read().strip()
-        except Exception as e:
-            logger.error(f"Error loading classify prompt for '{doc_type_id}' (company '{company_code}'): {e}")
-    return ""
+    """Loads classifier prompt text for a doc_type."""
+    prompt_path = get_doctype_file_path(doc_type_id, "classify_prompt", company_code=company_code, configs_dir=configs_dir)
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        return f.read().strip()
 
 
 def load_doc_type_rules(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> dict:
-    """
-    Loads extract-rules.json (or rules.json fallback) for a doc_type with company layered fallback.
-    """
-    cfg_dir = get_doc_type_config_dir(doc_type_id, company_code=company_code, configs_dir=configs_dir)
-    for candidate in ["extract-rules.json", "rules.json"]:
-        rules_path = os.path.join(cfg_dir, candidate)
-        if os.path.exists(rules_path):
-            try:
-                with open(rules_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error(f"Error loading rules for '{doc_type_id}' (company '{company_code}'): {e}")
-    return {}
+    """Loads extraction business rules JSON for a doc_type."""
+    rules_path = get_doctype_file_path(doc_type_id, "extract_rules", company_code=company_code, configs_dir=configs_dir)
+    with open(rules_path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
-def load_source_rules(domain_id: str, source_id: str = "_default", company_code: str = None, configs_dir: str = "configs") -> dict:
+def load_doc_type_ai_config(doc_type_id: str, settings: dict = None) -> tuple[str, str]:
     """
-    Loads rules for a doc_type/domain (backward compatibility layer).
-    """
-    return load_doc_type_rules(domain_id, company_code=company_code, configs_dir=configs_dir)
-
-
-def load_source_ai_config(domain_id: str, source_id: str = "_default", settings: dict = None) -> tuple[str, str]:
-    """
-    Resolves the AI provider and model name for a specific doc_type/source.
+    Resolves the AI provider and model name for a specific doc_type.
     """
     if settings is None:
         settings = load_system_settings()
-        
+
     provider = None
     model = None
-    
-    rules = load_doc_type_rules(domain_id)
-    if rules:
-        provider = rules.get("ai_provider")
-        model = rules.get("ai_model")
-            
+
+    try:
+        rules = load_doc_type_rules(doc_type_id)
+        if rules:
+            provider = rules.get("ai_provider")
+            model = rules.get("ai_model")
+    except Exception:
+        pass
+
     ai_provider_cfg = settings.get("ai_provider", {})
     if not provider:
-        provider = ai_provider_cfg.get("active_provider", "gemini")
+        provider = ai_provider_cfg.get("active_provider")
+        if not provider:
+            raise ValueError(f"Missing 'active_provider' in 'ai_provider' settings.")
+
     if not model:
         provider_cfg = ai_provider_cfg.get(provider, {})
-        model = provider_cfg.get("model_name", "gemini-3.5-flash")
+        model = provider_cfg.get("model_name")
+        if not model:
+            raise ValueError(f"Missing required 'model_name' for AI provider '{provider}' in settings.")
+
     return provider, model
 
 
 def get_ai_provider_config(settings: dict = None) -> dict:
-    """
-    Returns AI provider configuration dictionary.
-    """
+    """Returns AI provider configuration dictionary."""
     if settings is None:
         settings = load_system_settings()
     ai_cfg = settings.get("ai_provider", {})
-    max_images = ai_cfg.get("max_images_per_request", settings.get("max_images_per_request", 50))
-    active_provider = ai_cfg.get("active_provider", "gemini")
+    active_provider = ai_cfg.get("active_provider")
+    if not active_provider:
+        raise ValueError("Missing required 'active_provider' in 'ai_provider' settings.")
+
     provider_details = ai_cfg.get(active_provider, {})
+    model_name = provider_details.get("model_name")
+    if not model_name:
+        raise ValueError(f"Missing required 'model_name' for AI provider '{active_provider}' in settings.")
+
+    api_key_env = provider_details.get("api_key_env")
+    if not api_key_env:
+        raise ValueError(f"Missing required 'api_key_env' for AI provider '{active_provider}' in settings.")
+
+    max_images = ai_cfg.get("max_images_per_request", settings.get("max_images_per_request", 50))
     max_concurrent = provider_details.get("max_concurrent_requests", provider_details.get("concurrency", 8))
 
     return {
         "active_provider": active_provider,
         "max_retries": int(ai_cfg.get("max_retries", 3)),
         "max_images_per_request": int(max_images),
-        "model_name": provider_details.get("model_name", "gemini-3.5-flash"),
-        "api_key_env": provider_details.get("api_key_env", "GEMINI_API_KEY"),
+        "model_name": model_name,
+        "api_key_env": api_key_env,
         "max_concurrent_requests": int(max_concurrent)
     }
 

@@ -113,7 +113,6 @@ def validate_and_process_payload(
     payload: dict,
     doc_type: str = None,
     source: str = None,
-    domain: str = None,
     settings_path: str = DefaultPath.SETTINGS
 ) -> tuple[dict, str, list[str]]:
     """
@@ -121,7 +120,7 @@ def validate_and_process_payload(
     using strictly configured thresholds from settings.json.
     """
     validation_notes = []
-    target_dt = doc_type or domain or "expense_receipt"
+    target_dt = doc_type or DefaultIdentifier.DOC_TYPE
     thresholds = get_validation_thresholds(settings_path)
     financial_tolerance = float(thresholds["financial_tolerance"])
     confidence_high = float(thresholds["confidence_high"])

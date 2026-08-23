@@ -83,9 +83,9 @@ def validate_settings_config(settings_path: str = DefaultPath.SETTINGS) -> tuple
 
 
 
-def validate_doc_type_config(doc_type: str, configs_dir: str = "configs") -> tuple[bool, list[str]]:
+def validate_doc_type_config(doc_type: str, configs_dir: str = "configs", settings_path: str = DefaultPath.SETTINGS) -> tuple[bool, list[str]]:
     """
-    Validates extract-schema.json, extract-prompt.txt, and extract-rules.json for a specific doc_type.
+    Validates all files configured in settings.json 'files' map for a specific doc_type.
     
     Returns:
         A tuple of (is_valid, error_messages).
@@ -99,41 +99,44 @@ def validate_doc_type_config(doc_type: str, configs_dir: str = "configs") -> tup
     if not os.path.exists(doc_type_dir):
         errors.append(f"DocType config directory not found at: {doc_type_dir}")
         return False, errors
+
+    from src.core.config_loader import load_system_settings
+    settings = load_system_settings(settings_path)
+    doc_types = settings.get("doc_types", [])
+    matched_dt = next((dt for dt in doc_types if dt.get("doc_type_id") == doc_type), None)
+    if not matched_dt:
+        errors.append(f"DocType '{doc_type}' is not registered in 'doc_types' in '{settings_path}'.")
+        return False, errors
+
+    files_map = matched_dt.get("files", {})
+    required_keys = ["classify_prompt", "classify_schema", "extract_prompt", "extract_schema", "extract_rules"]
+    for key in required_keys:
+        filename = files_map.get(key)
+        if not filename:
+            errors.append(f"[{doc_type}] Missing '{key}' definition in 'files' within settings.json.")
+            continue
         
-    # 2. Validate extract-schema.json
-    schema_path = os.path.join(doc_type_dir, "extract-schema.json")
-    if not os.path.exists(schema_path):
-        errors.append(f"[{doc_type}] extract-schema.json is missing.")
-    else:
-        try:
-            with open(schema_path, "r", encoding="utf-8") as f:
-                schema = json.load(f)
-            
-            if schema.get("type") != "object":
-                errors.append(f"[{doc_type}] extract-schema.json root type must be 'object'.")
-            if not isinstance(schema.get("properties"), dict):
-                errors.append(f"[{doc_type}] extract-schema.json must contain a 'properties' object.")
-        except json.JSONDecodeError as e:
-            errors.append(f"[{doc_type}] extract-schema.json is not valid JSON: {e}")
-            
-    # 3. Validate extract-prompt.txt
-    prompt_path = os.path.join(doc_type_dir, "extract-prompt.txt")
-    if not os.path.exists(prompt_path):
-        errors.append(f"[{doc_type}] extract-prompt.txt is missing.")
-            
-    # 4. Validate extract-rules.json (optional but recommended)
-    rules_path = os.path.join(doc_type_dir, "extract-rules.json")
-    if os.path.exists(rules_path):
-        try:
-            with open(rules_path, "r", encoding="utf-8") as f:
-                json.load(f)
-        except json.JSONDecodeError as e:
-            errors.append(f"[{doc_type}] extract-rules.json is not valid JSON: {e}")
-                
+        file_path = os.path.join(doc_type_dir, filename)
+        if not os.path.exists(file_path):
+            errors.append(f"[{doc_type}] Configured file '{filename}' (key: '{key}') does not exist at '{file_path}'.")
+        elif filename.endswith(".json"):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    json_data = json.load(f)
+                if not isinstance(json_data, dict):
+                    errors.append(f"[{doc_type}] '{filename}' must contain a valid JSON object.")
+            except Exception as e:
+                errors.append(f"[{doc_type}] Failed to parse JSON in '{filename}': {e}")
+        elif filename.endswith(".txt"):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                if not content:
+                    errors.append(f"[{doc_type}] Text prompt file '{filename}' is empty.")
+            except Exception as e:
+                errors.append(f"[{doc_type}] Failed to read prompt file '{filename}': {e}")
+
     return len(errors) == 0, errors
-
-
-validate_domain_config = validate_doc_type_config
 
 
 def validate_environment(settings_path: str = DefaultPath.SETTINGS) -> list[str]:
@@ -227,21 +230,22 @@ def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS) ->
     try:
         with open(settings_path, "r", encoding="utf-8") as f:
             settings = json.load(f)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Could not load settings file at '{settings_path}': {e}")
         return 0
         
     root = settings.get("storage_root", "storage")
     default_company_code = settings.get("default_company_code", "C00000_SAMPLE")
     
-    # Load active doc_types/domains from settings.json
-    doc_types_data = settings.get("doc_types") or settings.get("domains", [])
+    # Load active doc_types from settings.json
+    doc_types_data = settings.get("doc_types", [])
     doc_types = [
-        d.get("doc_type_id") or d.get("domain_id")
+        d.get("doc_type_id")
         for d in doc_types_data
-        if isinstance(d, dict) and d.get("is_active", True) and (d.get("doc_type_id") or d.get("domain_id"))
+        if isinstance(d, dict) and d.get("is_active", True) and d.get("doc_type_id")
     ]
     if not doc_types:
-        doc_types = ["expense_receipt", "tax_invoice", "withholding_tax"]
+        doc_types = [DefaultIdentifier.DOC_TYPE]
 
     from src.core.constants import PipelineStageFolder
 
@@ -263,8 +267,8 @@ def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS) ->
         db_comps = get_all_companies(active_only=True)
         if db_comps:
             company_codes = list(set([c["company_code"] for c in db_comps]))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to query database companies for storage init (using fallback): {e}")
 
     # Ensure central database directory exists
     db_dir = os.path.join(root, "database")
@@ -274,8 +278,8 @@ def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS) ->
         try:
             with open(gitkeep_db, "w", encoding="utf-8") as gf:
                 gf.write("# Central SQLite Database Directory\n")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to create .gitkeep in database directory: {e}")
 
     # 3. Setup Company-Centric Storage Hierarchy: storage/companies/{company}/{doc_type}/01..06
     for comp_code in company_codes:

@@ -17,13 +17,40 @@
       "doc_type_id": "expense_receipt",
       "display_name": "ใบเสร็จรับเงินค่าใช้จ่าย (Expense Receipt)",
       "is_active": true,
-      "sort_order": 1
+      "sort_order": 1,
+      "files": {
+        "classify_prompt": "classify-prompt.txt",
+        "classify_schema": "classify-schema.json",
+        "extract_prompt": "extract-prompt.txt",
+        "extract_schema": "extract-schema.json",
+        "extract_rules": "extract-rules.json"
+      }
     },
     {
       "doc_type_id": "tax_invoice",
       "display_name": "ใบกำกับภาษีเต็มรูป (Tax Invoice)",
       "is_active": true,
-      "sort_order": 2
+      "sort_order": 2,
+      "files": {
+        "classify_prompt": "classify-prompt.txt",
+        "classify_schema": "classify-schema.json",
+        "extract_prompt": "extract-prompt.txt",
+        "extract_schema": "extract-schema.json",
+        "extract_rules": "extract-rules.json"
+      }
+    },
+    {
+      "doc_type_id": "withholding_tax",
+      "display_name": "หนังสือรับรองการหักภาษี ณ ที่จ่าย (Withholding Tax 50 ทวิ)",
+      "is_active": true,
+      "sort_order": 3,
+      "files": {
+        "classify_prompt": "classify-prompt.txt",
+        "classify_schema": "classify-schema.json",
+        "extract_prompt": "extract-prompt.txt",
+        "extract_schema": "extract-schema.json",
+        "extract_rules": "extract-rules.json"
+      }
     }
   ],
   "logging": {

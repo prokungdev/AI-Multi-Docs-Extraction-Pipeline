@@ -7,8 +7,12 @@ from src.core.config_loader import load_system_settings
 from src.core.initializer import initialize_storage_directories
 from src.core.logger import setup_logger
 from src.core.pdf_splitter import split_pdf, process_raw_image, format_page_filename
-from src.core.classifier import classify_drop_zone_document, sanitize_short_name, fast_filename_prefix_match
-from src.core.source_matcher import match_source
+from src.core.classifier import (
+    classify_drop_zone_document,
+    classify_document,
+    sanitize_short_name,
+    fast_filename_prefix_match,
+)
 from src.core.pipeline.stage_1_ingestion import release_pending_merchant_files
 from src.core.db import (
     initialize_db_schema,
@@ -29,14 +33,15 @@ class TestPdfSplitter(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        import tempfile
         setup_logger("configs/settings.json")
-        initialize_storage_directories("configs/settings.json")
         cls.settings = load_system_settings("configs/settings.json")
+        cls.temp_dir = tempfile.mkdtemp()
         cls.mock_domain = "mock_domain"
         cls.mock_source = "mock_source"
 
-        # Generate mock PDF for testing
-        cls.pdf_path = "mock_document.pdf"
+        # Generate mock PDF for testing inside isolated temp directory
+        cls.pdf_path = os.path.join(cls.temp_dir, "mock_document.pdf").replace("\\", "/")
         doc = fitz.open()
         page = doc.new_page()
         text_content = (
@@ -53,15 +58,12 @@ class TestPdfSplitter(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         import shutil
-        if os.path.exists(cls.pdf_path):
-            os.remove(cls.pdf_path)
-        mock_dir = f"storage/{cls.mock_domain}"
-        if os.path.exists(mock_dir):
-            shutil.rmtree(mock_dir, ignore_errors=True)
+        if hasattr(cls, "temp_dir") and os.path.exists(cls.temp_dir):
+            shutil.rmtree(cls.temp_dir, ignore_errors=True)
 
     def test_pdf_splitting(self):
-        """Test splitting PDF into JPG page images using mock paths."""
-        output_dir = f"storage/{self.mock_domain}/03_preprocess"
+        """Test splitting PDF into JPG page images using isolated temp paths."""
+        output_dir = os.path.join(self.temp_dir, "03_preprocess").replace("\\", "/")
         os.makedirs(output_dir, exist_ok=True)
         image_paths = split_pdf(self.pdf_path, output_dir, image_format="jpg")
 
@@ -71,8 +73,8 @@ class TestPdfSplitter(unittest.TestCase):
             self.assertTrue(img.endswith(".jpg"))
 
     def test_raw_image_processing(self):
-        """Test processing & resizing raw image files."""
-        output_dir = f"storage/{self.mock_domain}/03_preprocess"
+        """Test processing & resizing raw image files in isolated temp paths."""
+        output_dir = os.path.join(self.temp_dir, "03_preprocess").replace("\\", "/")
         os.makedirs(output_dir, exist_ok=True)
         temp_img_path = os.path.join(output_dir, "temp_large_raw_mock.png").replace("\\", "/")
 
@@ -120,10 +122,10 @@ class TestPdfSplitter(unittest.TestCase):
             split_name_notax, "mock_domain_no_tax_mock_invoice_001_452bdbcb_p1.jpg"
         )
 
-        # 3. Backward compatible pattern with {domain} and {source}
-        split_name_legacy = format_page_filename(
-            pattern="{domain}_{source}_{original_filename}_{batch_id}_p{page_no}",
-            domain=self.mock_domain,
+        # 3. Pattern with {doc_type} and {source}
+        split_name_custom = format_page_filename(
+            pattern="{doc_type}_{source}_{original_filename}_{batch_id}_p{page_no}",
+            doc_type=self.mock_domain,
             source=self.mock_source,
             original_filename="mock_invoice_001.pdf",
             page_no=1,
@@ -131,7 +133,7 @@ class TestPdfSplitter(unittest.TestCase):
             image_format="jpg",
         )
         self.assertEqual(
-            split_name_legacy, "mock_domain_mock_source_mock_invoice_001_452bdbcb_p1.jpg"
+            split_name_custom, "mock_domain_mock_source_mock_invoice_001_452bdbcb_p1.jpg"
         )
 
 
@@ -188,11 +190,21 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
         self.assertEqual(sanitize_short_name(""), "merchant")
 
     def test_02_new_merchant_auto_discovery_and_hold(self):
-        """Test auto-discovery of new merchant and HOLD pipeline action."""
-        cls_res = classify_drop_zone_document(self.pdf_path, doc_type="expense_receipt")
-        self.assertEqual(cls_res["tax_id"], "0107542000011")
-        self.assertEqual(cls_res["pipeline_action"], "HOLD")
-        self.assertEqual(cls_res["merchant_status"], "PENDING")
+        """Test auto-discovery of new merchant and HOLD pipeline action via AI classification."""
+        from unittest.mock import patch
+        from src.core.ai_service import ai_service
+
+        mock_payload = {
+            "tax_id": "0107542000011",
+            "merchant_name": "CP All",
+            "suggested_short_name": "cp_all"
+        }
+        with patch.object(ai_service, "api_key", "test_key"), \
+             patch.object(ai_service, "extract_structured_json", return_value=(mock_payload, {})):
+            cls_res = classify_drop_zone_document(self.pdf_path, doc_type="expense_receipt")
+            self.assertEqual(cls_res["tax_id"], "0107542000011")
+            self.assertEqual(cls_res["pipeline_action"], "HOLD")
+            self.assertEqual(cls_res["merchant_status"], "PENDING")
 
         # Verify in DB
         merchant = get_merchant_by_tax_id("0107542000011")
@@ -206,6 +218,9 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
 
     def test_03_merchant_approval_flow(self):
         """Test approving merchant and subsequent classification PROCEED."""
+        from unittest.mock import patch
+        from src.core.ai_service import ai_service
+
         merchant = get_merchant_by_tax_id("0107542000011")
         self.assertIsNotNone(merchant)
 
@@ -219,9 +234,16 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
         self.assertTrue(ok)
 
         # Classify again -> should PROCEED
-        cls_res = classify_drop_zone_document(self.pdf_path, doc_type="expense_receipt")
-        self.assertEqual(cls_res["pipeline_action"], "PROCEED")
-        self.assertEqual(cls_res["merchant_status"], "APPROVED")
+        mock_payload = {
+            "tax_id": "0107542000011",
+            "merchant_name": "CP All",
+            "suggested_short_name": "cp_all"
+        }
+        with patch.object(ai_service, "api_key", "test_key"), \
+             patch.object(ai_service, "extract_structured_json", return_value=(mock_payload, {})):
+            cls_res = classify_drop_zone_document(self.pdf_path, doc_type="expense_receipt")
+            self.assertEqual(cls_res["pipeline_action"], "PROCEED")
+            self.assertEqual(cls_res["merchant_status"], "APPROVED")
 
     def test_04_zero_cost_file_prefix_matching(self):
         """Test zero-cost fast bypass match based on file_prefix."""
@@ -246,36 +268,47 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
 
     def test_06_merchant_ignored_flow(self):
         """Test ignoring merchant and subsequent IGNORE routing."""
+        from unittest.mock import patch
+        from src.core.ai_service import ai_service
+
         merchant = get_merchant_by_tax_id("0107542000011")
         ok, msg = ignore_merchant(merchant["merchant_id"], approved_by="test_admin")
         self.assertTrue(ok)
 
         # Classify again -> should IGNORE
-        cls_res = classify_drop_zone_document(self.pdf_path, doc_type="expense_receipt")
-        self.assertEqual(cls_res["pipeline_action"], "IGNORE")
-        self.assertEqual(cls_res["merchant_status"], "IGNORED")
+        mock_payload = {
+            "tax_id": "0107542000011",
+            "merchant_name": "CP All",
+            "suggested_short_name": "cp_all"
+        }
+        with patch.object(ai_service, "api_key", "test_key"), \
+             patch.object(ai_service, "extract_structured_json", return_value=(mock_payload, {})):
+            cls_res = classify_drop_zone_document(self.pdf_path, doc_type="expense_receipt")
+            self.assertEqual(cls_res["pipeline_action"], "IGNORE")
+            self.assertEqual(cls_res["merchant_status"], "IGNORED")
 
 
-class TestSourceMatcher(unittest.TestCase):
+class TestUnifiedSourceClassifier(unittest.TestCase):
     """
-    Test suite for merchant source matching against domain rule definitions.
+    Test suite for merchant source classification using unified classifier engine.
     """
 
     @classmethod
     def setUpClass(cls):
+        import tempfile
         setup_logger("configs/settings.json")
-        initialize_storage_directories("configs/settings.json")
         cls.settings = load_system_settings("configs/settings.json")
         cls.doc_type = "expense_receipt"
+        cls.temp_dir = tempfile.mkdtemp()
 
-        # Generate mock PDF with generic mock merchant text
-        cls.pdf_path = "mock_source_document.pdf"
+        # Generate mock PDF with generic mock merchant text in isolated temp directory
+        cls.pdf_path = os.path.join(cls.temp_dir, "mock_source_document.pdf").replace("\\", "/")
         doc = fitz.open()
         page = doc.new_page()
         text_content = (
-            "Mock Invoice Document Title\n"
             "SPX Express Tax Invoice / Receipt\n"
             "Tax ID: 0105561164871\n"
+            "Item: Shipping Fee, Qty: 1, Price: 45.00 THB\n"
         )
         page.insert_text((50, 50), text_content)
         doc.save(cls.pdf_path)
@@ -283,14 +316,15 @@ class TestSourceMatcher(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        if os.path.exists(cls.pdf_path):
-            os.remove(cls.pdf_path)
+        import shutil
+        if hasattr(cls, "temp_dir") and os.path.exists(cls.temp_dir):
+            shutil.rmtree(cls.temp_dir, ignore_errors=True)
 
-    def test_source_matching(self):
-        """Test rule-based merchant source matching using source matcher rules."""
-        matched_source = match_source(self.pdf_path, doc_type=self.doc_type, settings=self.settings)
-        self.assertIsNotNone(matched_source)
-        self.assertIsInstance(matched_source, str)
+    def test_classify_document_pipeline(self):
+        """Test unified document classification routing with AI fallback or safe quarantine."""
+        cls_res = classify_document(self.pdf_path, doc_type=self.doc_type)
+        self.assertIn("folder_identifier", cls_res)
+        self.assertIn("pipeline_action", cls_res)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,27 @@
+{
+  "type": "OBJECT",
+  "properties": {
+    "tax_id": {
+      "type": "STRING",
+      "description": "13-digit Thai Tax ID or empty string if not found"
+    },
+    "merchant_name": {
+      "type": "STRING",
+      "description": "Seller / store legal or brand name"
+    },
+    "suggested_short_name": {
+      "type": "STRING",
+      "description": "Short clean identifier (a-z, 0-9, _) in lowercase english for folder naming"
+    },
+    "has_tax_id": {
+      "type": "BOOLEAN",
+      "description": "True if valid 13-digit tax id is identified"
+    }
+  },
+  "required": [
+    "tax_id",
+    "merchant_name",
+    "suggested_short_name",
+    "has_tax_id"
+  ]
+}

@@ -13,7 +13,7 @@ from src.core.logger import logger
 
 from src.core.config_loader import load_system_settings
 from src.core.cost_estimator import calculate_api_cost
-from src.core.constants import DefaultPath
+from src.core.constants import DefaultPath, EntityIdPrefix, generate_entity_id
 from src.core.db import create_api_call_log, AuditLogService, ApiCallLogCreate
 
 
@@ -37,8 +37,14 @@ class AIService:
         self.max_images_per_request = int(ai_cfg.get("max_images_per_request", 50))
         
         provider_cfg = ai_cfg.get(self.active_provider, {})
-        self.default_model = provider_cfg.get("model_name", "gemini-3.5-flash")
-        self.api_key_env = provider_cfg.get("api_key_env", "GEMINI_API_KEY")
+        self.default_model = provider_cfg.get("model_name")
+        if not self.default_model:
+            raise ValueError(f"Missing required 'model_name' for AI provider '{self.active_provider}' in {self.settings_path}")
+
+        self.api_key_env = provider_cfg.get("api_key_env")
+        if not self.api_key_env:
+            raise ValueError(f"Missing required 'api_key_env' for AI provider '{self.active_provider}' in {self.settings_path}")
+
         self.api_key = os.getenv(self.api_key_env, "").strip()
         self._client = None  # Invalidate cached client on config reload
 
@@ -64,17 +70,22 @@ class AIService:
         images: List[Image.Image],
         response_schema: Optional[Dict[str, Any]] = None,
         model_name: Optional[str] = None,
-        temperature: float = 0.1
+        temperature: float = 0.1,
+        batch_id: Optional[str] = None,
+        company_id: Optional[str] = None,
+        chunk_index: int = 1,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
         Synchronously sends multimodal prompt + images to the configured LLM and returns parsed JSON.
-        Includes built-in exponential backoff auto-retry.
+        Includes built-in exponential backoff auto-retry and telemetry database logging.
 
         Returns:
             Tuple of (parsed_payload: dict, execution_metadata: dict)
         """
+        import uuid as _uuid
         client = self.get_client()
         effective_model = model_name or self.default_model
+        pages_desc = f"{len(images)} pages"
 
         if self.active_provider == "gemini":
             from google.genai import types
@@ -97,6 +108,8 @@ class AIService:
             last_err = None
 
             for attempt in range(1, self.max_retries + 1):
+                log_id = generate_entity_id(EntityIdPrefix.API_LOG)
+                attempt_start = time.time()
                 try:
                     logger.info(f"🤖 AI Request -> Provider: {self.active_provider} | Model: {effective_model} | Images: {len(images)} (Attempt {attempt}/{self.max_retries})")
                     
@@ -106,6 +119,7 @@ class AIService:
                         config=config
                     )
                     
+                    latency_ms = (time.time() - attempt_start) * 1000.0
                     duration = time.time() - start_time
                     raw_text = response.text or "{}"
                     
@@ -135,6 +149,27 @@ class AIService:
                         output_tokens=output_tokens
                     )
 
+                    # Write SUCCESS log to api_call_logs
+                    AuditLogService.log_api_call(ApiCallLogCreate(
+                        log_id=log_id,
+                        batch_id=batch_id,
+                        company_id=company_id,
+                        credential_id=None,
+                        provider=self.active_provider,
+                        model_name=effective_model,
+                        chunk_index=chunk_index,
+                        request_pages=pages_desc,
+                        status_code="SUCCESS",
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cost_usd=cost_info.get("cost_usd", 0.0),
+                        nominal_value_usd=cost_info.get("nominal_value_usd", 0.0),
+                        is_free_tier=cost_info.get("is_free_tier", 0),
+                        latency_ms=latency_ms,
+                        error_reason=None,
+                        raw_response=None,
+                    ))
+
                     metadata = {
                         "provider": self.active_provider,
                         "model_name": effective_model,
@@ -153,8 +188,26 @@ class AIService:
 
                 except Exception as exc:
                     last_err = exc
+                    latency_ms = (time.time() - attempt_start) * 1000.0
                     err_str = str(exc)
                     is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower()
+
+                    # Write FAILED log to api_call_logs
+                    AuditLogService.log_api_call(ApiCallLogCreate(
+                        log_id=log_id,
+                        batch_id=batch_id,
+                        company_id=company_id,
+                        credential_id=None,
+                        provider=self.active_provider,
+                        model_name=effective_model,
+                        chunk_index=chunk_index,
+                        request_pages=pages_desc,
+                        status_code="FAILED",
+                        input_tokens=0,
+                        output_tokens=0,
+                        latency_ms=latency_ms,
+                        error_reason=err_str,
+                    ))
                     
                     if attempt < self.max_retries:
                         sleep_sec = (2 ** attempt) + 1 if is_rate_limit else 2
@@ -172,13 +225,17 @@ class AIService:
         prompt: str,
         images: Optional[List[Image.Image]] = None,
         model_name: Optional[str] = None,
-        temperature: float = 0.0
+        temperature: float = 0.0,
+        batch_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> str:
         """
-        Generates raw text response with automatic retry backoff and cached client reuse.
+        Generates raw text response with automatic retry backoff, cached client reuse, and telemetry logging.
         """
+        import uuid as _uuid
         client = self.get_client()
         effective_model = model_name or self.default_model
+        pages_desc = f"{len(images)} pages" if images else "1 prompt"
 
         if self.active_provider == "gemini":
             from google.genai import types
@@ -190,17 +247,73 @@ class AIService:
 
             last_err = None
             for attempt in range(1, self.max_retries + 1):
+                log_id = generate_entity_id(EntityIdPrefix.API_LOG)
+                attempt_start = time.time()
                 try:
                     response = client.models.generate_content(
                         model=effective_model,
                         contents=contents,
                         config=config
                     )
+                    latency_ms = (time.time() - attempt_start) * 1000.0
+                    
+                    # Extract Token Usage & Cost
+                    input_tokens = 0
+                    output_tokens = 0
+                    if hasattr(response, "usage_metadata") and response.usage_metadata:
+                        input_tokens = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+                        output_tokens = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+
+                    cost_info = calculate_api_cost(
+                        provider=self.active_provider,
+                        model_name=effective_model,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens
+                    )
+
+                    AuditLogService.log_api_call(ApiCallLogCreate(
+                        log_id=log_id,
+                        batch_id=batch_id,
+                        company_id=company_id,
+                        credential_id=None,
+                        provider=self.active_provider,
+                        model_name=effective_model,
+                        chunk_index=1,
+                        request_pages=pages_desc,
+                        status_code="SUCCESS",
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cost_usd=cost_info.get("cost_usd", 0.0),
+                        nominal_value_usd=cost_info.get("nominal_value_usd", 0.0),
+                        is_free_tier=cost_info.get("is_free_tier", 0),
+                        latency_ms=latency_ms,
+                        error_reason=None,
+                        raw_response=None,
+                    ))
+
                     return response.text or ""
                 except Exception as exc:
                     last_err = exc
+                    latency_ms = (time.time() - attempt_start) * 1000.0
                     err_str = str(exc)
                     is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower()
+
+                    AuditLogService.log_api_call(ApiCallLogCreate(
+                        log_id=log_id,
+                        batch_id=batch_id,
+                        company_id=company_id,
+                        credential_id=None,
+                        provider=self.active_provider,
+                        model_name=effective_model,
+                        chunk_index=1,
+                        request_pages=pages_desc,
+                        status_code="FAILED",
+                        input_tokens=0,
+                        output_tokens=0,
+                        latency_ms=latency_ms,
+                        error_reason=err_str,
+                    ))
+
                     if attempt < self.max_retries:
                         sleep_sec = (2 ** attempt) + 1 if is_rate_limit else 2
                         logger.warning(f"⚠️ AI generate_raw_content failed (attempt {attempt}/{self.max_retries}): {exc}. Retrying in {sleep_sec}s...")
@@ -223,10 +336,11 @@ class AIService:
         batch_id: Optional[str] = None,
         chunk_index: int = 1,
         cred_id: str = "default",
+        company_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
         Executes a single-credential API call with exponential backoff retry.
-        Records each attempt to the api_call_logs table via create_api_call_log.
+        Records each attempt to the api_call_logs table via AuditLogService.
 
         Returns:
             Tuple of (parsed_payload: dict, execution_metadata: dict)
@@ -257,7 +371,7 @@ class AIService:
             pages_desc = f"{len(images)} pages"
 
             for attempt in range(1, self.max_retries + 1):
-                log_id = f"api_{_uuid.uuid4().hex[:12]}"
+                log_id = generate_entity_id(EntityIdPrefix.API_LOG)
                 attempt_start = time.time()
                 try:
                     logger.info(
@@ -300,26 +414,26 @@ class AIService:
                     )
 
                     # Write SUCCESS log
-                    if batch_id:
-                        log_cred_id = cred_id if cred_id != "fallback_default" else None
-                        AuditLogService.log_api_call(ApiCallLogCreate(
-                            log_id=log_id,
-                            batch_id=batch_id,
-                            credential_id=log_cred_id,
-                            provider=self.active_provider,
-                            model_name=effective_model,
-                            chunk_index=chunk_index,
-                            request_pages=pages_desc,
-                            status_code="SUCCESS",
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                            cost_usd=cost_info["cost_usd"],
-                            nominal_value_usd=cost_info["nominal_value_usd"],
-                            is_free_tier=cost_info["is_free_tier"],
-                            latency_ms=latency_ms,
-                            error_reason=None,
-                            raw_response=None,
-                        ))
+                    log_cred_id = cred_id if cred_id != "fallback_default" else None
+                    AuditLogService.log_api_call(ApiCallLogCreate(
+                        log_id=log_id,
+                        batch_id=batch_id,
+                        company_id=company_id,
+                        credential_id=log_cred_id,
+                        provider=self.active_provider,
+                        model_name=effective_model,
+                        chunk_index=chunk_index,
+                        request_pages=pages_desc,
+                        status_code="SUCCESS",
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cost_usd=cost_info["cost_usd"],
+                        nominal_value_usd=cost_info["nominal_value_usd"],
+                        is_free_tier=cost_info["is_free_tier"],
+                        latency_ms=latency_ms,
+                        error_reason=None,
+                        raw_response=None,
+                    ))
 
                     metadata = {
                         "provider": self.active_provider,
@@ -352,22 +466,22 @@ class AIService:
                     is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower()
 
                     # Write FAILED log
-                    if batch_id:
-                        log_cred_id = cred_id if cred_id != "fallback_default" else None
-                        AuditLogService.log_api_call(ApiCallLogCreate(
-                            log_id=log_id,
-                            batch_id=batch_id,
-                            credential_id=log_cred_id,
-                            provider=self.active_provider,
-                            model_name=effective_model,
-                            chunk_index=chunk_index,
-                            request_pages=pages_desc,
-                            status_code="FAILED",
-                            input_tokens=0,
-                            output_tokens=0,
-                            latency_ms=latency_ms,
-                            error_reason=err_str,
-                        ))
+                    log_cred_id = cred_id if cred_id != "fallback_default" else None
+                    AuditLogService.log_api_call(ApiCallLogCreate(
+                        log_id=log_id,
+                        batch_id=batch_id,
+                        company_id=company_id,
+                        credential_id=log_cred_id,
+                        provider=self.active_provider,
+                        model_name=effective_model,
+                        chunk_index=chunk_index,
+                        request_pages=pages_desc,
+                        status_code="FAILED",
+                        input_tokens=0,
+                        output_tokens=0,
+                        latency_ms=latency_ms,
+                        error_reason=err_str,
+                    ))
 
                     if attempt < self.max_retries:
                         sleep_sec = (2 ** attempt) + 1 if is_rate_limit else 2
@@ -395,6 +509,7 @@ class AIService:
         temperature: float = 0.1,
         batch_id: Optional[str] = None,
         chunk_index: int = 1,
+        company_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
         Extracts structured JSON with multi-credential rotation and automatic
@@ -408,6 +523,7 @@ class AIService:
                          credential_id, api_key_env, error_count, is_active
             batch_id: Optional parent batch ID for per-attempt DB logging.
             chunk_index: Chunk index for multi-chunk batch tracking.
+            company_id: Optional client company UUID for multi-tenant attribution.
 
         Returns:
             Tuple of (extracted_payload: dict, execution_metadata: dict)
@@ -440,6 +556,7 @@ class AIService:
                     batch_id=batch_id,
                     chunk_index=chunk_index,
                     cred_id=cred_id,
+                    company_id=company_id,
                 )
                 return payload, metadata
 

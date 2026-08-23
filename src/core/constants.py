@@ -12,12 +12,50 @@ class DefaultPath:
     LOGS_DIR = "logs"
 
 
+class DefaultCompany:
+    """Default fallback sandbox company constants."""
+    CODE = "C00000_SAMPLE"
+    NAME = "บริษัท ตัวอย่างทดสอบ จำกัด (สำนักงานใหญ่)"
+    SHORT_NAME = "SAMPLE"
+    TAX_ID = "0000000000000"
+    BRANCH_CODE = "00000"
+
+
 class DefaultIdentifier:
-    """Default fallback doc_type, company, and tax identifiers."""
-    COMPANY_CODE = "C00000_SAMPLE"
+    """Default fallback doc_type, merchant, and tax identifiers."""
+    COMPANY_CODE = DefaultCompany.CODE
     DOC_TYPE = "expense_receipt"
     NO_TAX_ID = "NO_TAXID"
     NO_TAX_LABEL = "no_tax"
+    DEFAULT_MERCHANT_NAME = "Unknown Merchant"
+    DEFAULT_SHORT_NAME = "merchant"
+    UNRECOGNIZED_MERCHANT_NAME = "Unrecognized Merchant"
+
+
+class MerchantStatusCode:
+    """Centralized merchant gatekeeper lifecycle status codes."""
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    IGNORED = "IGNORED"
+
+
+class EntityIdPrefix:
+    """Standardized entity Primary Key prefixes for database models and logging."""
+    COMPANY = "comp"
+    BATCH = "batch"
+    DOCUMENT = "doc"
+    PAGE = "page"
+    MERCHANT = "merch"
+    RECEIPT = "rcpt"
+    ITEM = "itm"
+    API_LOG = "api"
+    APP_LOG = "log"
+
+
+def generate_entity_id(prefix: str, hex_length: int = 12) -> str:
+    """Generates a standardized prefixed entity identifier (e.g. doc_c4e5a5799901)."""
+    import uuid
+    return f"{prefix}_{uuid.uuid4().hex[:hex_length]}"
 
 
 class AppMetadata:

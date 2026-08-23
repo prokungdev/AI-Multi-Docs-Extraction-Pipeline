@@ -16,6 +16,7 @@ from sqlalchemy import (
     Index
 )
 from sqlalchemy.orm import declarative_base, relationship
+from src.core.constants import DefaultIdentifier
 
 Base = declarative_base()
 LogBase = declarative_base()
@@ -47,7 +48,7 @@ class Company(Base, DictSerializableMixin):
     company_code = Column(String(50), unique=True, nullable=False, index=True)
     company_name = Column(String(255), nullable=False)
     short_name = Column(String(50), nullable=False)
-    tax_id = Column(String(13), nullable=True, index=True)
+    tax_id = Column(String(13), unique=True, nullable=True, index=True)
     branch_code = Column(String(5), nullable=False, default="00000")
     is_active = Column(Integer, default=1)
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
@@ -77,11 +78,6 @@ class DocumentSource(Base, DictSerializableMixin):
     doc_type_id = Column(String(100), primary_key=True, default="expense_receipt")
     display_name = Column(String(150), nullable=False)
     is_active = Column(Integer, default=1)
-
-    @property
-    def domain_id(self) -> str:
-        """Backward-compatibility property alias for doc_type_id."""
-        return self.doc_type_id
 
 
 class ProcessedBatch(Base, DictSerializableMixin):
@@ -171,9 +167,9 @@ class Merchant(Base, DictSerializableMixin):
     company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=True, index=True)
     tax_id = Column(String(50), nullable=True)
     merchant_name = Column(String(200), nullable=False)
-    short_name = Column(String(100), nullable=False, default="merchant")
-    file_prefix = Column(String(100), nullable=False, default="merchant")
-    status_code = Column(String(50), nullable=False, default="APPROVED")  # APPROVED, PENDING, IGNORED
+    short_name = Column(String(100), nullable=False, default=DefaultIdentifier.DEFAULT_SHORT_NAME)
+    file_prefix = Column(String(100), nullable=False, default=DefaultIdentifier.DEFAULT_SHORT_NAME)
+    status_code = Column(String(50), nullable=False, default=MerchantStatus.APPROVED.value)  # APPROVED, PENDING, IGNORED
     approved_by = Column(String(100), nullable=True)
     approved_at = Column(String(50), nullable=True)
     default_wht_rate = Column(Float, default=0.0)
@@ -192,9 +188,6 @@ class Merchant(Base, DictSerializableMixin):
         Index("idx_merchants_status_code", "status_code"),
     )
 
-
-# Alias for backward compatibility if needed
-MerchantMaster = Merchant
 
 
 class ExpenseReceipt(Base, DictSerializableMixin):

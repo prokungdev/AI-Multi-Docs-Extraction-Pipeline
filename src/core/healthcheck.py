@@ -23,15 +23,17 @@ def check_database_status() -> tuple[bool, str]:
 
 
 def check_api_ready(settings: dict) -> tuple[bool, str, list[str]]:
-    """
-    Checks AI API readiness and credential availability.
-    """
+    """Checks AI API readiness and credential availability."""
     load_dotenv()
     remedies = []
 
-    ai_cfg = get_ai_provider_config(settings)
-    provider = ai_cfg.get("active_provider", "gemini")
-    api_key_env = ai_cfg.get("api_key_env", "GEMINI_API_KEY")
+    try:
+        ai_cfg = get_ai_provider_config(settings)
+        provider = ai_cfg["active_provider"]
+        api_key_env = ai_cfg["api_key_env"]
+    except Exception as e:
+        return False, f"Invalid AI configuration: {e}", [f"Fix 'ai_provider' in settings.json: {e}"]
+
     api_key = os.getenv(api_key_env)
     has_credentials = bool(api_key and api_key.strip())
 

@@ -51,11 +51,35 @@ class TestHealthcheckServices(unittest.TestCase):
 class TestFastAPIRestAPI(unittest.TestCase):
     """
     Test suite for FastAPI REST API endpoints and Multi-Company lifecycle.
+    Fully isolated with dedicated temporary database.
     """
 
     @classmethod
     def setUpClass(cls):
+        import tempfile
+        from src.core.db import initialize_db_schema, seed_initial_data
+        cls.test_db_path = os.path.join(tempfile.gettempdir(), f"test_api_db_{uuid.uuid4().hex[:8]}.db").replace("\\", "/")
+        os.environ["DB_PATH_OVERRIDE"] = cls.test_db_path
+        initialize_db_schema()
+        seed_initial_data()
         cls.client = TestClient(app)
+
+    @classmethod
+    def tearDownClass(cls):
+        import gc
+        from src.core.db.connection import get_engine
+        try:
+            get_engine().dispose()
+        except Exception:
+            pass
+        gc.collect()
+        if hasattr(cls, "test_db_path") and os.path.exists(cls.test_db_path):
+            try:
+                os.remove(cls.test_db_path)
+            except Exception:
+                pass
+        if "DB_PATH_OVERRIDE" in os.environ:
+            del os.environ["DB_PATH_OVERRIDE"]
 
     def test_root_endpoint(self):
         """Verify root endpoint returns service metadata and links."""
@@ -88,7 +112,7 @@ class TestFastAPIRestAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_companies_crud_lifecycle(self):
-        """Verify company listing, creation, retrieval, and updating via REST API."""
+        """Verify company listing, creation, retrieval, updating, duplicate tax_id rejection, and deletion via REST API."""
         # 1. List companies
         list_res = self.client.get("/api/v1/companies")
         self.assertEqual(list_res.status_code, 200)
@@ -98,68 +122,59 @@ class TestFastAPIRestAPI(unittest.TestCase):
         # 2. Create new company
         test_suffix = uuid.uuid4().hex[:6].upper()
         test_code = f"C_{test_suffix}"
+        test_tax_id = f"01055{uuid.uuid4().hex[:8]}"[:13]
         new_payload = {
             "company_code": test_code,
             "company_name": f"Test Company {test_suffix} Ltd",
             "short_name": f"TestCo_{test_suffix}",
-            "tax_id": "0105559999999",
+            "tax_id": test_tax_id,
             "branch_code": "00000"
         }
-        create_res = self.client.post("/api/v1/companies", json=new_payload)
-        self.assertEqual(create_res.status_code, 201)
-        created_data = create_res.json()
-        self.assertEqual(created_data["company_code"], test_code)
-        self.assertEqual(created_data["company_name"], f"Test Company {test_suffix} Ltd")
-
-        # 3. Retrieve company by code
-        get_res = self.client.get(f"/api/v1/companies/{test_code}")
-        self.assertEqual(get_res.status_code, 200)
-        comp_data = get_res.json()
-        self.assertEqual(comp_data["company_code"], test_code)
-        comp_id = comp_data["company_id"]
-
-        # 4. Update company details
-        patch_res = self.client.patch(
-            f"/api/v1/companies/{comp_id}",
-            json={"short_name": f"TestCo_{test_suffix}_Updated"}
-        )
-        self.assertEqual(patch_res.status_code, 200)
-        updated_data = patch_res.json()
-        self.assertEqual(updated_data["short_name"], f"TestCo_{test_suffix}_Updated")
-
-        # 5. Clean up test storage directory immediately
         test_dir = get_company_storage_dir(test_code)
-        if os.path.exists(test_dir):
-            shutil.rmtree(test_dir, ignore_errors=True)
-
-    @classmethod
-    def tearDownClass(cls):
-        """
-        Clean up any lingering test company directories and DB records.
-        """
-        # Clean from DB
-        # Clean from DB
         try:
-            with get_db_session() as session:
-                stmt = select(Company).where(
-                    (Company.company_code.like("C\\_%", escape="\\")) | (Company.company_code == "C99999_TEST")
-                )
-                test_comps = session.scalars(stmt).all()
-                for c in test_comps:
-                    session.delete(c)
-        except Exception:
-            pass
+            create_res = self.client.post("/api/v1/companies", json=new_payload)
+            self.assertEqual(create_res.status_code, 201)
+            created_data = create_res.json()
+            self.assertEqual(created_data["company_code"], test_code)
+            self.assertEqual(created_data["company_name"], f"Test Company {test_suffix} Ltd")
 
-        # Clean from disk
-        comp_root = os.path.join("storage", "companies")
-        if os.path.exists(comp_root):
-            for entry in os.listdir(comp_root):
-                if (entry.startswith("C_") and entry != "C00000_SAMPLE") or entry == "C99999_TEST":
-                    dir_to_clean = os.path.join(comp_root, entry)
-                    try:
-                        shutil.rmtree(dir_to_clean, ignore_errors=True)
-                    except Exception:
-                        pass
+            # 2.1 Verify Duplicate Tax ID rejection (409 Conflict)
+            dup_tax_payload = {
+                "company_code": f"C_{uuid.uuid4().hex[:6].upper()}",
+                "company_name": "Another Company With Same Tax ID",
+                "short_name": "ANOTHER",
+                "tax_id": test_tax_id,
+                "branch_code": "00000"
+            }
+            dup_res = self.client.post("/api/v1/companies", json=dup_tax_payload)
+            self.assertEqual(dup_res.status_code, 409)
+
+            # 3. Retrieve company by code
+            get_res = self.client.get(f"/api/v1/companies/{test_code}")
+            self.assertEqual(get_res.status_code, 200)
+            comp_data = get_res.json()
+            self.assertEqual(comp_data["company_code"], test_code)
+            comp_id = comp_data["company_id"]
+
+            # 4. Update company details
+            patch_res = self.client.patch(
+                f"/api/v1/companies/{comp_id}",
+                json={"short_name": f"TestCo_{test_suffix}_Updated"}
+            )
+            self.assertEqual(patch_res.status_code, 200)
+            updated_data = patch_res.json()
+            self.assertEqual(updated_data["short_name"], f"TestCo_{test_suffix}_Updated")
+
+            # 5. Delete company via REST API
+            del_res = self.client.delete(f"/api/v1/companies/{test_code}")
+            self.assertEqual(del_res.status_code, 200)
+
+            # 6. Verify deletion
+            get_after_del = self.client.get(f"/api/v1/companies/{test_code}")
+            self.assertEqual(get_after_del.status_code, 404)
+        finally:
+            if os.path.exists(test_dir):
+                shutil.rmtree(test_dir, ignore_errors=True)
 
 
 class TestSystemConfigurationValidation(unittest.TestCase):

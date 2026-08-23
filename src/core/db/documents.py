@@ -9,13 +9,11 @@ from sqlalchemy import select, update, delete, or_, and_, desc, asc, func
 
 from .connection import get_db_session
 from .models import Company, ProcessedBatch, DocumentPage, Document, DocumentStatus
-from src.core.constants import DefaultIdentifier
+from src.core.constants import DefaultIdentifier, DocumentStatusCode
 
 
 def calculate_file_hash(file_path: str) -> str:
-    """
-    Computes the SHA-256 hash of a file's binary content.
-    """
+    """Returns SHA-256 hex digest of file contents."""
     sha256 = hashlib.sha256()
     with open(file_path, "rb") as f:
         while chunk := f.read(8192):
@@ -24,11 +22,7 @@ def calculate_file_hash(file_path: str) -> str:
 
 
 def check_duplicate_document(file_hash: str, company_id: str = None) -> tuple[bool, dict | None]:
-    """
-    Checks if a batch with the given SHA-256 hash already exists using Pure SQLAlchemy 2.0 ORM.
-    Optionally scopes check to a specific company_id.
-    Returns: (is_duplicate, batch_metadata_dict)
-    """
+    """Checks if a batch with the given SHA-256 hash already exists."""
     try:
         with get_db_session() as session:
             stmt = select(ProcessedBatch).filter_by(file_hash=file_hash)
@@ -43,8 +37,8 @@ def check_duplicate_document(file_hash: str, company_id: str = None) -> tuple[bo
                     "original_filename": batch.original_filename,
                     "original_pdf_name": batch.original_filename,
                     "created_at": batch.created_at,
-                    "status": first_doc.status_code if first_doc else "PENDING",
-                    "domain": first_doc.domain_id if first_doc else DefaultIdentifier.DOC_TYPE,
+                    "status": first_doc.status_code if first_doc else DocumentStatusCode.PENDING,
+                    "doc_type_id": first_doc.domain_id if first_doc else DefaultIdentifier.DOC_TYPE,
                     "source": first_doc.source_id if first_doc else DefaultIdentifier.NO_TAX_LABEL
                 }
                 return True, metadata
@@ -56,10 +50,7 @@ def check_duplicate_document(file_hash: str, company_id: str = None) -> tuple[bo
 def create_batch(batch_id: str, original_filename: str = None, total_pages: int = 1,
                  storage_path: str = "", file_hash: str = "", original_pdf_name: str = None,
                  company_id: str = None) -> bool:
-    """
-    Inserts or updates a batch record using Pure SQLAlchemy 2.0 ORM.
-    Supports both original_filename and legacy original_pdf_name.
-    """
+    """Inserts or updates a batch record using Pure SQLAlchemy 2.0 ORM."""
     filename = original_filename or original_pdf_name or "document.pdf"
     try:
         with get_db_session() as session:
@@ -177,9 +168,10 @@ def update_pages_status_batch(updates: List[Tuple[str, str | None, str, int]]) -
 def create_document(
     document_id: str,
     batch_id: str,
-    domain_id: str,
-    source_id: str,
-    status_code: str,
+    doc_type_id: str = None,
+    domain_id: str = None,
+    source_id: str = DefaultIdentifier.NO_TAX_ID,
+    status_code: str = DocumentStatusCode.PROCESSED,
     doc_number: str = None,
     doc_date: str = None,
     entity_name: str = None,
@@ -207,6 +199,7 @@ def create_document(
     """
     Inserts or updates a document record using Pure SQLAlchemy 2.0 ORM.
     """
+    final_dt = doc_type_id or domain_id or DefaultIdentifier.DOC_TYPE
     final_auto_approved = is_auto_approved if is_auto_approved is not None else (auto_approved or 0)
     final_ambiguous = is_ambiguous if is_ambiguous is not None else (has_ambiguous_fields or 0)
 
@@ -228,7 +221,7 @@ def create_document(
                 if target_cid:
                     doc.company_id = target_cid
                 doc.batch_id = batch_id
-                doc.domain_id = domain_id
+                doc.domain_id = final_dt
                 doc.source_id = source_id
                 doc.status_code = status_code
                 doc.doc_number = doc_number
@@ -257,7 +250,7 @@ def create_document(
                     document_id=document_id,
                     company_id=target_cid,
                     batch_id=batch_id,
-                    domain_id=domain_id,
+                    domain_id=final_dt,
                     source_id=source_id,
                     status_code=status_code,
                     doc_number=doc_number,
@@ -364,7 +357,11 @@ def get_pending_documents(domain_id: str = None, source_id: str = None, company_
             stmt = select(Document, ProcessedBatch).join(
                 ProcessedBatch, Document.batch_id == ProcessedBatch.batch_id
             ).where(
-                Document.status_code.in_(["PENDING", "NEEDS_REVIEW", "PROCESSED"])
+                Document.status_code.in_([
+                    DocumentStatusCode.PENDING,
+                    DocumentStatusCode.NEEDS_REVIEW,
+                    DocumentStatusCode.PROCESSED,
+                ])
             )
 
             if company_id:
@@ -447,7 +444,7 @@ def update_document_to_approved(
             if not doc:
                 return False
             now_str = datetime.now(timezone.utc).isoformat()
-            doc.status_code = "APPROVED"
+            doc.status_code = DocumentStatusCode.APPROVED
             doc.is_locked = 1
             doc.confirmed_by = confirmed_by
             doc.confirmed_at = now_str
@@ -670,7 +667,7 @@ def get_unextracted_batches(status_codes: list[str] = None, company_id: str = No
     Optionally filters by company_id.
     """
     if status_codes is None:
-        status_codes = ["PREPROCESSED", "PENDING"]
+        status_codes = [DocumentStatusCode.PREPROCESSED, DocumentStatusCode.PENDING]
 
     try:
         with get_db_session() as session:
@@ -713,7 +710,7 @@ def get_pages_by_status(status_codes: list[str] = None, company_id: str = None) 
     Optionally filters by company_id.
     """
     if status_codes is None:
-        status_codes = ["EXTRACTED"]
+        status_codes = [DocumentStatusCode.EXTRACTED]
 
     try:
         with get_db_session() as session:
@@ -756,7 +753,7 @@ def get_documents_for_export(domain_id: str, status_codes: list[str] = None, com
     Optionally filters by company_id.
     """
     if status_codes is None:
-        status_codes = ["APPROVED", "PROCESSED"]
+        status_codes = [DocumentStatusCode.APPROVED, DocumentStatusCode.PROCESSED]
 
     try:
         with get_db_session() as session:

@@ -2,11 +2,21 @@ from typing import List, Dict, Optional, Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+class DocTypeFilesConfigModel(BaseModel):
+    classify_prompt: str
+    classify_schema: str
+    extract_prompt: str
+    extract_schema: str
+    extract_rules: str
+
+
 class DocTypeConfigModel(BaseModel):
     doc_type_id: str
     display_name: str
     is_active: bool = True
     sort_order: int = 1
+    files: DocTypeFilesConfigModel
+
 
 
 class LoggingConfigModel(BaseModel):

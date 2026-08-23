@@ -25,7 +25,6 @@ from src.core.utils import chunk_list
 
 def extract_documents(
     doc_type: str = None,
-    domain: str = None,
     source: str = None,
     company_code: str = None
 ) -> dict:
@@ -33,7 +32,7 @@ def extract_documents(
     Stage 3: AI Document Extraction.
     Extracts structured JSON data from preprocessed images and saves to 04_processing.
     """
-    logger.info("Starting Stage 3 (Extract): AI Document Extraction to JSON Queue")
+    logger.info("Starting Stage 3 (Extract): Extracting Structured Data via Multimodal AI")
 
     load_dotenv()
     settings = load_system_settings()
@@ -42,8 +41,8 @@ def extract_documents(
     company_id = comp_info["company_id"] if comp_info else None
 
     ai_cfg = get_ai_provider_config(settings)
-    max_images = ai_cfg.get("max_images_per_request", 50)
-    target_doc_type = doc_type or domain or get_default_doc_type()
+    max_images_per_request = ai_cfg.get("max_images_per_request", 50)
+    target_doc_type = doc_type or get_default_doc_type()
 
     from src.core.storage_manager import storage_manager
     queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)
@@ -71,7 +70,7 @@ def extract_documents(
             # Resolve source
             folder_name = os.path.basename(storage_path)
             from src.core.constants import DefaultIdentifier
-            batch_source = DefaultIdentifier.NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
+            batch_source = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
             if source and source != batch_source:
                 continue
 
@@ -99,6 +98,7 @@ def extract_documents(
                         doc_type=target_doc_type,
                         batch_id=batch_id,
                         chunk_index=chunk_idx,
+                        company_id=company_id,
                     )
                     chunk_payloads.append(payload)
                 except Exception as ex_err:
@@ -136,7 +136,6 @@ def extract_documents(
 
 async def async_extract_documents(
     doc_type: str = None,
-    domain: str = None,
     source: str = None,
     company_code: str = None
 ) -> dict:
@@ -156,13 +155,16 @@ async def async_extract_documents(
     max_images = ai_cfg.get("max_images_per_request", 50)
     max_concurrent = ai_cfg.get("max_concurrent_requests", 5)
 
-    target_doc_type = doc_type or domain or get_default_doc_type()
+    target_doc_type = doc_type or get_default_doc_type()
 
     from src.core.storage_manager import storage_manager
     queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)
 
     try:
-        batches = get_unextracted_batches([DocumentStatus.PREPROCESSED.value, DocumentStatus.PENDING.value])
+        batches = get_unextracted_batches(
+            [DocumentStatus.PREPROCESSED.value, DocumentStatus.PENDING.value],
+            company_id=company_id
+        )
 
         if not batches:
             logger.info("No unextracted batches found to process.")
@@ -179,7 +181,7 @@ async def async_extract_documents(
 
             folder_name = os.path.basename(storage_path)
             from src.core.constants import DefaultIdentifier
-            batch_source = DefaultIdentifier.NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
+            batch_source = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
             if source and source != batch_source:
                 return False
 
@@ -202,6 +204,7 @@ async def async_extract_documents(
                         doc_type=target_doc_type,
                         batch_id=batch_id,
                         chunk_index=chunk_idx,
+                        company_id=company_id,
                         semaphore=semaphore,
                     )
                     chunk_payloads.append(payload)

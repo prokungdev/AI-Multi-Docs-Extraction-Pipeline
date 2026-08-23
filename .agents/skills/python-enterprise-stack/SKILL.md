@@ -22,9 +22,19 @@ This skill documents the universal technology stack standards, design patterns, 
   - Never scatter magic strings (status codes, domain identifiers, config paths) across codebase modules.
   - Centralize static constants in a dedicated `constants.py` module.
   - Use strongly-typed `Enum` classes for state machines and status transitions.
-- **Strict Fail-Fast Configuration Principle**:
-  - If a configuration parameter or threshold is defined in configuration files (e.g. JSON, YAML, TOML, or `.env`), **do NOT provide silent fallback defaults in Python application logic**.
-  - If a required configuration is missing or invalid, the system must fail immediately and loudly at boot time via Pydantic v2 schema validation (`model_validate()`).
+- **Strict Fail-Fast Configuration & Secret Principle**:
+  - Never guess or provide silent fallback defaults for missing secrets, credentials, environment variables, or database paths (e.g. `.get("api_key_env", "DEFAULT_KEY")` or `return {}` on file load failure).
+  - If a required configuration is missing or invalid, the system must fail immediately and loudly at boot time via Pydantic v2 schema validation (`model_validate()`) or explicit descriptive Exceptions (`ValueError`, `FileNotFoundError`, `KeyError`).
+  - Safe defaults are permitted ONLY for data normalization (e.g. `0.0` for optional numerical fields) or documented performance tuning constants.
+- **Single Canonical API & Zero Redundant Aliases Policy**:
+  - Never retain module-level function aliases, wrapper functions, or class/property aliases solely for internal backward compatibility (e.g. `legacy_func = new_func`, `def old_func(): return new_func()`).
+  - Eliminate vocabulary drift across codebase layers: enforce a single, canonical naming convention across all modules, schemas, database models, and API endpoints.
+  - Consumers must import and invoke canonical functions directly without intermediate legacy translation layers.
+- **High-Signal Commenting & Docstring Hygiene**:
+  - **Explain WHY, not WHAT**: Code and type hints explain what and how; comments exist strictly to explain why (rationale, business rules, edge cases, workarounds, or mathematical formulas).
+  - **Zero Noise & Obvious Boilerplate**: Never restate what the code clearly does (e.g. avoid comments like `# load json`, `# check if file exists`, or repetitive `Fail-Fast: Raises ...` above standard guard clauses).
+  - **Concise Single-Line Docstrings**: Use crisp, single-line docstrings for self-evident helper and utility functions. Multi-line docstrings are reserved for complex public interfaces with non-obvious side effects or complex parameter schemas.
+  - **No Step Spamming on Simple Logic**: Avoid numbering trivial 1-line operations (`# 1. do A`, `# 2. do B`) inside short functions.
 
 ---
 
@@ -176,6 +186,12 @@ To maintain clean architecture, avoid floating global variables, and eliminate c
 
 ### 3. Cascading Parameter Resolvers (DRY Principle)
 - When multiple pipeline stages or services resolve cascading defaults (e.g. resolving target tenant ID, entity scope, or processing domain), **MUST create centralized resolver functions** rather than repeating ternary fallback expressions across multiple caller files.
+
+### 4. Prefixed Entity Identifier Standard (Stripe-Style / TypeID Pattern)
+- **Standard Format**: Primary keys and external entity identifiers MUST follow the standardized prefixed pattern: `<entity_prefix>_<entropy_hex>` (e.g. `12` to `16` hexadecimal characters generated from UUID4, such as `doc_c4e5a5799901`, `comp_b8f2a1d933e4`).
+- **Centralized Entity Prefixes**: Define all entity prefixes in a dedicated constants namespace class (e.g., `EntityIdPrefix`).
+- **Unified Generator Utility**: Centralize ID creation via a standard helper (e.g. `generate_entity_id(prefix, hex_length=12)`) instead of ad-hoc string concatenations scattered across modules.
+- **Benefits**: Guarantees high observability in logs, visual type-safety preventing cross-entity ID bugs in REST APIs, compact index storage, and zero cross-machine collision probability.
 
 ---
 

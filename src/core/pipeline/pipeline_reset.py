@@ -7,7 +7,6 @@ from src.core.db import reset_pipeline_database
 
 def reset_pipeline_data(
     doc_type: str = None,
-    domain: str = None,
     clear_storage_temp: bool = True,
     clear_database: bool = True
 ) -> dict:
@@ -20,7 +19,7 @@ def reset_pipeline_data(
 
     settings = load_system_settings()
     storage_root = settings.get("storage_root", "storage")
-    target_doc_type = doc_type or domain or get_default_doc_type()
+    target_doc_type = doc_type or get_default_doc_type()
 
     res = {"database_reset": False, "storage_cleaned": False, "deleted_files_count": 0}
 
