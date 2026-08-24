@@ -4,10 +4,10 @@ import os
 import tempfile
 import unittest
 
-from src.core.post_processor import normalize_date_to_ad
-from src.core.utils import chunk_list
-from src.core.db.documents import calculate_file_hash
-from src.core.db.masters import sanitize_short_name
+from src.domain.services.post_processor import normalize_date_to_ad
+from src.infrastructure.common.utils import chunk_list
+from src.infrastructure.persistence.documents import calculate_file_hash
+from src.infrastructure.persistence.masters import sanitize_short_name
 
 
 class TestDateNormalization(unittest.TestCase):
@@ -109,7 +109,7 @@ class TestAppLogger(unittest.TestCase):
 
     def test_logger_methods_and_binding(self):
         """Tests that AppLogger gateway delegates standard logging levels without error."""
-        from src.core.logger import logger, get_logger, AppLogger
+        from src.infrastructure.common.logger import logger, get_logger, AppLogger
 
         self.assertIsInstance(logger, AppLogger)
         # Verify standard methods execute without raising exceptions
@@ -133,7 +133,7 @@ class TestAuditLogService(unittest.TestCase):
 
     def test_log_dto_validation_and_service(self):
         """Tests ApiCallLogCreate DTO construction and AuditLogService method."""
-        from src.core.db.logs import ApiCallLogCreate, AuditLogService
+        from src.infrastructure.persistence.logs import ApiCallLogCreate, AuditLogService
         import uuid
 
         dto = ApiCallLogCreate(
@@ -178,19 +178,19 @@ class TestPDFService(unittest.TestCase):
 
     def test_get_page_count(self):
         """Tests page count retrieval via PDFService."""
-        from src.core.pdf_service import PDFService
+        from src.infrastructure.pdf.pdf_service import PDFService
         count = PDFService.get_page_count(self.pdf_path)
         self.assertEqual(count, 1)
 
     def test_extract_text(self):
         """Tests digital text extraction via PDFService."""
-        from src.core.pdf_service import PDFService
+        from src.infrastructure.pdf.pdf_service import PDFService
         text = PDFService.extract_text(self.pdf_path)
         self.assertIn("Sample PDF Document", text)
 
     def test_render_page_to_pil(self):
         """Tests rendering page to PIL Image via PDFService."""
-        from src.core.pdf_service import PDFService
+        from src.infrastructure.pdf.pdf_service import PDFService
         pil_img = PDFService.render_page_to_pil(self.pdf_path, page_index=0, dpi=100)
         self.assertIsNotNone(pil_img)
         self.assertGreater(pil_img.width, 0)

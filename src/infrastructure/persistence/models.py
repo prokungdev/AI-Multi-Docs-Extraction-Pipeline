@@ -16,7 +16,7 @@ from sqlalchemy import (
     Index
 )
 from sqlalchemy.orm import declarative_base, relationship
-from src.core.constants import DefaultIdentifier
+from src.infrastructure.common.constants import DefaultIdentifier
 
 Base = declarative_base()
 LogBase = declarative_base()

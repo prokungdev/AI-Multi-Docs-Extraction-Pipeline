@@ -219,3 +219,47 @@ To ensure rock-solid production readiness and fail-fast guarantees:
 
 ### 4. Bidirectional Asset & Schema Sync
 - Verify that active features, templates, or domain types declared in configuration files have corresponding physical asset directories and schema definitions on disk, while flagging orphaned assets.
+
+---
+
+## 9. Modular Sub-Package Layering & Clean Core Architecture
+
+To avoid monolithic or flat core folders (where infrastructure, external services, data models, and business logic intermingle), enterprise Python codebases must organize the core engine into distinct, single-responsibility sub-packages:
+
+### 1. Standard Sub-Package Taxonomy
+- **`common/` (or `infra/`)**: Cross-cutting foundation independent of business domain:
+  - Centralized constants & state enums (`constants.py`)
+  - Universal dual logging gateway (`logger.py`)
+  - Configuration loaders (`config_loader.py`)
+  - Shared utility functions & hashers (`utils.py`)
+  - Health checks & system probes (`healthcheck.py`)
+- **`services/`**: External adapters, SDK integrations, and domain engine services:
+  - Third-party API / LLM clients (e.g. `ai_service.py`)
+  - Document rendering & file conversion services (e.g. `pdf_service.py`, `pdf_splitter.py`)
+  - Cost, token, or metering engines (`cost_estimator.py`)
+  - Multi-tenant directory & path managers (`storage_manager.py`)
+- **`processors/`**: Business logic, rule engines, and data pipeline components:
+  - Workspace / tenant bootstrappers (`initializer.py`)
+  - Document / message classifiers (`classifier.py`)
+  - Structured extraction engines (`extractor.py`)
+  - Normalization & payload enrichment (`transformer.py`)
+  - Post-processing, tax calculation, and data balancing (`post_processor.py`)
+- **`schemas/`**: Pydantic v2 Data Transfer Objects (DTOs), API contracts, and validation models:
+  - System configuration models (`settings_schema.py`)
+  - Transactional payload models & DTOs (`document_schemas.py`)
+- **`db/`**: Pure SQLAlchemy 2.0 ORM layer:
+  - Database connection & session dependencies (`connection.py`)
+  - Database schema definitions & tables (`schema.py`)
+  - Pure SQLAlchemy 2.0 Entities (`models.py`)
+  - Repository & master data access functions (`masters.py`, `documents.py`, `logs.py`)
+
+### 2. Unambiguous Model Separation Rule
+- **Never create ambiguous `models.py` at the package root**: Avoid mixing Pydantic schemas and database entities in the same file or package level.
+- **Strict Separation**:
+  - **SQLAlchemy ORM Entities** reside exclusively in `db/models.py`.
+  - **Pydantic Validation Models & DTOs** reside exclusively in `schemas/`.
+
+### 3. Facade Pattern for Public API Export
+- The top-level package `__init__.py` acts as an enterprise **Facade Interface**, re-exporting canonical classes and functions from sub-packages.
+- This guarantees a clean, stable public API surface while allowing sub-packages to evolve internally without breaking external consumers.
+

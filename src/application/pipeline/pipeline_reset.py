@@ -1,8 +1,8 @@
 import os
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 
-from src.core.config_loader import load_system_settings, get_default_doc_type
-from src.core.db import reset_pipeline_database
+from src.infrastructure.common.config_loader import load_system_settings, get_default_doc_type
+from src.infrastructure.persistence import reset_pipeline_database
 
 
 def reset_pipeline_data(
@@ -30,7 +30,7 @@ def reset_pipeline_data(
 
     # 2. Clean temporary pipeline storage across companies
     if clear_storage_temp:
-        from src.core.storage_manager import storage_manager
+        from src.infrastructure.storage.storage_manager import storage_manager
         comp_root = os.path.join(storage_manager.root, "companies").replace("\\", "/")
         folders_to_clean = []
         if os.path.exists(comp_root):

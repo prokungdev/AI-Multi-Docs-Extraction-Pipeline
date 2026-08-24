@@ -17,25 +17,25 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Import core modules
-from src.core.pdf_splitter import split_pdf
-from src.core.extractor import extract_document_data
-from src.core.transformer import transform_data
-from src.core.constants import DefaultPath
-from src.core.initializer import (
+from src.infrastructure.pdf.image_service import split_pdf
+from src.application.usecases.extractor import extract_document_data
+from src.domain.services.transformer import transform_data
+from src.infrastructure.common.constants import DefaultPath
+from src.application.usecases.initializer import (
     validate_settings_config,
     validate_doc_type_config,
     validate_environment,
     initialize_storage_directories
 )
-from src.core.logger import setup_logger
-from src.core.config_loader import (
+from src.infrastructure.common.logger import setup_logger
+from src.infrastructure.common.config_loader import (
     load_system_settings,
     get_active_doc_types,
     get_default_company_code,
     get_company_storage_dir,
     get_company_pipeline_folder,
 )
-from src.core.db import (
+from src.infrastructure.persistence import (
     calculate_file_hash,
     check_duplicate_document,
     get_pending_documents,
@@ -61,12 +61,12 @@ from src.core.db import (
     create_company,
     update_company,
 )
-from src.core.pipeline import split_and_match, release_pending_merchant_files
-from src.core.post_processor import post_process_document, archive_and_export_document
+from src.application.pipeline import split_and_match, release_pending_merchant_files
+from src.domain.services.post_processor import post_process_document, archive_and_export_document
 
 
-from src.core.exporters import list_exporters
-from src.core.config_loader import get_app_metadata
+from src.infrastructure.exporters import list_exporters
+from src.infrastructure.common.config_loader import get_app_metadata
 
 _app_meta = get_app_metadata()
 
@@ -135,7 +135,7 @@ def main_app():
     # Company Selection
     all_companies = get_all_companies(active_only=True)
     if not all_companies:
-        from src.core.db import get_or_create_default_company
+        from src.infrastructure.persistence import get_or_create_default_company
         default_c = get_or_create_default_company()
         all_companies = [default_c]
         
@@ -718,7 +718,7 @@ def main_app():
                         ).strip()
                         
                         # Real-time uniqueness alert
-                        from src.core.db import check_short_name_duplicate, check_file_prefix_duplicate
+                        from src.infrastructure.persistence import check_short_name_duplicate, check_file_prefix_duplicate
                         is_short_dup = check_short_name_duplicate(edit_short_name, exclude_merchant_id=m_id, company_id=selected_company_id)
                         is_pfx_dup = check_file_prefix_duplicate(edit_file_prefix, exclude_merchant_id=m_id, company_id=selected_company_id)
                         
@@ -796,9 +796,8 @@ def main_app():
         else:
             # Display results table
             df_res = pd.DataFrame(results)
-            df_display = df_res[[
-                "document_id", "doc_number", "doc_date", "entity_name", 
-                "total_amount", "status_code", "is_manually_edited", "confirmed_at"
+            cols_to_display = [c for c in ["document_id", "doc_number", "doc_date", "entity_name", "total_amount", "status_code", "is_manually_edited", "confirmed_at"] if c in df_res.columns]
+            st.dataframe(df_res[cols_to_display], use_container_width=True, hide_index=True)
         st.subheader("🔍 ค้นหาและตรวจสอบข้อมูลเอกสารย้อนหลัง (Audit Search)")
         col_s1, col_s2, col_s3 = st.columns(3)
         with col_s1:

@@ -1,11 +1,11 @@
 import copy
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
-from src.core.models import DocumentStatus, ReviewPriority
-from src.core.post_processor import apply_source_rules
-from src.core.storage_manager import StoragePathManager, storage_manager
-from src.core.config_loader import get_validation_thresholds
-from src.core.constants import (
+from src.application.dtos.document_dto import DocumentStatus, ReviewPriority
+from src.domain.services.post_processor import apply_source_rules
+from src.infrastructure.storage.storage_manager import StoragePathManager, storage_manager
+from src.infrastructure.common.config_loader import get_validation_thresholds
+from src.infrastructure.common.constants import (
     DefaultPath,
     DefaultIdentifier,
 )

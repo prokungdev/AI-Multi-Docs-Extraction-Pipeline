@@ -2,7 +2,7 @@ import os
 from typing import List, Dict, Any
 import pandas as pd
 from .base import BaseOutputExporter
-from src.core.transformer import transform_data, get_nested_value
+from src.domain.services.transformer import transform_data, get_nested_value
 
 
 class JsonConfigExporter(BaseOutputExporter):

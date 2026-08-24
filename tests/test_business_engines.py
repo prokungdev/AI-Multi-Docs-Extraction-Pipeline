@@ -1,12 +1,12 @@
 import unittest
-from src.core.models import ExtractedReceiptPayloadModel, ReceiptItemModel, TotalsModel
-from src.core.validators import (
+from src.application.dtos.document_dto import ExtractedReceiptPayloadModel, ReceiptItemModel, TotalsModel
+from src.domain.policies.validators import (
     DateNormalizationValidator,
     TaxIDValidator,
     FinancialMathValidator,
     ValidationStrategyEngine,
 )
-from src.core.cost_estimator import calculate_api_cost, format_cost_display
+from src.infrastructure.ai.cost_estimator import calculate_api_cost, format_cost_display
 
 
 class TestValidators(unittest.TestCase):
@@ -130,7 +130,7 @@ class TestAIServiceAndExporters(unittest.TestCase):
 
     def test_01_ai_service_initialization(self):
         """Test AIService initialization and configuration loading."""
-        from src.core.ai_service import AIService
+        from src.infrastructure.ai.ai_service import AIService
         service = AIService()
         self.assertEqual(service.active_provider, "gemini")
         self.assertGreaterEqual(service.max_retries, 1)
@@ -138,7 +138,7 @@ class TestAIServiceAndExporters(unittest.TestCase):
 
     def test_02_exporter_registry_lookup(self):
         """Test retrieving registered exporter strategy instances."""
-        from src.core.exporters.registry import get_exporter, list_exporters
+        from src.infrastructure.exporters.registry import get_exporter, list_exporters
         exp_summary = get_exporter("expense_receipt", "google_sheet_summary")
         self.assertIsNotNone(exp_summary)
 
@@ -154,7 +154,7 @@ class TestAIServiceAndExporters(unittest.TestCase):
         import tempfile
         import os
         import uuid
-        from src.core.exporters.registry import get_exporter
+        from src.infrastructure.exporters.registry import get_exporter
 
         exporter = get_exporter("expense_receipt", "google_sheet_summary")
         temp_dir = tempfile.gettempdir()
@@ -189,7 +189,7 @@ class TestAIServiceAndExporters(unittest.TestCase):
         import tempfile
         import os
         import uuid
-        from src.core.exporters.registry import get_exporter
+        from src.infrastructure.exporters.registry import get_exporter
 
         exporter = get_exporter("expense_receipt", "express_pv")
         temp_dir = tempfile.gettempdir()

@@ -10,10 +10,10 @@ import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Generator
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from src.core.constants import DefaultPath
+from src.infrastructure.common.constants import DefaultPath
 
 # Project root directory (4 levels up from src/core/db/connection.py)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent

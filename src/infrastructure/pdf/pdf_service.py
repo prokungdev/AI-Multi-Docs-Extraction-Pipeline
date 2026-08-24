@@ -9,7 +9,7 @@ from typing import Optional, List, Generator
 from contextlib import contextmanager
 from PIL import Image
 import pymupdf as fitz
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 
 
 class PDFService:

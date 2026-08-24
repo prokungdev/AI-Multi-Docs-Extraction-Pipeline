@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from src.core.db import (
+from src.infrastructure.persistence import (
     get_db_session_dep,
     get_all_companies,
     get_company,
@@ -14,7 +14,7 @@ from src.core.db import (
     update_company,
     delete_company,
 )
-from src.core.initializer import initialize_storage_directories
+from src.application.usecases.initializer import initialize_storage_directories
 
 router = APIRouter(prefix="/companies", tags=["Companies"])
 

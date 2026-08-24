@@ -6,7 +6,7 @@ import shutil
 from unittest.mock import MagicMock, patch
 from PIL import Image
 
-from src.core.db import (
+from src.infrastructure.persistence import (
     initialize_db_schema,
     seed_initial_data,
     create_company,
@@ -15,10 +15,10 @@ from src.core.db import (
     AuditLogService,
     get_api_call_logs,
 )
-from src.core.db.connection import get_engine
-from src.core.ai_service import ai_service
-from src.core.classifier import classify_document
-from src.core.extractor import extract_document_data
+from src.infrastructure.persistence.connection import get_engine
+from src.infrastructure.ai.ai_service import ai_service
+from src.domain.services.classifier import classify_document
+from src.application.usecases.extractor import extract_document_data
 
 
 class TestAiTelemetryAndIsolation(unittest.TestCase):

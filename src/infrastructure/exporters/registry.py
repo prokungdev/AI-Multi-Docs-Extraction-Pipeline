@@ -18,7 +18,7 @@ _REGISTRY: Dict[str, Dict[str, BaseOutputExporter]] = {
 }
 
 
-from src.core.constants import DefaultIdentifier
+from src.infrastructure.common.constants import DefaultIdentifier
 
 
 def register_exporter(

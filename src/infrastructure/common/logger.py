@@ -9,7 +9,7 @@ import sys
 import json
 from typing import Any, Optional
 from loguru import logger as _backend_logger
-from src.core.constants import DefaultPath
+from src.infrastructure.common.constants import DefaultPath
 
 
 class AppLogger:
@@ -125,7 +125,7 @@ def setup_logger(settings_path: str = DefaultPath.SETTINGS) -> None:
             func = record.get("function") or "main"
             created_at = record["time"].isoformat()
 
-            from src.core.db import get_log_db_session, ApplicationLog
+            from src.infrastructure.persistence import get_log_db_session, ApplicationLog
             with get_log_db_session() as session:
                 entry = ApplicationLog(
                     level=lvl,

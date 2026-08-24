@@ -5,14 +5,14 @@ import uuid
 from fastapi.testclient import TestClient
 
 from apps.api.main import app
-from src.core.healthcheck import (
+from src.infrastructure.common.healthcheck import (
     run_healthcheck,
     check_database_status,
     check_api_ready,
 )
-from src.core.config_loader import load_system_settings, get_company_storage_dir
-from src.core.db.connection import get_db_session
-from src.core.db.models import Company
+from src.infrastructure.common.config_loader import load_system_settings, get_company_storage_dir
+from src.infrastructure.persistence.connection import get_db_session
+from src.infrastructure.persistence.models import Company
 
 
 class TestHealthcheckServices(unittest.TestCase):
@@ -57,7 +57,7 @@ class TestFastAPIRestAPI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import tempfile
-        from src.core.db import initialize_db_schema, seed_initial_data
+        from src.infrastructure.persistence import initialize_db_schema, seed_initial_data
         cls.test_db_path = os.path.join(tempfile.gettempdir(), f"test_api_db_{uuid.uuid4().hex[:8]}.db").replace("\\", "/")
         os.environ["DB_PATH_OVERRIDE"] = cls.test_db_path
         initialize_db_schema()
@@ -67,7 +67,7 @@ class TestFastAPIRestAPI(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         import gc
-        from src.core.db.connection import get_engine
+        from src.infrastructure.persistence.connection import get_engine
         try:
             get_engine().dispose()
         except Exception:
@@ -200,14 +200,14 @@ class TestSystemConfigurationValidation(unittest.TestCase):
 
     def test_01_valid_production_settings(self):
         """Test that production settings.json is 100% valid."""
-        from src.core.initializer import validate_settings_config
+        from src.application.usecases.initializer import validate_settings_config
         is_valid, errors = validate_settings_config(self.valid_settings_path)
         self.assertTrue(is_valid, f"Expected production settings to be valid, got errors: {errors}")
         self.assertEqual(len(errors), 0)
 
     def test_02_missing_thresholds_fails(self):
         """Test that missing validation_thresholds fails immediately."""
-        from src.core.initializer import validate_settings_config
+        from src.application.usecases.initializer import validate_settings_config
         import copy
         bad_dict = copy.deepcopy(self.valid_dict)
         del bad_dict["validation_thresholds"]
@@ -222,7 +222,7 @@ class TestSystemConfigurationValidation(unittest.TestCase):
 
     def test_03_invalid_dpi_range_fails(self):
         """Test that DPI outside 72-600 fails immediately."""
-        from src.core.initializer import validate_settings_config
+        from src.application.usecases.initializer import validate_settings_config
         import copy
         bad_dict = copy.deepcopy(self.valid_dict)
         bad_dict["image_processing"]["dpi"] = 10
@@ -237,7 +237,7 @@ class TestSystemConfigurationValidation(unittest.TestCase):
 
     def test_04_missing_pattern_placeholder_fails(self):
         """Test that filename pattern missing {page_no} fails."""
-        from src.core.initializer import validate_settings_config
+        from src.application.usecases.initializer import validate_settings_config
         import copy
         bad_dict = copy.deepcopy(self.valid_dict)
         bad_dict["image_processing"]["split_filename_pattern"] = "{doc_type}_{tax_id}_static"
@@ -252,7 +252,7 @@ class TestSystemConfigurationValidation(unittest.TestCase):
 
     def test_05_missing_active_doc_types_fails(self):
         """Test that missing active doc_types fails."""
-        from src.core.initializer import validate_settings_config
+        from src.application.usecases.initializer import validate_settings_config
         import copy
         bad_dict = copy.deepcopy(self.valid_dict)
         for d in bad_dict.get("doc_types", []):
@@ -268,7 +268,7 @@ class TestSystemConfigurationValidation(unittest.TestCase):
 
     def test_06_threshold_hierarchy_inversion_fails(self):
         """Test that inverted confidence thresholds fail cross-field validation."""
-        from src.core.initializer import validate_settings_config
+        from src.application.usecases.initializer import validate_settings_config
         import copy
         bad_dict = copy.deepcopy(self.valid_dict)
         bad_dict["validation_thresholds"]["confidence_low"] = 0.90
@@ -284,7 +284,7 @@ class TestSystemConfigurationValidation(unittest.TestCase):
 
     def test_07_pricing_parity_mismatch_fails(self):
         """Test that configuring active AI model missing from pricing table fails."""
-        from src.core.initializer import validate_settings_config
+        from src.application.usecases.initializer import validate_settings_config
         import copy
         bad_dict = copy.deepcopy(self.valid_dict)
         bad_dict["ai_provider"]["gemini"]["model_name"] = "unpriced-experimental-model"
@@ -299,7 +299,7 @@ class TestSystemConfigurationValidation(unittest.TestCase):
 
     def test_08_storage_write_permission_probe(self):
         """Test environment validation and write permission probes."""
-        from src.core.initializer import validate_environment
+        from src.application.usecases.initializer import validate_environment
         messages = validate_environment(self.valid_settings_path)
         # Should not have write errors on standard local directories
         self.assertFalse(any("is not writable" in m for m in messages))

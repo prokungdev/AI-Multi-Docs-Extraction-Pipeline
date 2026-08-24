@@ -3,7 +3,7 @@ import unittest
 import uuid
 from datetime import datetime, timezone
 
-from src.core.db import (
+from src.infrastructure.persistence import (
     initialize_db_schema,
     seed_initial_data,
     create_batch,
@@ -25,8 +25,8 @@ from src.core.db import (
     update_source_active_status,
 )
 from sqlalchemy import select
-from src.core.db.connection import get_db_session, get_engine, get_database_url
-from src.core.db.models import (
+from src.infrastructure.persistence.connection import get_db_session, get_engine, get_database_url
+from src.infrastructure.persistence.models import (
     Base,
     ProcessedBatch,
     DocumentStatus,
@@ -53,7 +53,7 @@ class TestDatabase(unittest.TestCase):
     def tearDownClass(cls):
         # Clean up the test database file and dispose SQLAlchemy engine
         import gc
-        from src.core.db.connection import get_engine
+        from src.infrastructure.persistence.connection import get_engine
         try:
             get_engine().dispose()
         except Exception:

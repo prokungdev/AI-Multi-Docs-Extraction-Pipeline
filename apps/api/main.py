@@ -9,7 +9,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from apps.api.routers import health, companies
-from src.core.config_loader import get_app_metadata
+from src.infrastructure.common.config_loader import get_app_metadata
 
 app_meta = get_app_metadata()
 

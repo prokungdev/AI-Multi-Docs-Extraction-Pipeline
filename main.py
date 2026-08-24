@@ -1,16 +1,15 @@
 import argparse
 import sys
 import asyncio
-from src.core.config_loader import get_default_company_code
-from src.core.pipeline import (
+from src.infrastructure.common.config_loader import get_default_company_code
+from src.infrastructure.common.healthcheck import run_healthcheck, print_healthcheck_report
+from src.application.pipeline import (
     init_system,
     split_and_match,
     extract_documents,
     async_extract_documents,
     validate_documents,
     transform_to_db,
-    run_healthcheck,
-    print_healthcheck_report
 )
 
 def main():

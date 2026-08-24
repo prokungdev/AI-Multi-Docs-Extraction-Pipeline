@@ -1,14 +1,24 @@
 # Project Architecture & Quick Map
 
-## 1. Directory Structure
-- `src/core/`:
-  - `storage_manager.py`: Central path resolver (`storage/companies/{code}/{domain}/`)
-  - `ai_service.py`: LLM client (GenAI SDK, retry backoff, cost estimator)
-  - `constants.py`: Centralized static constants (Zero magic strings)
-  - `pipeline/`: Stages 0 to 4 (`init` ➔ `ingest` ➔ `extract` ➔ `transform` ➔ `validate`)
-  - `db/`: Pure SQLAlchemy 2.0 ORM (`pipeline.db`) + FastAPI `get_db_session_dep`
-  - `exporters/`: Strategy pattern (`json_adapter`, `express_adapter`, `registry`)
-- `apps/`: `api/` (FastAPI endpoints) & `ui/` (Streamlit dashboard)
+## 1. Canonical Domain-Driven Design (DDD) Structure
+- `src/domain/`: Pure business rules & domain services
+  - `services/`: `classifier.py`, `transformer.py`, `post_processor.py`
+  - `policies/`: Business rule specifications (`validators.py`)
+  - `entities/`: Domain entities & aggregates
+- `src/application/`: Use cases & pipeline orchestration
+  - `pipeline/`: Stages 0 to 4 (`init`, `ingest`, `extract`, `transform`, `validate`)
+  - `usecases/`: `initializer.py`, `extractor.py`
+  - `dtos/`: Pydantic V2 schemas (`settings_dto.py`, `document_dto.py`)
+- `src/infrastructure/`: Technical adapters & external persistence
+  - `ai/`: Gemini LLM SDK client & cost estimation (`ai_service.py`, `cost_estimator.py`)
+  - `pdf/`: PyMuPDF engine & Pillow image splitting (`pdf_service.py`, `image_service.py`)
+  - `persistence/`: Pure SQLAlchemy 2.0 ORM (`pipeline.db`)
+  - `storage/`: Multi-tenant disk path manager (`storage_manager.py`)
+  - `exporters/`: Output strategy adapters (`express_adapter.py`, `json_adapter.py`, `registry.py`)
+  - `common/`: Infrastructure logging, constants, config loader, healthcheck
+- `apps/`: Presentation & delivery mechanisms
+  - `api/`: FastAPI REST endpoints & dependency injection
+  - `streamlit/`: Streamlit web UI dashboard
 - `configs/`: `settings.json` (Validated by `SystemSettingsModel`) & `doc_types/`
 - `storage/`: `database/` (`pipeline.db`) & `companies/` (Tenant data folders)
 

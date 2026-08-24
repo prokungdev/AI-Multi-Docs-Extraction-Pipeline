@@ -2,25 +2,25 @@ import os
 import json
 import asyncio
 from dotenv import load_dotenv
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 
-from src.core.config_loader import (
+from src.infrastructure.common.config_loader import (
     load_system_settings,
     get_default_doc_type,
     get_default_company_code,
     get_company_pipeline_folder,
     get_ai_provider_config,
 )
-from src.core.db import (
+from src.infrastructure.persistence import (
     get_unextracted_batches,
     get_batch_pages,
     update_page_status,
     get_company_by_code,
 )
-from src.core.extractor import extract_document_data, async_extract_document_data
-from src.core.models import DocumentStatus
-from src.core.pipeline.pipeline_helpers import merge_chunk_payloads
-from src.core.utils import chunk_list
+from src.application.usecases.extractor import extract_document_data, async_extract_document_data
+from src.application.dtos.document_dto import DocumentStatus
+from src.application.pipeline.pipeline_helpers import merge_chunk_payloads
+from src.infrastructure.common.utils import chunk_list
 
 
 def extract_documents(
@@ -44,7 +44,7 @@ def extract_documents(
     max_images_per_request = ai_cfg.get("max_images_per_request", 50)
     target_doc_type = doc_type or get_default_doc_type()
 
-    from src.core.storage_manager import storage_manager
+    from src.infrastructure.storage.storage_manager import storage_manager
     queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)
 
     try:
@@ -69,7 +69,7 @@ def extract_documents(
 
             # Resolve source
             folder_name = os.path.basename(storage_path)
-            from src.core.constants import DefaultIdentifier
+            from src.infrastructure.common.constants import DefaultIdentifier
             batch_source = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
             if source and source != batch_source:
                 continue
@@ -157,7 +157,7 @@ async def async_extract_documents(
 
     target_doc_type = doc_type or get_default_doc_type()
 
-    from src.core.storage_manager import storage_manager
+    from src.infrastructure.storage.storage_manager import storage_manager
     queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)
 
     try:
@@ -180,7 +180,7 @@ async def async_extract_documents(
             storage_path = b["storage_path"]
 
             folder_name = os.path.basename(storage_path)
-            from src.core.constants import DefaultIdentifier
+            from src.infrastructure.common.constants import DefaultIdentifier
             batch_source = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
             if source and source != batch_source:
                 return False

@@ -1,16 +1,16 @@
 import os
 import json
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 
-from src.core.config_loader import (
+from src.infrastructure.common.config_loader import (
     load_system_settings,
     get_default_doc_type,
     get_default_company_code,
     get_company_pipeline_folder,
 )
-from src.core.db import get_pages_by_status, update_page_status, get_company_by_code
-from src.core.models import DocumentStatus
-from src.core.pipeline.pipeline_helpers import validate_and_process_payload
+from src.infrastructure.persistence import get_pages_by_status, update_page_status, get_company_by_code
+from src.application.dtos.document_dto import DocumentStatus
+from src.application.pipeline.pipeline_helpers import validate_and_process_payload
 
 
 def validate_documents(
@@ -30,7 +30,7 @@ def validate_documents(
 
     target_doc_type = doc_type or get_default_doc_type()
 
-    from src.core.storage_manager import storage_manager
+    from src.infrastructure.storage.storage_manager import storage_manager
     queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)
 
     try:
@@ -52,7 +52,7 @@ def validate_documents(
             storage_path = p["storage_path"]
 
             folder_name = os.path.basename(storage_path)
-            from src.core.constants import DefaultIdentifier
+            from src.infrastructure.common.constants import DefaultIdentifier
             source = DefaultIdentifier.NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
 
             image_basename = os.path.splitext(os.path.basename(image_path))[0]

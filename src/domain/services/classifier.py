@@ -4,10 +4,10 @@ import json
 import uuid
 from typing import Optional
 from PIL import Image
-from src.core.logger import logger
-from src.core.pdf_service import PDFService
+from src.infrastructure.common.logger import logger
+from src.infrastructure.pdf.pdf_service import PDFService
 
-from src.core.config_loader import (
+from src.infrastructure.common.config_loader import (
     load_system_settings,
     load_doc_type_prompt,
     load_doc_type_classify_prompt,
@@ -16,14 +16,14 @@ from src.core.config_loader import (
     get_doc_type_config_dir,
     get_default_company_code,
 )
-from src.core.constants import (
+from src.infrastructure.common.constants import (
     PipelineAction,
     DefaultIdentifier,
     MerchantStatusCode,
     DocumentStatusCode,
 )
-from src.core.storage_manager import storage_manager
-from src.core.db import (
+from src.infrastructure.storage.storage_manager import storage_manager
+from src.infrastructure.persistence import (
     get_or_create_merchant_auto,
     get_merchant_by_tax_id,
     sanitize_short_name,
@@ -118,7 +118,7 @@ def classify_document(
     try:
         from dotenv import load_dotenv
         load_dotenv()
-        from src.core.ai_service import ai_service
+        from src.infrastructure.ai.ai_service import ai_service
 
         if not ai_service.api_key:
             logger.error("AI API key is not configured. Cannot perform AI document classification.")

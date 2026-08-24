@@ -5,7 +5,7 @@ import json
 import uuid
 import re
 from datetime import datetime, timezone
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 from sqlalchemy import select, delete, func
 
 from .connection import get_db_session
@@ -18,7 +18,7 @@ from .models import (
     ExpenseReceipt,
     ExpenseReceiptItem
 )
-from src.core.constants import (
+from src.infrastructure.common.constants import (
     DefaultIdentifier,
     DefaultCompany,
     DefaultPath,
@@ -213,7 +213,7 @@ def get_doc_types(settings_path: str = DefaultPath.SETTINGS) -> list[dict]:
         logger.warning(f"Settings configuration file not found at: {settings_path}")
         return []
     try:
-        from src.core.config_loader import load_system_settings
+        from src.infrastructure.common.config_loader import load_system_settings
         settings = load_system_settings(settings_path)
         doc_types = settings.get("doc_types") or settings.get("domains", [])
         formatted_doc_types = []

@@ -13,11 +13,11 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from sqlalchemy import select, update
-from src.core.db.connection import get_db_session
-from src.core.db.models import DocumentPage, ProcessedBatch, Document
-from src.core.db.masters import insert_relational_receipt
-from src.core.constants import DocumentStatusCode, DefaultIdentifier, EntityIdPrefix, generate_entity_id
-from src.core.logger import logger
+from src.infrastructure.persistence.connection import get_db_session
+from src.infrastructure.persistence.models import DocumentPage, ProcessedBatch, Document
+from src.infrastructure.persistence.masters import insert_relational_receipt
+from src.infrastructure.common.constants import DocumentStatusCode, DefaultIdentifier, EntityIdPrefix, generate_entity_id
+from src.infrastructure.common.logger import logger
 
 
 def seed_from_queue(storage_root: str = "pipeline_storage", domain: str = DefaultIdentifier.DOC_TYPE):

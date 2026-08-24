@@ -3,7 +3,7 @@ import json
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 import pandas as pd
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 
 
 class BaseOutputExporter(ABC):

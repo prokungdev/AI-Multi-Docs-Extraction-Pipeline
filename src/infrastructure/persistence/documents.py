@@ -4,12 +4,12 @@ import os
 import hashlib
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Tuple
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 from sqlalchemy import select, update, delete, or_, and_, desc, asc, func
 
 from .connection import get_db_session
 from .models import Company, ProcessedBatch, DocumentPage, Document, DocumentStatus
-from src.core.constants import DefaultIdentifier, DocumentStatusCode
+from src.infrastructure.common.constants import DefaultIdentifier, DocumentStatusCode
 
 
 def calculate_file_hash(file_path: str) -> str:

@@ -4,10 +4,10 @@ import re
 import shutil
 import pandas as pd
 from datetime import datetime
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 
 from sqlalchemy import select
-from src.core.db import (
+from src.infrastructure.persistence import (
     get_db_session,
     get_document_pages,
     get_batch_pages,
@@ -16,9 +16,9 @@ from src.core.db import (
     Document,
     ProcessedBatch
 )
-from src.core.transformer import transform_data
-from src.core.config_loader import load_doc_type_rules
-from src.core.constants import DocumentStatusCode, DefaultIdentifier
+from src.domain.services.transformer import transform_data
+from src.infrastructure.common.config_loader import load_doc_type_rules
+from src.infrastructure.common.constants import DocumentStatusCode, DefaultIdentifier
 
 def normalize_date_to_ad(date_str: str, source_era: str = "BE") -> str:
     """
@@ -149,7 +149,7 @@ def archive_and_export_document(
     Performs file archiving and report exporting for an approved document.
     Copies raw file and split pages to 05_archive, and updates flattened outputs in 06_output.
     """
-    from src.core.storage_manager import storage_manager
+    from src.infrastructure.storage.storage_manager import storage_manager
     target_dt = doc_type_id or DefaultIdentifier.DOC_TYPE
     comp_code = kwargs.get("company_code") or "C00000_SAMPLE"
     
@@ -188,7 +188,7 @@ def archive_and_export_document(
         
     # 2. Append to Registered DocType Exporters (Output to 06_output)
     try:
-        from src.core.exporters import list_exporters
+        from src.infrastructure.exporters import list_exporters
         exporters_list = list_exporters(target_dt)
         
         doc_data = {

@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 
 from .connection import engine, get_engine, get_log_engine, get_db_session, PROJECT_ROOT
 from .models import (
@@ -20,7 +20,7 @@ from .models import (
     ApiCallLog,
     ApplicationLog
 )
-from src.core.constants import (
+from src.infrastructure.common.constants import (
     DefaultCompany,
     DefaultIdentifier,
     DocumentStatusCode,

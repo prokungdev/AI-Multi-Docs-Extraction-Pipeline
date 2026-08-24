@@ -1,7 +1,7 @@
 import re
 from abc import ABC, abstractmethod
 from typing import Any
-from src.core.models import ExtractedReceiptPayloadModel
+from src.application.dtos.document_dto import ExtractedReceiptPayloadModel
 
 class BaseValidator(ABC):
     """
@@ -65,7 +65,7 @@ class TaxIDValidator(BaseValidator):
     def validate(self, payload: dict, context: dict = None) -> tuple[dict, bool, list[str]]:
         needs_review = False
         reasons = []
-        from src.core.constants import DefaultIdentifier
+        from src.infrastructure.common.constants import DefaultIdentifier
         source = context.get("source", DefaultIdentifier.NO_TAX_LABEL)
         allowed_tax_ids = context.get("allowed_tax_ids", [])
 

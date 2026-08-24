@@ -1,15 +1,15 @@
 import os
 import json
 import uuid
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 
-from src.core.config_loader import (
+from src.infrastructure.common.config_loader import (
     load_system_settings,
     get_default_doc_type,
     get_default_company_code,
     get_company_pipeline_folder,
 )
-from src.core.db import (
+from src.infrastructure.persistence import (
     get_pages_by_status,
     update_page_status,
     create_document,
@@ -17,9 +17,9 @@ from src.core.db import (
     insert_relational_receipt,
     get_company_by_code,
 )
-from src.core.models import DocumentStatus
-from src.core.constants import EntityIdPrefix, generate_entity_id
-from src.core.post_processor import post_process_document
+from src.application.dtos.document_dto import DocumentStatus
+from src.infrastructure.common.constants import EntityIdPrefix, generate_entity_id
+from src.domain.services.post_processor import post_process_document
 
 
 def transform_to_db(
@@ -39,7 +39,7 @@ def transform_to_db(
 
     target_doc_type = doc_type or get_default_doc_type()
 
-    from src.core.storage_manager import storage_manager
+    from src.infrastructure.storage.storage_manager import storage_manager
     queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)
 
     try:
@@ -65,7 +65,7 @@ def transform_to_db(
             storage_path = p["storage_path"]
 
             folder_name = os.path.basename(storage_path)
-            from src.core.constants import DefaultIdentifier
+            from src.infrastructure.common.constants import DefaultIdentifier
             source = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
 
             image_basename = os.path.splitext(os.path.basename(image_path))[0]

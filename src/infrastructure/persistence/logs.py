@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 from .connection import get_db_session, get_log_db_session
 from .models import ApiCallLog, ApplicationLog
-from src.core.constants import DefaultPath
+from src.infrastructure.common.constants import DefaultPath
 
 
 class ApiCallLogCreate(BaseModel):

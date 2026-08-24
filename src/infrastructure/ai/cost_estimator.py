@@ -1,9 +1,9 @@
 """AI Cost calculation engine and multi-tier pricing estimator."""
 
 from typing import Dict, Any, Optional
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 
-from src.core.config_loader import load_system_settings
+from src.infrastructure.common.config_loader import load_system_settings
 
 # Fallback pricing catalog — override via configs/settings.json > ai_pricing.models
 # These are illustrative defaults only; update settings.json for production-accurate pricing.

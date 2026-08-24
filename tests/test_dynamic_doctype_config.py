@@ -2,7 +2,7 @@ import unittest
 import os
 import json
 from pydantic import ValidationError
-from src.core.config_loader import (
+from src.infrastructure.common.config_loader import (
     get_doctype_file_path,
     load_doc_type_schema,
     load_doc_type_classify_schema,
@@ -10,8 +10,8 @@ from src.core.config_loader import (
     load_doc_type_classify_prompt,
     load_doc_type_rules,
 )
-from src.core.initializer import validate_doc_type_config, validate_settings_config
-from src.core.schemas.settings_schema import SystemSettingsModel
+from src.application.usecases.initializer import validate_doc_type_config, validate_settings_config
+from src.application.dtos.settings_dto import SystemSettingsModel
 
 
 class TestDynamicDocTypeConfig(unittest.TestCase):

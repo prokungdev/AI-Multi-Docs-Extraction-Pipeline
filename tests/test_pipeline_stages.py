@@ -3,18 +3,18 @@ import unittest
 import pymupdf as fitz
 from PIL import Image
 
-from src.core.config_loader import load_system_settings
-from src.core.initializer import initialize_storage_directories
-from src.core.logger import setup_logger
-from src.core.pdf_splitter import split_pdf, process_raw_image, format_page_filename
-from src.core.classifier import (
+from src.infrastructure.common.config_loader import load_system_settings
+from src.application.usecases.initializer import initialize_storage_directories
+from src.infrastructure.common.logger import setup_logger
+from src.infrastructure.pdf.image_service import split_pdf, process_raw_image, format_page_filename
+from src.domain.services.classifier import (
     classify_drop_zone_document,
     classify_document,
     sanitize_short_name,
     fast_filename_prefix_match,
 )
-from src.core.pipeline.stage_1_ingestion import release_pending_merchant_files
-from src.core.db import (
+from src.application.pipeline.stage_1_ingestion import release_pending_merchant_files
+from src.infrastructure.persistence import (
     initialize_db_schema,
     seed_initial_data,
     get_merchant_by_tax_id,
@@ -168,7 +168,7 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         import gc
-        from src.core.db.connection import get_engine
+        from src.infrastructure.persistence.connection import get_engine
         try:
             get_engine().dispose()
         except Exception:
@@ -192,7 +192,7 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
     def test_02_new_merchant_auto_discovery_and_hold(self):
         """Test auto-discovery of new merchant and HOLD pipeline action via AI classification."""
         from unittest.mock import patch
-        from src.core.ai_service import ai_service
+        from src.infrastructure.ai.ai_service import ai_service
 
         mock_payload = {
             "tax_id": "0107542000011",
@@ -219,7 +219,7 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
     def test_03_merchant_approval_flow(self):
         """Test approving merchant and subsequent classification PROCEED."""
         from unittest.mock import patch
-        from src.core.ai_service import ai_service
+        from src.infrastructure.ai.ai_service import ai_service
 
         merchant = get_merchant_by_tax_id("0107542000011")
         self.assertIsNotNone(merchant)
@@ -269,7 +269,7 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
     def test_06_merchant_ignored_flow(self):
         """Test ignoring merchant and subsequent IGNORE routing."""
         from unittest.mock import patch
-        from src.core.ai_service import ai_service
+        from src.infrastructure.ai.ai_service import ai_service
 
         merchant = get_merchant_by_tax_id("0107542000011")
         ok, msg = ignore_merchant(merchant["merchant_id"], approved_by="test_admin")

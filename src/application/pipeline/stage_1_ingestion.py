@@ -1,9 +1,9 @@
 import os
 import shutil
 import uuid
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 
-from src.core.config_loader import (
+from src.infrastructure.common.config_loader import (
     load_system_settings,
     resolve_doc_type,
     resolve_company_code,
@@ -12,23 +12,23 @@ from src.core.config_loader import (
     get_image_processing_config,
     get_supported_extensions,
 )
-from src.core.db import (
+from src.infrastructure.persistence import (
     calculate_file_hash,
     check_duplicate_document,
     create_batch,
     create_page,
     get_company_by_code,
 )
-from src.core.constants import (
+from src.infrastructure.common.constants import (
     DocumentStatusCode,
     MerchantStatusCode,
     PipelineStageFolder,
     EntityIdPrefix,
     generate_entity_id,
 )
-from src.core.pdf_splitter import split_pdf, process_raw_image, format_page_filename
-from src.core.classifier import classify_document
-from src.core.storage_manager import storage_manager
+from src.infrastructure.pdf.image_service import split_pdf, process_raw_image, format_page_filename
+from src.domain.services.classifier import classify_document
+from src.infrastructure.storage.storage_manager import storage_manager
 
 
 def _register_preprocessed_page(
@@ -144,7 +144,7 @@ def split_and_match(
             continue
 
         # 2. Fast AI Classifier & Gatekeeper Routing
-        from src.core.constants import DefaultIdentifier, PipelineAction, PipelineStageFolder
+        from src.infrastructure.common.constants import DefaultIdentifier, PipelineAction, PipelineStageFolder
         dest_file_path = file_path
         dest_folder = os.path.dirname(file_path)
         matched_source = DefaultIdentifier.NO_TAX_LABEL

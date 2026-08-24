@@ -4,8 +4,8 @@ from typing import List, Dict, Any
 import pandas as pd
 from sqlalchemy import select, func
 from .base import BaseOutputExporter
-from src.core.db import get_db_session, Document
-from src.core.constants import DocumentStatusCode, DefaultIdentifier
+from src.infrastructure.persistence import get_db_session, Document
+from src.infrastructure.common.constants import DocumentStatusCode, DefaultIdentifier
 
 
 class ExpressExpenseExporter(BaseOutputExporter):

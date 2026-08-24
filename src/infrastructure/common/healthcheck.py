@@ -2,11 +2,11 @@
 
 import os
 from dotenv import load_dotenv
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 from sqlalchemy import inspect
 
-from src.core.config_loader import load_system_settings, get_ai_provider_config
-from src.core.db.connection import get_engine
+from src.infrastructure.common.config_loader import load_system_settings, get_ai_provider_config
+from src.infrastructure.persistence.connection import get_engine
 
 
 def check_database_status() -> tuple[bool, str]:
@@ -50,7 +50,7 @@ def check_storage_status(settings: dict) -> tuple[bool, str, list[str]]:
     Checks storage root and log directory write permissions.
     """
     remedies = []
-    from src.core.constants import DefaultPath
+    from src.infrastructure.common.constants import DefaultPath
     storage_root = settings.get("storage_root", DefaultPath.STORAGE_ROOT)
     logs_dir = settings.get("logging", {}).get("logs_dir", DefaultPath.LOGS_DIR)
 

@@ -9,12 +9,12 @@ import time
 import asyncio
 from typing import List, Dict, Any, Optional, Tuple
 from PIL import Image
-from src.core.logger import logger
+from src.infrastructure.common.logger import logger
 
-from src.core.config_loader import load_system_settings
-from src.core.cost_estimator import calculate_api_cost
-from src.core.constants import DefaultPath, EntityIdPrefix, generate_entity_id
-from src.core.db import create_api_call_log, AuditLogService, ApiCallLogCreate
+from src.infrastructure.common.config_loader import load_system_settings
+from src.infrastructure.ai.cost_estimator import calculate_api_cost
+from src.infrastructure.common.constants import DefaultPath, EntityIdPrefix, generate_entity_id
+from src.infrastructure.persistence import create_api_call_log, AuditLogService, ApiCallLogCreate
 
 
 class AIService:
