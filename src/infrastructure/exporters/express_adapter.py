@@ -30,7 +30,7 @@ class ExpressExpenseExporter(BaseOutputExporter):
             with get_db_session() as session:
                 stmt = select(func.count()).select_from(Document).where(
                     Document.status_code == DocumentStatusCode.APPROVED,
-                    Document.domain_id == self.domain_id
+                    Document.doc_type_id == self.doc_type_id
                 )
                 count = session.scalars(stmt).one()
                 return count + 1

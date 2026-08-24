@@ -295,11 +295,15 @@ class TestUnifiedSourceClassifier(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        import tempfile
+        import tempfile, uuid
         setup_logger("configs/settings.json")
         cls.settings = load_system_settings("configs/settings.json")
         cls.doc_type = "expense_receipt"
         cls.temp_dir = tempfile.mkdtemp()
+        cls.db_path = os.path.join(tempfile.gettempdir(), f"test_unified_{uuid.uuid4().hex[:8]}.db").replace("\\", "/")
+        os.environ["DB_PATH_OVERRIDE"] = cls.db_path
+        initialize_db_schema()
+        seed_initial_data()
 
         # Generate mock PDF with generic mock merchant text in isolated temp directory
         cls.pdf_path = os.path.join(cls.temp_dir, "mock_source_document.pdf").replace("\\", "/")
@@ -316,15 +320,162 @@ class TestUnifiedSourceClassifier(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        import shutil
+        import shutil, gc
+        from src.infrastructure.persistence.connection import dispose_all_engines
+        dispose_all_engines()
+        gc.collect()
         if hasattr(cls, "temp_dir") and os.path.exists(cls.temp_dir):
             shutil.rmtree(cls.temp_dir, ignore_errors=True)
+        if hasattr(cls, "db_path") and os.path.exists(cls.db_path):
+            try:
+                os.remove(cls.db_path)
+            except Exception:
+                pass
+        os.environ.pop("DB_PATH_OVERRIDE", None)
 
     def test_classify_document_pipeline(self):
         """Test unified document classification routing with AI fallback or safe quarantine."""
         cls_res = classify_document(self.pdf_path, doc_type=self.doc_type)
         self.assertIn("folder_identifier", cls_res)
         self.assertIn("pipeline_action", cls_res)
+
+
+class TestSmartChunkCheckpointAndResume(unittest.TestCase):
+    """
+    Test suite for Smart Chunk-Level Checkpointing, Partial Failure Tracking, and Resuming.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile, uuid
+        setup_logger("configs/settings.json")
+        cls.settings = load_system_settings("configs/settings.json")
+        cls.doc_type = "expense_receipt"
+        cls.temp_dir = tempfile.mkdtemp()
+        cls.db_path = os.path.join(tempfile.gettempdir(), f"test_chunking_{uuid.uuid4().hex[:8]}.db").replace("\\", "/")
+        os.environ["DB_PATH_OVERRIDE"] = cls.db_path
+        initialize_db_schema()
+        seed_initial_data()
+
+        # Create a 5-page mock PDF with approved cash_slip prefix
+        cls.pdf_path = os.path.join(cls.temp_dir, "cash_slip_multi_page.pdf").replace("\\", "/")
+        doc = fitz.open()
+        for page_idx in range(1, 6):
+            page = doc.new_page()
+            page.insert_text((50, 50), f"Mock Cash Slip - Page {page_idx}\nTax ID: 0000000000000\nTotal: 500.00 THB")
+        doc.save(cls.pdf_path)
+        doc.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil, gc
+        from src.infrastructure.persistence.connection import dispose_all_engines
+        dispose_all_engines()
+        gc.collect()
+        if hasattr(cls, "temp_dir") and os.path.exists(cls.temp_dir):
+            shutil.rmtree(cls.temp_dir, ignore_errors=True)
+        if hasattr(cls, "db_path") and os.path.exists(cls.db_path):
+            try:
+                os.remove(cls.db_path)
+            except Exception:
+                pass
+        os.environ.pop("DB_PATH_OVERRIDE", None)
+
+    def test_01_multi_page_splitting_and_chunk_assignment(self):
+        """Test that PDF splitting correctly computes and records chunk_index per page in DB."""
+        from unittest.mock import patch
+        from src.application.pipeline.stage_1_ingestion import split_and_match
+        from src.infrastructure.persistence import get_batch_pages
+
+        # Mock max_images_per_request to 2 pages per chunk
+        with patch("src.application.pipeline.stage_1_ingestion.get_ai_provider_config", return_value={"max_images_per_request": 2}):
+            results = split_and_match(input_file=self.pdf_path, doc_type="expense_receipt")
+            self.assertEqual(len(results), 1)
+            batch_id = results[0]["batch_id"]
+            self.assertEqual(results[0]["total_pages"], 5)
+
+            pages = get_batch_pages(batch_id)
+            self.assertEqual(len(pages), 5)
+            
+            # Page 1, 2 -> chunk 1
+            self.assertEqual(pages[0]["chunk_index"], 1)
+            self.assertEqual(pages[1]["chunk_index"], 1)
+            # Page 3, 4 -> chunk 2
+            self.assertEqual(pages[2]["chunk_index"], 2)
+            self.assertEqual(pages[3]["chunk_index"], 2)
+            # Page 5 -> chunk 3
+            self.assertEqual(pages[4]["chunk_index"], 3)
+            self.__class__.batch_id = batch_id
+
+    def test_02_chunk_partial_failure_and_smart_resume(self):
+        """Test partial failure at chunk 2, checkpointing of chunk 1, and subsequent resume."""
+        from unittest.mock import patch
+        from src.application.pipeline.stage_2_extraction import extract_documents
+        from src.infrastructure.persistence import get_batch_pages, get_unextracted_chunks_for_batch
+
+        batch_id = getattr(self.__class__, "batch_id", None)
+        self.assertIsNotNone(batch_id)
+
+        # 1. First run: Chunk 1 succeeds, Chunk 2 raises AI RateLimitError
+        def mock_extract_document_data(**kwargs):
+            chunk_index = kwargs.get("chunk_index", 1)
+            if chunk_index == 1:
+                return {"documents": [{"doc_number": "INV-001", "total_amount": 100.0}]}
+            elif chunk_index == 2:
+                raise RuntimeError("AI RateLimit 429: Resource exhausted")
+            return {"documents": [{"doc_number": "INV-003", "total_amount": 300.0}]}
+
+        with patch("src.application.pipeline.stage_2_extraction.extract_document_data", side_effect=mock_extract_document_data):
+            res = extract_documents(doc_type="expense_receipt")
+            # Should have processed 0 completed batches because chunk 2 failed
+            self.assertEqual(res["batches_processed"], 0)
+
+        # Check DB state
+        pages = get_batch_pages(batch_id)
+        # Chunk 1 (pages 1-2) -> EXTRACTED
+        self.assertEqual(pages[0]["status_code"], "EXTRACTED")
+        self.assertEqual(pages[1]["status_code"], "EXTRACTED")
+        # Chunk 2 (pages 3-4) -> FAILED
+        self.assertEqual(pages[2]["status_code"], "FAILED")
+        self.assertIn("RateLimit", pages[2]["error_reason"])
+        self.assertEqual(pages[3]["status_code"], "FAILED")
+        
+        # Pending unextracted chunks must be [2, 3]
+        unextracted = get_unextracted_chunks_for_batch(batch_id)
+        self.assertEqual(unextracted, [2, 3])
+
+        # 2. Second run (Resume): All chunks succeed
+        call_counts = {"chunk_1": 0, "chunk_2": 0, "chunk_3": 0}
+
+        def mock_resume_extract(**kwargs):
+            chunk_idx = kwargs.get("chunk_index", 1)
+            if chunk_idx == 1:
+                call_counts["chunk_1"] += 1
+                return {"documents": [{"doc_number": "INV-001", "total_amount": 100.0}]}
+            elif chunk_idx == 2:
+                call_counts["chunk_2"] += 1
+                return {"documents": [{"doc_number": "INV-002", "total_amount": 200.0}]}
+            elif chunk_idx == 3:
+                call_counts["chunk_3"] += 1
+                return {"documents": [{"doc_number": "INV-003", "total_amount": 300.0}]}
+
+        with patch("src.application.pipeline.stage_2_extraction.extract_document_data", side_effect=mock_resume_extract):
+            res = extract_documents(doc_type="expense_receipt")
+            self.assertEqual(res["batches_processed"], 1)
+
+        # Chunk 1 was loaded from cache and NOT re-called!
+        self.assertEqual(call_counts["chunk_1"], 0)
+        # Chunk 2 and Chunk 3 were called and processed!
+        self.assertEqual(call_counts["chunk_2"], 1)
+        self.assertEqual(call_counts["chunk_3"], 1)
+
+        # Verify all pages in DB are now EXTRACTED
+        final_pages = get_batch_pages(batch_id)
+        for p in final_pages:
+            self.assertEqual(p["status_code"], "EXTRACTED")
+
+        # Unextracted chunks should now be empty
+        self.assertEqual(get_unextracted_chunks_for_batch(batch_id), [])
 
 
 if __name__ == "__main__":

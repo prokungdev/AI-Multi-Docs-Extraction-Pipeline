@@ -1,0 +1,20 @@
+{
+  "documents": [
+    {
+      "doc_number": "INV-001",
+      "total_amount": 100.0
+    }
+  ],
+  "items": [],
+  "_metadata": {
+    "model_used": null,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_parts_merged": 3
+  },
+  "validation_meta": {
+    "is_complete": true,
+    "missing_pages": [],
+    "logical_page_order": []
+  }
+}

@@ -8,7 +8,7 @@ from src.infrastructure.common.logger import logger
 from sqlalchemy import select, update, delete, or_, and_, desc, asc, func
 
 from .connection import get_db_session
-from .models import Company, ProcessedBatch, DocumentPage, Document, DocumentStatus
+from .models import Company, ProcessedBatch, DocumentPage, Document, DocumentStatus, Merchant
 from src.infrastructure.common.constants import DefaultIdentifier, DocumentStatusCode, SystemUserId
 
 DEFAULT_LOCK_TTL_SECONDS = 900  # 15 minutes Airline Ticket Hold duration
@@ -40,8 +40,9 @@ def check_duplicate_document(file_hash: str, company_id: str = None) -> tuple[bo
                     "original_pdf_name": batch.original_filename,
                     "created_at": batch.created_at,
                     "status": first_doc.status_code if first_doc else DocumentStatusCode.PENDING,
-                    "doc_type_id": first_doc.domain_id if first_doc else DefaultIdentifier.DOC_TYPE,
-                    "source": first_doc.source_id if first_doc else DefaultIdentifier.NO_TAX_LABEL
+                    "doc_type_id": first_doc.doc_type_id if first_doc else DefaultIdentifier.DOC_TYPE,
+                    "merchant_id": first_doc.merchant_id if first_doc else DefaultIdentifier.NO_TAX_LABEL,
+                    "source": first_doc.merchant_id if first_doc else DefaultIdentifier.NO_TAX_LABEL
                 }
                 return True, metadata
     except Exception as e:
@@ -88,7 +89,15 @@ def create_batch(batch_id: str, original_filename: str = None, total_pages: int 
         return False
 
 
-def create_page(page_id: str, batch_id: str, page_number: int, image_path: str, status_code: str, error_reason: str = None) -> bool:
+def create_page(
+    page_id: str,
+    batch_id: str,
+    page_number: int,
+    image_path: str,
+    status_code: str,
+    chunk_index: int = 1,
+    error_reason: str = None
+) -> bool:
     """
     Inserts or updates a page record using Pure SQLAlchemy 2.0 ORM.
     """
@@ -99,6 +108,7 @@ def create_page(page_id: str, batch_id: str, page_number: int, image_path: str, 
             if page:
                 page.batch_id = batch_id
                 page.page_number = page_number
+                page.chunk_index = chunk_index
                 page.image_path = image_path
                 page.status_code = status_code
                 page.error_reason = error_reason
@@ -107,6 +117,7 @@ def create_page(page_id: str, batch_id: str, page_number: int, image_path: str, 
                     page_id=page_id,
                     batch_id=batch_id,
                     page_number=page_number,
+                    chunk_index=chunk_index,
                     image_path=image_path,
                     status_code=status_code,
                     error_reason=error_reason,
@@ -171,8 +182,9 @@ def create_document(
     document_id: str,
     batch_id: str,
     doc_type_id: str = None,
+    merchant_id: str = None,
     domain_id: str = None,
-    source_id: str = DefaultIdentifier.NO_TAX_ID,
+    source_id: str = None,
     status_code: str = DocumentStatusCode.PROCESSED,
     doc_number: str = None,
     doc_date: str = None,
@@ -202,6 +214,7 @@ def create_document(
     Inserts or updates a document record using Pure SQLAlchemy 2.0 ORM.
     """
     final_dt = doc_type_id or domain_id or DefaultIdentifier.DOC_TYPE
+    final_merchant_id = merchant_id or source_id or DefaultIdentifier.NO_TAX_ID
     final_auto_approved = is_auto_approved if is_auto_approved is not None else (auto_approved or 0)
     final_ambiguous = is_ambiguous if is_ambiguous is not None else (has_ambiguous_fields or 0)
 
@@ -214,8 +227,20 @@ def create_document(
                     target_cid = batch_obj.company_id
                 else:
                     def_comp = session.scalars(select(Company).filter_by(company_code=DefaultIdentifier.COMPANY_CODE)).first()
-                    if def_comp:
-                        target_cid = def_comp.company_id
+            # Resolve and validate merchant_id against Merchant records
+            raw_merchant_key = merchant_id or source_id
+            final_merchant_id = None
+            if raw_merchant_key:
+                merch_exists = session.scalars(select(Merchant.merchant_id).filter_by(merchant_id=raw_merchant_key)).first()
+                if merch_exists:
+                    final_merchant_id = merch_exists
+                else:
+                    merch_by_sn = session.scalars(select(Merchant.merchant_id).filter_by(short_name=raw_merchant_key)).first()
+                    if merch_by_sn:
+                        final_merchant_id = merch_by_sn
+                    else:
+                        no_tax = session.scalars(select(Merchant.merchant_id).filter_by(merchant_id=DefaultIdentifier.NO_TAX_ID)).first()
+                        final_merchant_id = no_tax if no_tax else None
 
             created_at = datetime.now(timezone.utc).isoformat()
             doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
@@ -223,8 +248,8 @@ def create_document(
                 if target_cid:
                     doc.company_id = target_cid
                 doc.batch_id = batch_id
-                doc.domain_id = final_dt
-                doc.source_id = source_id
+                doc.doc_type_id = final_dt
+                doc.merchant_id = final_merchant_id
                 doc.status_code = status_code
                 doc.doc_number = doc_number
                 doc.doc_date = doc_date
@@ -252,8 +277,8 @@ def create_document(
                     document_id=document_id,
                     company_id=target_cid,
                     batch_id=batch_id,
-                    domain_id=final_dt,
-                    source_id=source_id,
+                    doc_type_id=final_dt,
+                    merchant_id=final_merchant_id,
                     status_code=status_code,
                     doc_number=doc_number,
                     doc_date=doc_date,
@@ -349,11 +374,19 @@ def get_batch_pages(batch_id: str) -> list[dict]:
         return []
 
 
-def get_pending_documents(domain_id: str = None, source_id: str = None, company_id: str = None) -> list[dict]:
+def get_pending_documents(
+    doc_type_id: str = None,
+    merchant_id: str = None,
+    company_id: str = None,
+    domain_id: str = None,
+    source_id: str = None,
+) -> list[dict]:
     """
     Retrieves documents waiting for review using Pure SQLAlchemy 2.0 ORM.
-    Optionally filters by company_id.
+    Optionally filters by company_id, doc_type_id, or merchant_id.
     """
+    target_dt = doc_type_id or domain_id
+    target_merchant = merchant_id or source_id
     try:
         with get_db_session() as session:
             stmt = select(Document, ProcessedBatch).join(
@@ -368,10 +401,10 @@ def get_pending_documents(domain_id: str = None, source_id: str = None, company_
 
             if company_id:
                 stmt = stmt.where(Document.company_id == company_id)
-            if domain_id:
-                stmt = stmt.where(Document.domain_id == domain_id)
-            if source_id:
-                stmt = stmt.where(Document.source_id == source_id)
+            if target_dt:
+                stmt = stmt.where(Document.doc_type_id == target_dt)
+            if target_merchant:
+                stmt = stmt.where(Document.merchant_id == target_merchant)
 
             stmt = stmt.order_by(
                 Document.review_priority.desc(),
@@ -392,11 +425,20 @@ def get_pending_documents(domain_id: str = None, source_id: str = None, company_
         return []
 
 
-def get_all_documents(domain_id: str = None, source_id: str = None, status_code: str = None, company_id: str = None) -> list[dict]:
+def get_all_documents(
+    doc_type_id: str = None,
+    merchant_id: str = None,
+    status_code: str = None,
+    company_id: str = None,
+    domain_id: str = None,
+    source_id: str = None,
+) -> list[dict]:
     """
     Retrieves all documents matching criteria using Pure SQLAlchemy 2.0 ORM.
-    Optionally filters by company_id.
+    Optionally filters by company_id, doc_type_id, or merchant_id.
     """
+    target_dt = doc_type_id or domain_id
+    target_merchant = merchant_id or source_id
     try:
         with get_db_session() as session:
             stmt = select(Document, ProcessedBatch).join(
@@ -405,10 +447,10 @@ def get_all_documents(domain_id: str = None, source_id: str = None, status_code:
 
             if company_id:
                 stmt = stmt.where(Document.company_id == company_id)
-            if domain_id:
-                stmt = stmt.where(Document.domain_id == domain_id)
-            if source_id:
-                stmt = stmt.where(Document.source_id == source_id)
+            if target_dt:
+                stmt = stmt.where(Document.doc_type_id == target_dt)
+            if target_merchant:
+                stmt = stmt.where(Document.merchant_id == target_merchant)
             if status_code:
                 stmt = stmt.where(Document.status_code == status_code)
 
@@ -771,28 +813,32 @@ def update_document_metadata(
 
 
 def search_documents(
-    domain_id: str,
-    source_id: str = None,
+    doc_type_id: str = None,
+    merchant_id: str = None,
     start_date: str = None,
     end_date: str = None,
     keyword: str = None,
-    company_id: str = None
+    company_id: str = None,
+    domain_id: str = None,
+    source_id: str = None,
 ) -> list[dict]:
     """
     Performs dynamic lookup of documents using Pure SQLAlchemy 2.0 ORM.
-    Optionally filters by company_id.
+    Optionally filters by company_id, doc_type_id, or merchant_id.
     """
+    target_dt = doc_type_id or domain_id or DefaultIdentifier.DOC_TYPE
+    target_merchant = merchant_id or source_id
     try:
         with get_db_session() as session:
             stmt = select(Document, ProcessedBatch).join(
                 ProcessedBatch, Document.batch_id == ProcessedBatch.batch_id
-            ).where(Document.domain_id == domain_id)
+            ).where(Document.doc_type_id == target_dt)
 
             if company_id:
                 stmt = stmt.where(Document.company_id == company_id)
 
-            if source_id and source_id != "All":
-                stmt = stmt.where(Document.source_id == source_id)
+            if target_merchant and target_merchant != "All":
+                stmt = stmt.where(Document.merchant_id == target_merchant)
 
             if start_date:
                 stmt = stmt.where(Document.doc_date >= start_date)
@@ -897,25 +943,85 @@ def get_pages_by_status(status_codes: list[str] = None, company_id: str = None) 
             )
 
             results = session.execute(stmt).all()
-
-            pages = []
-            for dp, orig_name, storage_path in results:
-                d = dp.to_dict()
-                d["original_filename"] = orig_name
-                d["original_pdf_name"] = orig_name
-                d["storage_path"] = storage_path
-                pages.append(d)
-            return pages
+            return [
+                {
+                    **page.to_dict(),
+                    "original_filename": orig_name,
+                    "original_pdf_name": orig_name,
+                    "storage_path": storage_path
+                }
+                for page, orig_name, storage_path in results
+            ]
     except Exception as e:
         logger.error(f"Failed to fetch pages by status: {e}")
         return []
 
 
-def get_documents_for_export(domain_id: str, status_codes: list[str] = None, company_id: str = None) -> list[dict]:
+def get_unextracted_chunks_for_batch(batch_id: str) -> list[int]:
+    """
+    Returns ordered list of distinct chunk_index values that have not been EXTRACTED yet for a given batch.
+    Used for Smart Checkpoint & Resuming extraction.
+    """
+    try:
+        with get_db_session() as session:
+            stmt = select(DocumentPage.chunk_index).where(
+                DocumentPage.batch_id == batch_id,
+                DocumentPage.status_code != DocumentStatusCode.EXTRACTED
+            ).distinct().order_by(DocumentPage.chunk_index.asc())
+            return list(session.scalars(stmt).all())
+    except Exception as e:
+        logger.error(f"Failed to get unextracted chunks for batch '{batch_id}': {e}")
+        return []
+
+
+def get_pages_by_chunk(batch_id: str, chunk_index: int) -> list[dict]:
+    """
+    Fetches all page records for a specific batch and chunk_index.
+    """
+    try:
+        with get_db_session() as session:
+            stmt = select(DocumentPage).where(
+                DocumentPage.batch_id == batch_id,
+                DocumentPage.chunk_index == chunk_index
+            ).order_by(DocumentPage.page_number.asc())
+            pages = session.scalars(stmt).all()
+            return [p.to_dict() for p in pages]
+    except Exception as e:
+        logger.error(f"Failed to fetch pages for chunk {chunk_index} of batch '{batch_id}': {e}")
+        return []
+
+
+def update_chunk_pages_status(batch_id: str, chunk_index: int, status_code: str, error_reason: str = None) -> bool:
+    """
+    Updates the status_code and optional error_reason for all pages in a given chunk.
+    """
+    try:
+        with get_db_session() as session:
+            stmt = update(DocumentPage).where(
+                DocumentPage.batch_id == batch_id,
+                DocumentPage.chunk_index == chunk_index
+            ).values(
+                status_code=status_code,
+                error_reason=error_reason
+            )
+            session.execute(stmt)
+            return True
+    except Exception as e:
+        logger.error(f"Failed to update chunk {chunk_index} status for batch '{batch_id}': {e}")
+        return False
+
+
+def get_documents_for_export(
+    doc_type_id: str = None,
+    status_codes: list[str] = None,
+    company_id: str = None,
+    domain_id: str = None,
+) -> list[dict]:
     """
     Fetches approved/processed document records joined with batch info for report exporters using Pure SQLAlchemy 2.0 ORM.
     Optionally filters by company_id.
     """
+    target_dt = doc_type_id or domain_id or DefaultIdentifier.DOC_TYPE
     if status_codes is None:
         status_codes = [DocumentStatusCode.APPROVED, DocumentStatusCode.PROCESSED]
 
@@ -927,7 +1033,7 @@ def get_documents_for_export(domain_id: str, status_codes: list[str] = None, com
             ).join(
                 ProcessedBatch, Document.batch_id == ProcessedBatch.batch_id
             ).where(
-                Document.domain_id == domain_id,
+                Document.doc_type_id == target_dt,
                 Document.status_code.in_(status_codes)
             )
 

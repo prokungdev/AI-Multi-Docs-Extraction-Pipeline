@@ -14,6 +14,7 @@
   - 🟡 **Database / Pipeline / APIs**: `pytest tests/integration -v`
   - 🔵 **Major Refactor**: Full `pytest tests/ -v`
   - ⚪ **Non-Code / Docs / Configs**: `Unit Test Required: NO` (Never run pytest)
+- **Skill-First Execution**: Plans MUST declare `Required Skills`. AI MUST inspect matching `.agents/skills/<skill>/SKILL.md` before modifying code.
 - **Execution**: Strictly ONE phase at a time. Auto-sync `docs/architecture.md` on structural changes.
 
 ## 3. ⛔ Strict Prohibitions (Zero Tolerance)
@@ -24,3 +25,4 @@
 - ❌ **No Hardcoded Secrets / Vendor Locks**: Centralize keys, models, and paths in `.env` / configs.
 - ❌ **No Premature Edits on Advisory Requests**: Strict READ-ONLY mode on questions, RCA, or advice.
 - ❌ **No Malformed Notebooks**: `.ipynb` must strictly comply with **Jupyter v4.5+** (`nbformat: 4.5`) with unique cell `id`s.
+- ❌ **No Inline PowerShell Quotes**: Never execute `python -c "..."` with nested quotes on Windows PowerShell. Execute standalone `.py` scripts or `pytest` directly.

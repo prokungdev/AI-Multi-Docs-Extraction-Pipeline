@@ -11,6 +11,7 @@ from src.infrastructure.common.config_loader import (
     get_company_pipeline_folder,
     get_image_processing_config,
     get_supported_extensions,
+    get_ai_provider_config,
 )
 from src.infrastructure.persistence import (
     calculate_file_hash,
@@ -35,7 +36,8 @@ def _register_preprocessed_page(
     batch_id: str,
     page_number: int,
     image_path: str,
-    created_pages: list[str]
+    created_pages: list,
+    chunk_index: int = 1,
 ) -> str:
     """Helper to record preprocessed page record in database and tracking list."""
     page_id = generate_entity_id(EntityIdPrefix.PAGE)
@@ -45,6 +47,7 @@ def _register_preprocessed_page(
         page_number=page_number,
         image_path=image_path,
         status_code=DocumentStatusCode.PREPROCESSED,
+        chunk_index=chunk_index,
     )
     created_pages.append(image_path)
     return page_id
@@ -73,6 +76,8 @@ def split_and_match(
     target_doc_type = resolve_doc_type(doc_type or domain)
 
     img_cfg = get_image_processing_config(settings)
+    ai_cfg = get_ai_provider_config(settings)
+    max_images_per_chunk = ai_cfg.get("max_images_per_request", 50)
     supported_exts = get_supported_extensions(settings)
     processing_fmt = img_cfg["processing_format"]
     jpeg_quality = img_cfg["jpeg_quality"]
@@ -226,11 +231,13 @@ def split_and_match(
                         os.remove(final_img_path)
                     os.rename(temp_img_path, final_img_path)
 
+                chunk_idx = ((idx - 1) // max_images_per_chunk) + 1
                 _register_preprocessed_page(
                     batch_id=batch_id,
                     page_number=idx,
                     image_path=final_img_path,
                     created_pages=created_pages,
+                    chunk_index=chunk_idx,
                 )
         else:
             # Standalone raw image
@@ -273,6 +280,7 @@ def split_and_match(
                 page_number=1,
                 image_path=final_img_path,
                 created_pages=created_pages,
+                chunk_index=1,
             )
 
         logger.info(f"Registered Batch '{batch_id}' with {total_pages} page(s) as PREPROCESSED.")

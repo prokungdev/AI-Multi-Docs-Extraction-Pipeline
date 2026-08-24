@@ -154,7 +154,6 @@ class AIService:
                         log_id=log_id,
                         batch_id=batch_id,
                         company_id=company_id,
-                        credential_id=None,
                         provider=self.active_provider,
                         model_name=effective_model,
                         chunk_index=chunk_index,
@@ -197,7 +196,6 @@ class AIService:
                         log_id=log_id,
                         batch_id=batch_id,
                         company_id=company_id,
-                        credential_id=None,
                         provider=self.active_provider,
                         model_name=effective_model,
                         chunk_index=chunk_index,
@@ -275,7 +273,6 @@ class AIService:
                         log_id=log_id,
                         batch_id=batch_id,
                         company_id=company_id,
-                        credential_id=None,
                         provider=self.active_provider,
                         model_name=effective_model,
                         chunk_index=1,
@@ -302,7 +299,6 @@ class AIService:
                         log_id=log_id,
                         batch_id=batch_id,
                         company_id=company_id,
-                        credential_id=None,
                         provider=self.active_provider,
                         model_name=effective_model,
                         chunk_index=1,
@@ -413,13 +409,10 @@ class AIService:
                         output_tokens=output_tokens,
                     )
 
-                    # Write SUCCESS log
-                    log_cred_id = cred_id if cred_id != "fallback_default" else None
                     AuditLogService.log_api_call(ApiCallLogCreate(
                         log_id=log_id,
                         batch_id=batch_id,
                         company_id=company_id,
-                        credential_id=log_cred_id,
                         provider=self.active_provider,
                         model_name=effective_model,
                         chunk_index=chunk_index,
@@ -465,13 +458,10 @@ class AIService:
                     err_str = str(exc)
                     is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower()
 
-                    # Write FAILED log
-                    log_cred_id = cred_id if cred_id != "fallback_default" else None
                     AuditLogService.log_api_call(ApiCallLogCreate(
                         log_id=log_id,
                         batch_id=batch_id,
                         company_id=company_id,
-                        credential_id=log_cred_id,
                         provider=self.active_provider,
                         model_name=effective_model,
                         chunk_index=chunk_index,

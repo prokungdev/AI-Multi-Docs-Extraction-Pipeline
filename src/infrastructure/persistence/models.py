@@ -87,16 +87,6 @@ class DocumentStatus(Base, DictSerializableMixin):
     description = Column(Text, nullable=True)
 
 
-class DocumentSource(Base, DictSerializableMixin):
-    """Merchant/Document source reference model."""
-    __tablename__ = "document_sources"
-
-    source_id = Column(String(100), primary_key=True)
-    doc_type_id = Column(String(100), primary_key=True, default="expense_receipt")
-    display_name = Column(String(150), nullable=False)
-    is_active = Column(Integer, default=1)
-
-
 class ProcessedBatch(Base, DictSerializableMixin):
     """Processed document batch metadata model."""
     __tablename__ = "processed_batches"
@@ -121,8 +111,8 @@ class Document(Base, DictSerializableMixin):
     document_id = Column(String(100), primary_key=True)
     company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=True, index=True)
     batch_id = Column(String(100), ForeignKey("processed_batches.batch_id", ondelete="CASCADE"), nullable=False)
-    domain_id = Column(String(100), nullable=False)
-    source_id = Column(String(100), nullable=False)
+    doc_type_id = Column(String(100), nullable=False, default="expense_receipt")
+    merchant_id = Column(String(36), ForeignKey("merchants.merchant_id", ondelete="SET NULL"), nullable=True, index=True)
     status_code = Column(String(50), ForeignKey("document_statuses.status_code"), nullable=False)
     doc_number = Column(String(100), nullable=True)
     doc_date = Column(String(50), nullable=True)
@@ -156,6 +146,7 @@ class Document(Base, DictSerializableMixin):
 
     company = relationship("Company", back_populates="documents")
     batch = relationship("ProcessedBatch", back_populates="documents")
+    merchant = relationship("Merchant", backref="documents")
     status = relationship("DocumentStatus")
     pages = relationship("DocumentPage", back_populates="document")
     expense_receipts = relationship("ExpenseReceipt", back_populates="document", cascade="all, delete-orphan")
@@ -169,6 +160,7 @@ class DocumentPage(Base, DictSerializableMixin):
     batch_id = Column(String(100), ForeignKey("processed_batches.batch_id", ondelete="CASCADE"), nullable=False)
     document_id = Column(String(100), ForeignKey("documents.document_id", ondelete="SET NULL"), nullable=True)
     page_number = Column(Integer, nullable=False)
+    chunk_index = Column(Integer, default=1, server_default="1", nullable=False)
     image_path = Column(String(500), nullable=False)
     status_code = Column(String(50), ForeignKey("document_statuses.status_code"), nullable=False)
     error_reason = Column(Text, nullable=True)
@@ -194,6 +186,7 @@ class Merchant(Base, DictSerializableMixin):
     approved_at = Column(String(50), nullable=True)
     default_wht_rate = Column(Float, default=0.0)
     is_vat_registered = Column(Integer, default=1)
+    is_active = Column(Integer, default=1, server_default="1")
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at = Column(String(50), nullable=True)
 
@@ -258,7 +251,6 @@ class ApiCallLog(Base, DictSerializableMixin):
     log_id = Column(String(100), primary_key=True)
     company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="SET NULL"), nullable=True, index=True)
     batch_id = Column(String(100), nullable=True)
-    credential_id = Column(String(100), nullable=True)
     provider = Column(String(50), nullable=False)
     model_name = Column(String(100), nullable=False)
     chunk_index = Column(Integer, nullable=True)

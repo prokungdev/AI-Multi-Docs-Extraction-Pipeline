@@ -10,7 +10,6 @@ from .models import (
     LogBase,
     Company,
     DocumentStatus,
-    DocumentSource,
     ExpenseReceiptItem,
     ExpenseReceipt,
     DocumentPage,
@@ -68,6 +67,7 @@ def initialize_db_schema(drop_and_recreate: bool = False):
             try:
                 conn.exec_driver_sql("DROP TABLE IF EXISTS api_credentials")
                 conn.exec_driver_sql("DROP TABLE IF EXISTS application_logs")
+                conn.exec_driver_sql("DROP TABLE IF EXISTS document_sources")
             except Exception as drop_err:
                 logger.debug(f"Note on dropping obsolete tables: {drop_err}")
 
@@ -87,15 +87,27 @@ def initialize_db_schema(drop_and_recreate: bool = False):
                     conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN approved_by VARCHAR(100)")
                 if "approved_at" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN approved_at VARCHAR(50)")
+                if "is_active" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN is_active INTEGER DEFAULT 1")
                 if "updated_at" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN updated_at VARCHAR(50)")
             except Exception as mig_err:
                 logger.debug(f"Merchants schema migration note: {mig_err}")
 
-            # 3. Documents table migrations
+            # 2. Documents table migrations
             try:
                 res = conn.exec_driver_sql("PRAGMA table_info(documents)")
                 existing_cols = [row[1] for row in res.fetchall()]
+                if "domain_id" in existing_cols and "doc_type_id" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE documents RENAME COLUMN domain_id TO doc_type_id")
+                elif "doc_type_id" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN doc_type_id VARCHAR(100) DEFAULT 'expense_receipt'")
+
+                if "source_id" in existing_cols and "merchant_id" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE documents RENAME COLUMN source_id TO merchant_id")
+                elif "merchant_id" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN merchant_id VARCHAR(36)")
+
                 if "company_id" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN company_id VARCHAR(36)")
                 if "is_closed" not in existing_cols:
@@ -119,7 +131,7 @@ def initialize_db_schema(drop_and_recreate: bool = False):
             except Exception as mig_err:
                 logger.debug(f"Documents schema migration note: {mig_err}")
 
-            # 4. Processed batches table migrations
+            # 3. Processed batches table migrations
             try:
                 res = conn.exec_driver_sql("PRAGMA table_info(processed_batches)")
                 existing_cols = [row[1] for row in res.fetchall()]
@@ -130,7 +142,7 @@ def initialize_db_schema(drop_and_recreate: bool = False):
             except Exception as mig_err:
                 logger.debug(f"Processed Batches schema migration note: {mig_err}")
 
-            # 5. Expense receipts table migrations
+            # 4. Expense receipts table migrations
             try:
                 res = conn.exec_driver_sql("PRAGMA table_info(expense_receipts)")
                 existing_cols = [row[1] for row in res.fetchall()]
@@ -139,7 +151,7 @@ def initialize_db_schema(drop_and_recreate: bool = False):
             except Exception as mig_err:
                 logger.debug(f"Expense Receipts schema migration note: {mig_err}")
 
-            # 6. Api call logs table migrations
+            # 5. Api call logs table migrations
             try:
                 res = conn.exec_driver_sql("PRAGMA table_info(api_call_logs)")
                 existing_cols = [row[1] for row in res.fetchall()]
@@ -154,14 +166,14 @@ def initialize_db_schema(drop_and_recreate: bool = False):
             except Exception as mig_err:
                 logger.debug(f"Api Call Logs schema migration note: {mig_err}")
 
-            # 7. Document sources table migrations
+            # 6. Document pages table migrations
             try:
-                res = conn.exec_driver_sql("PRAGMA table_info(document_sources)")
+                res = conn.exec_driver_sql("PRAGMA table_info(document_pages)")
                 existing_cols = [row[1] for row in res.fetchall()]
-                if "domain_id" in existing_cols and "doc_type_id" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE document_sources RENAME COLUMN domain_id TO doc_type_id")
+                if "chunk_index" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE document_pages ADD COLUMN chunk_index INTEGER DEFAULT 1")
             except Exception as mig_err:
-                logger.debug(f"Document Sources schema migration note: {mig_err}")
+                logger.debug(f"Document Pages schema migration note: {mig_err}")
 
             conn.commit()
 

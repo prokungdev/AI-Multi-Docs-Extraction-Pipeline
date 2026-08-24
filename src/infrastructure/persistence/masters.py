@@ -12,7 +12,6 @@ from sqlalchemy import select, delete, func
 from .connection import get_db_session
 from .models import (
     Company,
-    DocumentSource,
     Merchant,
     MerchantStatus,
     Document,
@@ -237,15 +236,24 @@ def get_doc_types(settings_path: str = DefaultPath.SETTINGS) -> list[dict]:
 
 
 
-def get_sources(doc_type_id: str) -> list[dict]:
+def get_sources(doc_type_id: str = None, company_id: str = None) -> list[dict]:
     """
-    Returns list of sources for a doc_type from database using Pure SQLAlchemy 2.0 ORM.
+    Returns list of registered merchants using Pure SQLAlchemy 2.0 ORM.
+    Standardized replacement for deprecated document_sources.
     """
     try:
-        with get_db_session() as session:
-            stmt = select(DocumentSource).where(DocumentSource.doc_type_id == doc_type_id)
-            sources = session.scalars(stmt).all()
-            return [s.to_dict() for s in sources]
+        merchants = get_merchants(company_id=company_id)
+        formatted = []
+        for m in merchants:
+            formatted.append({
+                "source_id": m.get("merchant_id") or m.get("short_name"),
+                "merchant_id": m.get("merchant_id"),
+                "short_name": m.get("short_name"),
+                "doc_type_id": doc_type_id or "expense_receipt",
+                "display_name": m.get("merchant_name") or m.get("short_name"),
+                "is_active": m.get("is_active", 1)
+            })
+        return formatted
     except Exception as e:
         logger.error(f"Failed to load sources for doc_type '{doc_type_id}': {e}")
         return []
@@ -272,18 +280,16 @@ def update_doc_type_active_status(doc_type_id: str, is_active: int, settings_pat
         return False
 
 
-
-
-def update_source_active_status(source_id: str, doc_type_id: str, is_active: int) -> bool:
+def update_source_active_status(source_id: str, doc_type_id: str = None, is_active: int = 1) -> bool:
     """
-    Updates the is_active status of a source using Pure SQLAlchemy 2.0 ORM.
+    Updates the is_active status of a merchant using Pure SQLAlchemy 2.0 ORM.
     """
     try:
         with get_db_session() as session:
-            stmt = select(DocumentSource).filter_by(source_id=source_id, doc_type_id=doc_type_id)
-            src = session.scalars(stmt).first()
-            if src:
-                src.is_active = is_active
+            stmt = select(Merchant).where((Merchant.merchant_id == source_id) | (Merchant.short_name == source_id))
+            m = session.scalars(stmt).first()
+            if m:
+                m.is_active = is_active
                 return True
             return False
     except Exception as e:

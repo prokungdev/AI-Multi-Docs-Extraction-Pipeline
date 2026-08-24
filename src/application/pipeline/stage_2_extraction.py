@@ -16,7 +16,11 @@ from src.infrastructure.persistence import (
     get_batch_pages,
     update_page_status,
     get_company_by_code,
+    get_unextracted_chunks_for_batch,
+    get_pages_by_chunk,
+    update_chunk_pages_status,
 )
+from src.infrastructure.common.constants import DocumentStatusCode
 from src.application.usecases.extractor import extract_document_data, async_extract_document_data
 from src.application.dtos.document_dto import DocumentStatus
 from src.application.pipeline.pipeline_helpers import merge_chunk_payloads
@@ -29,10 +33,10 @@ def extract_documents(
     company_code: str = None
 ) -> dict:
     """
-    Stage 3: AI Document Extraction.
-    Extracts structured JSON data from preprocessed images and saves to 04_processing.
+    Stage 3: AI Document Extraction with Smart Chunk-Level Checkpointing.
+    Extracts structured JSON data per chunk, tracks chunk status in DB, and supports resuming.
     """
-    logger.info("Starting Stage 3 (Extract): Extracting Structured Data via Multimodal AI")
+    logger.info("Starting Stage 3 (Extract): Extracting Structured Data via Multimodal AI (Smart Checkpointing)")
 
     load_dotenv()
     settings = load_system_settings()
@@ -41,7 +45,7 @@ def extract_documents(
     company_id = comp_info["company_id"] if comp_info else None
 
     ai_cfg = get_ai_provider_config(settings)
-    max_images_per_request = ai_cfg.get("max_images_per_request", 50)
+    max_images = ai_cfg.get("max_images_per_request", 50)
     target_doc_type = doc_type or get_default_doc_type()
 
     from src.infrastructure.storage.storage_manager import storage_manager
@@ -49,7 +53,7 @@ def extract_documents(
 
     try:
         batches = get_unextracted_batches(
-            [DocumentStatus.PREPROCESSED.value, DocumentStatus.PENDING.value],
+            [DocumentStatus.PREPROCESSED.value, DocumentStatus.PENDING.value, DocumentStatus.FAILED.value],
             company_id=company_id
         )
 
@@ -78,41 +82,73 @@ def extract_documents(
             if not pages:
                 continue
 
-            image_paths = [p["image_path"] for p in pages if os.path.exists(p["image_path"])]
-            if not image_paths:
-                logger.warning(f"No valid image files found on disk for batch '{batch_id}'")
-                continue
+            unextracted_chunks = set(get_unextracted_chunks_for_batch(batch_id))
+            all_chunk_indexes = sorted(list(set(p.get("chunk_index", 1) for p in pages)))
 
-            logger.info(f"\n--- Extracting Batch: {batch_id} ({pdf_name}) | Source: '{batch_source}' [Company: {comp_code}] ---")
+            logger.info(
+                f"\n--- Extracting Batch: {batch_id} ({pdf_name}) | Total Chunks: {len(all_chunk_indexes)} | Pending Chunks: {len(unextracted_chunks)} [Company: {comp_code}] ---"
+            )
 
-            # Chunk pages if exceeding max_images
-            chunks = list(chunk_list(image_paths, max_images))
+            chunks_cache_dir = os.path.join(queue_dir, "_chunks", batch_id).replace("\\", "/")
+            os.makedirs(chunks_cache_dir, exist_ok=True)
+
             chunk_payloads = []
-            failed = False
+            batch_failed = False
 
-            for chunk_idx, chunk in enumerate(chunks, start=1):
+            for chunk_idx in all_chunk_indexes:
+                cached_chunk_file = os.path.join(chunks_cache_dir, f"chunk_{chunk_idx}.json").replace("\\", "/")
+
+                # If chunk already extracted and cached, load from cache (Resume bypass)
+                if chunk_idx not in unextracted_chunks and os.path.exists(cached_chunk_file):
+                    try:
+                        with open(cached_chunk_file, "r", encoding="utf-8") as f:
+                            chunk_payloads.append(json.load(f))
+                        logger.info(f"Loaded cached result for Batch '{batch_id}' Chunk #{chunk_idx}.")
+                        continue
+                    except Exception:
+                        pass  # If cache file corrupt, fall back to re-extracting
+
+                # Fetch pages for this chunk
+                chunk_page_records = get_pages_by_chunk(batch_id, chunk_idx)
+                chunk_images = [p["image_path"] for p in chunk_page_records if os.path.exists(p["image_path"])]
+
+                if not chunk_images:
+                    logger.warning(f"No valid image files found on disk for Batch '{batch_id}' Chunk #{chunk_idx}")
+                    continue
+
                 try:
+                    logger.info(f"Sending AI extraction request for Batch '{batch_id}' Chunk #{chunk_idx} ({len(chunk_images)} pages)...")
                     payload = extract_document_data(
-                        image_paths=chunk,
+                        image_paths=chunk_images,
                         source=batch_source,
                         doc_type=target_doc_type,
                         batch_id=batch_id,
                         chunk_index=chunk_idx,
                         company_id=company_id,
                     )
+
+                    # Save chunk checkpoint
+                    with open(cached_chunk_file, "w", encoding="utf-8") as f:
+                        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+                    update_chunk_pages_status(batch_id, chunk_idx, DocumentStatusCode.EXTRACTED)
                     chunk_payloads.append(payload)
+                    logger.info(f"Chunk #{chunk_idx} of Batch '{batch_id}' extracted and checkpointed successfully.")
+
                 except Exception as ex_err:
-                    logger.error(f"AI extraction failed for batch '{batch_id}' chunk {chunk_idx}: {ex_err}")
-                    failed = True
+                    logger.error(f"AI extraction failed for Batch '{batch_id}' Chunk #{chunk_idx}: {ex_err}")
+                    update_chunk_pages_status(batch_id, chunk_idx, DocumentStatusCode.FAILED, error_reason=str(ex_err))
+                    batch_failed = True
                     break
 
-            if failed or not chunk_payloads:
+            if batch_failed or len(chunk_payloads) < len(all_chunk_indexes):
+                logger.warning(f"Batch '{batch_id}' partially completed or failed. Progress saved for retry/resume.")
                 continue
 
-            # Merge chunks
+            # Merge all chunks into final document payload
             merged_payload = merge_chunk_payloads(chunk_payloads)
 
-            # Save raw extracted JSON in company 04_processing
+            # Save final JSON in company 04_processing
             source_queue_dir = os.path.join(queue_dir, batch_source).replace("\\", "/")
             os.makedirs(source_queue_dir, exist_ok=True)
 
@@ -121,9 +157,16 @@ def extract_documents(
                 json_path = os.path.join(source_queue_dir, f"{image_basename}.json").replace("\\", "/")
                 with open(json_path, "w", encoding="utf-8") as qf:
                     json.dump(merged_payload, qf, ensure_ascii=False, indent=2)
-                update_page_status(p["page_id"], DocumentStatus.EXTRACTED.value)
 
-            logger.info(f"AI extraction completed for batch '{batch_id}'. Status set to EXTRACTED.")
+            # Clean up chunk checkpoint directory after successful merge
+            try:
+                import shutil
+                if os.path.exists(chunks_cache_dir):
+                    shutil.rmtree(chunks_cache_dir)
+            except Exception:
+                pass
+
+            logger.info(f"All {len(all_chunk_indexes)} chunks completed & merged for Batch '{batch_id}'. Status: EXTRACTED.")
             success_batches += 1
             total_docs += 1
 
@@ -140,10 +183,9 @@ async def async_extract_documents(
     company_code: str = None
 ) -> dict:
     """
-    Stage 3 (Async): Concurrent AI Document Extraction.
-    Uses asyncio.gather and Semaphore to extract structured JSON data concurrently.
+    Stage 3 (Async): Concurrent AI Document Extraction with Smart Chunk Checkpointing.
     """
-    logger.info("Starting Stage 3 (Async Extract): Concurrent AI Extraction")
+    logger.info("Starting Stage 3 (Async Extract): Concurrent AI Extraction (Smart Checkpointing)")
 
     load_dotenv()
     settings = load_system_settings()
@@ -162,7 +204,7 @@ async def async_extract_documents(
 
     try:
         batches = get_unextracted_batches(
-            [DocumentStatus.PREPROCESSED.value, DocumentStatus.PENDING.value],
+            [DocumentStatus.PREPROCESSED.value, DocumentStatus.PENDING.value, DocumentStatus.FAILED.value],
             company_id=company_id
         )
 
@@ -189,17 +231,34 @@ async def async_extract_documents(
             if not pages:
                 return False
 
-            image_paths = [p["image_path"] for p in pages if os.path.exists(p["image_path"])]
-            if not image_paths:
-                return False
+            unextracted_chunks = set(get_unextracted_chunks_for_batch(batch_id))
+            all_chunk_indexes = sorted(list(set(p.get("chunk_index", 1) for p in pages)))
 
-            chunks = list(chunk_list(image_paths, max_images))
+            chunks_cache_dir = os.path.join(queue_dir, "_chunks", batch_id).replace("\\", "/")
+            os.makedirs(chunks_cache_dir, exist_ok=True)
+
             chunk_payloads = []
 
-            for chunk_idx, chunk in enumerate(chunks, start=1):
+            for chunk_idx in all_chunk_indexes:
+                cached_chunk_file = os.path.join(chunks_cache_dir, f"chunk_{chunk_idx}.json").replace("\\", "/")
+
+                if chunk_idx not in unextracted_chunks and os.path.exists(cached_chunk_file):
+                    try:
+                        with open(cached_chunk_file, "r", encoding="utf-8") as f:
+                            chunk_payloads.append(json.load(f))
+                        continue
+                    except Exception:
+                        pass
+
+                chunk_page_records = get_pages_by_chunk(batch_id, chunk_idx)
+                chunk_images = [p["image_path"] for p in chunk_page_records if os.path.exists(p["image_path"])]
+
+                if not chunk_images:
+                    continue
+
                 try:
                     payload = await async_extract_document_data(
-                        image_paths=chunk,
+                        image_paths=chunk_images,
                         source=batch_source,
                         doc_type=target_doc_type,
                         batch_id=batch_id,
@@ -207,12 +266,19 @@ async def async_extract_documents(
                         company_id=company_id,
                         semaphore=semaphore,
                     )
+
+                    with open(cached_chunk_file, "w", encoding="utf-8") as f:
+                        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+                    update_chunk_pages_status(batch_id, chunk_idx, DocumentStatusCode.EXTRACTED)
                     chunk_payloads.append(payload)
+
                 except Exception as ex_err:
                     logger.error(f"Async AI extraction failed for batch '{batch_id}' chunk {chunk_idx}: {ex_err}")
+                    update_chunk_pages_status(batch_id, chunk_idx, DocumentStatusCode.FAILED, error_reason=str(ex_err))
                     return False
 
-            if not chunk_payloads:
+            if len(chunk_payloads) < len(all_chunk_indexes):
                 return False
 
             merged_payload = merge_chunk_payloads(chunk_payloads)
@@ -224,7 +290,13 @@ async def async_extract_documents(
                 json_path = os.path.join(source_queue_dir, f"{image_basename}.json").replace("\\", "/")
                 with open(json_path, "w", encoding="utf-8") as qf:
                     json.dump(merged_payload, qf, ensure_ascii=False, indent=2)
-                update_page_status(p["page_id"], DocumentStatus.EXTRACTED.value)
+
+            try:
+                import shutil
+                if os.path.exists(chunks_cache_dir):
+                    shutil.rmtree(chunks_cache_dir)
+            except Exception:
+                pass
 
             logger.info(f"Async AI extraction completed for batch '{batch_id}'. Status set to EXTRACTED.")
             return True

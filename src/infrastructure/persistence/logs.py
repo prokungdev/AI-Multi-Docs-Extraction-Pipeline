@@ -17,7 +17,6 @@ class ApiCallLogCreate(BaseModel):
     """
     log_id: str = Field(description="Unique identifier for the API call log")
     batch_id: Optional[str] = Field(default=None, description="Parent batch ID associated with the call")
-    credential_id: Optional[str] = Field(default=None, description="ID of credential used")
     provider: str = Field(description="AI service provider (e.g. gemini, openai)")
     model_name: str = Field(description="Model identifier")
     chunk_index: int = Field(default=1, description="Index of the chunk in multi-part requests")
@@ -57,7 +56,6 @@ class AuditLogService:
                     log_id=dto.log_id,
                     company_id=dto.company_id,
                     batch_id=dto.batch_id,
-                    credential_id=dto.credential_id,
                     provider=dto.provider,
                     model_name=dto.model_name,
                     chunk_index=dto.chunk_index,
@@ -118,7 +116,6 @@ class AuditLogService:
 def create_api_call_log(
     log_id: str,
     batch_id: str,
-    credential_id: str,
     provider: str,
     model_name: str,
     chunk_index: int,
@@ -133,7 +130,8 @@ def create_api_call_log(
     latency_ms: float = None,
     error_reason: str = None,
     raw_response: str = None,
-    company_id: str = None
+    company_id: str = None,
+    credential_id: str = None,  # Kept as optional ignored arg for legacy compatibility
 ) -> bool:
     """
     Backward-compatible procedural wrapper that delegates to AuditLogService.
@@ -142,7 +140,6 @@ def create_api_call_log(
     dto = ApiCallLogCreate(
         log_id=log_id,
         batch_id=batch_id,
-        credential_id=credential_id,
         provider=provider,
         model_name=model_name,
         chunk_index=chunk_index,

@@ -29,6 +29,7 @@ from src.infrastructure.persistence.connection import get_db_session, get_engine
 from src.infrastructure.persistence.models import (
     Base,
     ProcessedBatch,
+    Document,
     DocumentStatus,
     DocumentPage,
     Merchant,
@@ -36,6 +37,7 @@ from src.infrastructure.persistence.models import (
     ExpenseReceipt,
     ExpenseReceiptItem,
 )
+from src.infrastructure.common.constants import DocumentStatusCode
 
 
 class TestDatabase(unittest.TestCase):
@@ -538,6 +540,48 @@ class TestSQLAlchemyORM(unittest.TestCase):
         success_on_closed, msg_closed, _ = acquire_document_lock(doc_id, user_id="usr_user_a")
         self.assertFalse(success_on_closed)
         self.assertEqual(msg_closed, "DOCUMENT_ALREADY_CLOSED")
+
+    def test_09_document_schema_modernization(self):
+        """Test that Document uses doc_type_id and merchant_id (with relationship to Merchant)."""
+        merch_id = f"merch_{uuid.uuid4().hex[:8]}"
+        batch_id = f"batch_{uuid.uuid4().hex[:8]}"
+        doc_id = f"doc_{uuid.uuid4().hex[:8]}"
+
+        with get_db_session() as session:
+            merchant = Merchant(
+                merchant_id=merch_id,
+                tax_id="0107542000011",
+                merchant_name="CP ALL PUBLIC CO., LTD.",
+                short_name="7eleven",
+                file_prefix="7eleven",
+                status_code=MerchantStatus.APPROVED.value
+            )
+            batch = ProcessedBatch(
+                batch_id=batch_id,
+                original_filename="receipt.pdf",
+                total_pages=1,
+                storage_path="/tmp/receipt.pdf",
+                file_hash=f"hash_{uuid.uuid4().hex}"
+            )
+            doc = Document(
+                document_id=doc_id,
+                batch_id=batch_id,
+                doc_type_id="expense_receipt",
+                merchant_id=merch_id,
+                status_code=DocumentStatusCode.PENDING,
+                total_amount=150.0
+            )
+            session.add(merchant)
+            session.add(batch)
+            session.add(doc)
+
+        with get_db_session() as session:
+            saved_doc = session.scalars(select(Document).filter_by(document_id=doc_id)).first()
+            self.assertIsNotNone(saved_doc)
+            self.assertEqual(saved_doc.doc_type_id, "expense_receipt")
+            self.assertEqual(saved_doc.merchant_id, merch_id)
+            self.assertIsNotNone(saved_doc.merchant)
+            self.assertEqual(saved_doc.merchant.short_name, "7eleven")
 
 
 if __name__ == "__main__":

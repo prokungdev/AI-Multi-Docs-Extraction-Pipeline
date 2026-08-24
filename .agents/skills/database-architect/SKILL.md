@@ -147,3 +147,21 @@ class BaseDatabaseTestCase(unittest.TestCase):
    - Use distinct SQLAlchemy declarative metadata bases (e.g., `Base` for business domain entities, `LogBase` for logging and diagnostic entities) with isolated database engines and session factories.
 3. **Drop & Recreate Lifecycle Policy**:
    - Schema initialization routines SHOULD provide a controlled `drop_and_recreate: bool = False` flag to allow developers and automated test harnesses to cleanly purge and re-bootstrap fresh operational tables on demand.
+
+---
+
+## ⚡ 9. 5-Layer Schema Pre-Flight Protocol (One-Shot Execution Standard)
+
+When refactoring, renaming, or dropping database columns or tables, apply changes across all 5 architectural layers simultaneously before verifying:
+1. **Entity & Model Layer**:
+   - Update Column types, nullability, server defaults, index definitions, and bidirectional ORM `relationship()` declarations.
+2. **Schema & DDL Migration Layer**:
+   - Add automated schema migration routines (`ALTER TABLE ... RENAME COLUMN`, `ALTER TABLE ... ADD COLUMN`, `DROP TABLE IF EXISTS`) within the database bootstrap handler.
+3. **Master Seeder & Seed Data Layer**:
+   - Ensure default fallback rows (satisfying foreign key constraints across parent-child relationships) are seeded at initialization in both test harnesses and operational instances.
+4. **Data Access & Repository Layer**:
+   - Update query parameters, insert/update payloads, and implement safe Foreign Key fallback resolvers to prevent database integrity constraint exceptions.
+5. **Contract & Test Suite Layer**:
+   - Update test assertions, mock fixtures, and parameters.
+   - *Pre-Edit Static Grep*: Always execute a project-wide search for deprecated column/table identifiers across the workspace before applying modifications.
+

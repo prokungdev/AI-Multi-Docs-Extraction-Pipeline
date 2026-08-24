@@ -36,13 +36,14 @@
 - **Lifecycle & Concurrency Architecture**:
   - **Lifecycle Finalization (`is_closed`)**: Atomic guard (`is_closed == 0`) seals approved/rejected documents against post-approval modifications.
   - **Airline Ticket Hold Concurrency (`is_locked`, `locked_by`, `locked_at`)**: 15-minute exclusive editing lease with heartbeat renewal and automatic expiration/release to prevent stale locks.
+  - **Smart Chunk Checkpointing (`document_pages.chunk_index`)**: Multi-page PDF extraction tracks chunk-level progress (`PENDING` ➔ `EXTRACTED` / `FAILED`), caching completed chunks and allowing instant resuming for failed segments.
 - **Entities**:
   - `companies`, `users`, `merchants`: Master entities, multi-tenant isolation, and RBAC foundation
-  - `processed_batches`, `document_pages`: Raw ingestion tracking
-  - `documents`, `expense_receipts`, `expense_receipt_items`: Extracted transactional data
+  - `processed_batches`, `document_pages` (`chunk_index`): Raw ingestion & chunk checkpoint tracking
+  - `documents` (`doc_type_id`, `merchant_id`), `expense_receipts`, `expense_receipt_items`: Extracted transactional data
   - `api_call_logs`, `application_logs`: Observability & telemetry
 
 ## 4. Test Suite (Targeted Testing Protocol)
-- Run all tests: `pytest tests/ -v` (96 unit & integration tests, 100% Passed)
+- Run all tests: `pytest tests/ -v` (99 unit & integration tests, 100% Passed)
 - Run unit tests (offline & in-memory): `pytest tests/unit -v`
 - Run integration tests (DB & pipeline): `pytest tests/integration -v`

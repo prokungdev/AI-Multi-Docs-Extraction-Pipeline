@@ -20,11 +20,11 @@ from .connection import get_db_session
 from .models import (
     Company,
     DocumentStatus,
-    DocumentSource,
     User,
     ProcessedBatch,
     Document,
     Merchant,
+    MerchantStatus,
     ExpenseReceipt,
 )
 
@@ -77,33 +77,21 @@ def seed_document_statuses(session) -> None:
             session.add(DocumentStatus(status_code=code, display_name=name, description=desc_text))
 
 
-def seed_document_sources(session, configs_dir: str = "configs") -> None:
-    """Discovers and seeds document sources from configs directory."""
-    abs_configs_dir = PROJECT_ROOT / configs_dir if not os.path.isabs(configs_dir) else Path(configs_dir)
-    doc_types_dir = str(abs_configs_dir / "doc_types")
-
-    if os.path.exists(doc_types_dir):
-        for dt_id in os.listdir(doc_types_dir):
-            dt_path = os.path.join(doc_types_dir, dt_id)
-            if os.path.isdir(dt_path) and not dt_id.startswith("."):
-                def_src = session.scalars(select(DocumentSource).filter_by(source_id=DefaultIdentifier.NO_TAX_ID, doc_type_id=dt_id)).first()
-                if not def_src:
-                    session.add(DocumentSource(source_id=DefaultIdentifier.NO_TAX_ID, doc_type_id=dt_id, display_name="No Tax ID / Cash Slip", is_active=1))
-
-                sources_dir = os.path.join(dt_path, "sources")
-                if os.path.exists(sources_dir):
-                    for entry in os.listdir(sources_dir):
-                        entry_path = os.path.join(sources_dir, entry)
-                        if os.path.isdir(entry_path) and not entry.startswith("_"):
-                            display_name = entry.replace("_", " ").title()
-                            s_obj = session.scalars(select(DocumentSource).filter_by(source_id=entry, doc_type_id=dt_id)).first()
-                            if not s_obj:
-                                session.add(DocumentSource(source_id=entry, doc_type_id=dt_id, display_name=display_name, is_active=1))
-    else:
-        for fallback_dt in ["expense_receipt", "tax_invoice"]:
-            def_src = session.scalars(select(DocumentSource).filter_by(source_id=DefaultIdentifier.NO_TAX_ID, doc_type_id=fallback_dt)).first()
-            if not def_src:
-                session.add(DocumentSource(source_id=DefaultIdentifier.NO_TAX_ID, doc_type_id=fallback_dt, display_name="No Tax ID / Cash Slip", is_active=1))
+def seed_default_merchants(session, company_id: str) -> None:
+    """Seeds default generic merchant for cash slips / unclassified receipts."""
+    def_merch = session.scalars(select(Merchant).filter_by(merchant_id=DefaultIdentifier.NO_TAX_ID)).first()
+    if not def_merch:
+        session.add(Merchant(
+            merchant_id=DefaultIdentifier.NO_TAX_ID,
+            company_id=company_id,
+            tax_id="0000000000000",
+            merchant_name="No Tax ID / Cash Slip",
+            short_name="no_taxid",
+            file_prefix="cash_slip",
+            status_code=MerchantStatus.APPROVED.value,
+            is_vat_registered=0,
+            default_wht_rate=0.0
+        ))
 
 
 def seed_default_users(session, company_id: str) -> None:
@@ -139,7 +127,7 @@ def seed_initial_data(configs_dir: str = "configs") -> None:
         with get_db_session() as session:
             company = seed_default_company(session)
             seed_document_statuses(session)
-            seed_document_sources(session, configs_dir=configs_dir)
+            seed_default_merchants(session, company_id=company.company_id)
             seed_default_users(session, company_id=company.company_id)
 
         logger.info("Database seeding completed.")

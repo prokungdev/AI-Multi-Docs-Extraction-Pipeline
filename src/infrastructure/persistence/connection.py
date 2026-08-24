@@ -50,6 +50,11 @@ def get_database_url(settings_path: str = DefaultPath.SETTINGS) -> str:
     if override_path:
         return f"sqlite:///{override_path.replace('\\', '/')}"
 
+    if os.environ.get("TEST_ENVIRONMENT") == "1":
+        import tempfile
+        fallback_test_db = os.path.join(tempfile.gettempdir(), "pytest_fail_safe_guard.db").replace("\\", "/")
+        return f"sqlite:///{fallback_test_db}"
+
     abs_settings_path = PROJECT_ROOT / settings_path if not os.path.isabs(settings_path) else Path(settings_path)
     settings = {}
     storage_root = "storage"
