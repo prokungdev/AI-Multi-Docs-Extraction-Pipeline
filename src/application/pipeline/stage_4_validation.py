@@ -16,7 +16,7 @@ from src.infrastructure.common.config_loader import (
     get_default_doc_type,
     get_default_company_code,
 )
-from src.infrastructure.common.constants import DocumentStatusCode, DefaultIdentifier
+from src.infrastructure.common.constants import DocumentStatusCode, DefaultIdentifier, SystemUserId
 from src.infrastructure.persistence import (
     get_pages_by_status,
     update_page_status,
@@ -190,7 +190,7 @@ def post_process_document(
                 entity_name=payload.get("merchant_name", ""),
                 total_amount=net_amount,
                 data_payload=data_payload,
-                confirmed_by="system_auto_approve"
+                confirmed_by=SystemUserId.AUTO_SYSTEM
             )
             
             archive_and_export_document(

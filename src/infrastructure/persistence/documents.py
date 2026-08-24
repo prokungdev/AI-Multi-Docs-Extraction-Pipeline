@@ -2,14 +2,16 @@
 
 import os
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Tuple
 from src.infrastructure.common.logger import logger
 from sqlalchemy import select, update, delete, or_, and_, desc, asc, func
 
 from .connection import get_db_session
 from .models import Company, ProcessedBatch, DocumentPage, Document, DocumentStatus
-from src.infrastructure.common.constants import DefaultIdentifier, DocumentStatusCode
+from src.infrastructure.common.constants import DefaultIdentifier, DocumentStatusCode, SystemUserId
+
+DEFAULT_LOCK_TTL_SECONDS = 900  # 15 minutes Airline Ticket Hold duration
 
 
 def calculate_file_hash(file_path: str) -> str:
@@ -427,7 +429,7 @@ def get_all_documents(domain_id: str = None, source_id: str = None, status_code:
 
 def update_document_to_approved(
     document_id: str,
-    confirmed_by: str = "human",
+    confirmed_by: str = SystemUserId.DEV_ADMIN,
     doc_number: str = None,
     doc_date: str = None,
     entity_name: str = None,
@@ -436,16 +438,22 @@ def update_document_to_approved(
     is_manually_edited: int = 0
 ) -> bool:
     """
-    Marks a document as APPROVED and locks it using Pure SQLAlchemy 2.0 ORM.
+    Marks a document as APPROVED and closes it using Atomic Guard (is_closed == 0).
     """
     try:
         with get_db_session() as session:
-            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
+            doc = session.scalars(
+                select(Document).where(Document.document_id == document_id, Document.is_closed == 0)
+            ).first()
             if not doc:
+                logger.warning(f"Cannot approve document '{document_id}': Document does not exist or is already closed.")
                 return False
             now_str = datetime.now(timezone.utc).isoformat()
             doc.status_code = DocumentStatusCode.APPROVED
-            doc.is_locked = 1
+            doc.is_closed = 1
+            doc.is_locked = 0
+            doc.locked_by = None
+            doc.locked_at = None
             doc.confirmed_by = confirmed_by
             doc.confirmed_at = now_str
             doc.is_manually_edited = is_manually_edited
@@ -466,18 +474,24 @@ def update_document_to_approved(
         return False
 
 
-def update_document_to_rejected(document_id: str, reason: str, confirmed_by: str = "human") -> bool:
+def update_document_to_rejected(document_id: str, reason: str, confirmed_by: str = SystemUserId.DEV_ADMIN) -> bool:
     """
-    Marks a document as REJECTED using Pure SQLAlchemy 2.0 ORM.
+    Marks a document as REJECTED and closes it using Atomic Guard (is_closed == 0).
     """
     try:
         with get_db_session() as session:
-            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
+            doc = session.scalars(
+                select(Document).where(Document.document_id == document_id, Document.is_closed == 0)
+            ).first()
             if not doc:
+                logger.warning(f"Cannot reject document '{document_id}': Document does not exist or is already closed.")
                 return False
             now_str = datetime.now(timezone.utc).isoformat()
             doc.status_code = "REJECTED"
-            doc.is_locked = 1
+            doc.is_closed = 1
+            doc.is_locked = 0
+            doc.locked_by = None
+            doc.locked_at = None
             doc.confirmed_by = confirmed_by
             doc.confirmed_at = now_str
             doc.error_reason = reason
@@ -486,6 +500,153 @@ def update_document_to_rejected(document_id: str, reason: str, confirmed_by: str
     except Exception as e:
         logger.error(f"Failed to reject document '{document_id}': {e}")
         return False
+
+
+# =========================================================================
+# Airline Ticket Hold Concurrency Lock Services (15-Min TTL & Auto-Release)
+# =========================================================================
+
+def acquire_document_lock(
+    document_id: str,
+    user_id: str,
+    ttl_seconds: int = DEFAULT_LOCK_TTL_SECONDS
+) -> tuple[bool, str, dict | None]:
+    """
+    Acquires an exclusive 15-minute editing lock on a document (Airline Ticket Hold pattern).
+    
+    If the document is already locked by another user but the lock duration exceeds
+    ttl_seconds, the stale lock is automatically released and granted to the new user.
+    
+    Returns:
+        tuple[bool, str, dict | None]: (success, status_message, document_dict)
+    """
+    try:
+        with get_db_session() as session:
+            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
+            if not doc:
+                return False, "DOCUMENT_NOT_FOUND", None
+            if doc.is_closed == 1:
+                return False, "DOCUMENT_ALREADY_CLOSED", doc.to_dict()
+
+            now = datetime.now(timezone.utc)
+            now_str = now.isoformat()
+
+            # Check if existing lock is expired
+            is_expired = False
+            if doc.is_locked == 1 and doc.locked_at:
+                try:
+                    lock_time = datetime.fromisoformat(doc.locked_at)
+                    if lock_time.tzinfo is None:
+                        lock_time = lock_time.replace(tzinfo=timezone.utc)
+                    elapsed = (now - lock_time).total_seconds()
+                    if elapsed > ttl_seconds:
+                        is_expired = True
+                except Exception:
+                    is_expired = True
+
+            # Grant lock if: unlocked, owned by same user, or expired
+            if doc.is_locked == 0 or doc.locked_by == user_id or is_expired:
+                doc.is_locked = 1
+                doc.locked_by = user_id
+                doc.locked_at = now_str
+                doc.updated_at = now_str
+                return True, "LOCK_ACQUIRED", doc.to_dict()
+
+            # Otherwise, locked by another active user
+            return False, f"LOCKED_BY_{doc.locked_by}", doc.to_dict()
+    except Exception as e:
+        logger.error(f"Failed to acquire lock for document '{document_id}': {e}")
+        return False, f"ERROR: {e}", None
+
+
+def renew_document_lock(
+    document_id: str,
+    user_id: str,
+    ttl_seconds: int = DEFAULT_LOCK_TTL_SECONDS
+) -> bool:
+    """
+    Renews/extends the 15-minute lock lease for the current holder (Heartbeat Ping / Extension Modal).
+    """
+    try:
+        with get_db_session() as session:
+            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
+            if not doc or doc.is_closed == 1 or doc.is_locked == 0:
+                return False
+            if doc.locked_by == user_id or user_id == SystemUserId.DEV_ADMIN:
+                now_str = datetime.now(timezone.utc).isoformat()
+                doc.locked_at = now_str
+                doc.updated_at = now_str
+                return True
+            return False
+    except Exception as e:
+        logger.error(f"Failed to renew lock for document '{document_id}': {e}")
+        return False
+
+
+def release_document_lock(
+    document_id: str,
+    user_id: str,
+    force: bool = False
+) -> bool:
+    """
+    Releases an editing lock and returns the document back to the shared queue.
+    """
+    try:
+        with get_db_session() as session:
+            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
+            if not doc:
+                return False
+            if doc.is_locked == 0:
+                return True
+            if doc.locked_by == user_id or force or user_id == SystemUserId.DEV_ADMIN:
+                doc.is_locked = 0
+                doc.locked_by = None
+                doc.locked_at = None
+                doc.updated_at = datetime.now(timezone.utc).isoformat()
+                return True
+            return False
+    except Exception as e:
+        logger.error(f"Failed to release lock for document '{document_id}': {e}")
+        return False
+
+
+def get_document_lock_status(
+    document_id: str,
+    ttl_seconds: int = DEFAULT_LOCK_TTL_SECONDS
+) -> dict:
+    """
+    Retrieves real-time concurrency lock status and remaining lease duration in seconds.
+    """
+    try:
+        with get_db_session() as session:
+            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
+            if not doc:
+                return {"is_locked": False, "locked_by": None, "locked_at": None, "remaining_seconds": 0.0, "is_expired": True}
+            if doc.is_locked == 0 or not doc.locked_at:
+                return {"is_locked": False, "locked_by": None, "locked_at": None, "remaining_seconds": 0.0, "is_expired": True}
+
+            now = datetime.now(timezone.utc)
+            try:
+                lock_time = datetime.fromisoformat(doc.locked_at)
+                if lock_time.tzinfo is None:
+                    lock_time = lock_time.replace(tzinfo=timezone.utc)
+                elapsed = (now - lock_time).total_seconds()
+                remaining = max(0.0, float(ttl_seconds) - elapsed)
+                is_expired = remaining <= 0.0
+            except Exception:
+                remaining = 0.0
+                is_expired = True
+
+            return {
+                "is_locked": doc.is_locked == 1 and not is_expired,
+                "locked_by": doc.locked_by,
+                "locked_at": doc.locked_at,
+                "remaining_seconds": round(remaining, 1),
+                "is_expired": is_expired
+            }
+    except Exception as e:
+        logger.error(f"Failed to get lock status for document '{document_id}': {e}")
+        return {"is_locked": False, "locked_by": None, "locked_at": None, "remaining_seconds": 0.0, "is_expired": True}
 
 
 def update_document_status(document_id: str, status_code: str, error_reason: str = None) -> bool:
@@ -523,12 +684,15 @@ def update_document_payload(
     is_manually_edited: int = None
 ) -> bool:
     """
-    Updates the JSON data payload and optional extraction metadata for a document using Pure SQLAlchemy 2.0 ORM.
+    Updates the JSON data payload for an open document using Atomic Guard (is_closed == 0).
     """
     try:
         with get_db_session() as session:
-            doc = session.scalars(select(Document).filter_by(document_id=document_id)).first()
+            doc = session.scalars(
+                select(Document).where(Document.document_id == document_id, Document.is_closed == 0)
+            ).first()
             if not doc:
+                logger.warning(f"Cannot update payload for '{document_id}': Document does not exist or is closed.")
                 return False
             now_str = datetime.now(timezone.utc).isoformat()
             if data_payload is not None:

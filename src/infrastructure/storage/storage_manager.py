@@ -12,6 +12,9 @@ from src.infrastructure.common.constants import (
 )
 
 
+from src.infrastructure.storage.local_adapter import LocalStorageAdapter
+
+
 class StoragePathManager:
     """
     Centralized Single Source of Truth for all filesystem storage paths.
@@ -24,6 +27,7 @@ class StoragePathManager:
         self.storage_root = self._settings.get("storage_root", DefaultPath.STORAGE_ROOT)
         self.default_company = DefaultIdentifier.COMPANY_CODE
         self.default_doc_type = DefaultIdentifier.DOC_TYPE
+        self.adapter = LocalStorageAdapter()
 
     @property
     def root(self) -> str:

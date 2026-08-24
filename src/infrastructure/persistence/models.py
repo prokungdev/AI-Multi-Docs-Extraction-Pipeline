@@ -59,6 +59,23 @@ class Company(Base, DictSerializableMixin):
     merchants = relationship("Merchant", back_populates="company", cascade="all, delete-orphan")
     expense_receipts = relationship("ExpenseReceipt", back_populates="company", cascade="all, delete-orphan")
     api_call_logs = relationship("ApiCallLog", back_populates="company")
+    users = relationship("User", back_populates="company", cascade="all, delete-orphan")
+
+
+class User(Base, DictSerializableMixin):
+    """User entity model for multi-tenant identity, Audit Trail, and RBAC."""
+    __tablename__ = "users"
+
+    user_id = Column(String(36), primary_key=True)
+    company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=True, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    full_name = Column(String(255), nullable=False)
+    role = Column(String(50), nullable=False, default="ADMIN")
+    is_active = Column(Integer, default=1)
+    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at = Column(String(50), nullable=True)
+
+    company = relationship("Company", back_populates="users")
 
 
 class DocumentStatus(Base, DictSerializableMixin):
@@ -114,7 +131,10 @@ class Document(Base, DictSerializableMixin):
     search_text = Column(Text, nullable=True)
     data_payload = Column(Text, nullable=True)
     error_reason = Column(Text, nullable=True)
+    is_closed = Column(Integer, default=0, server_default="0")
     is_locked = Column(Integer, default=0, server_default="0")
+    locked_by = Column(String(36), nullable=True)
+    locked_at = Column(String(50), nullable=True)
     is_manually_edited = Column(Integer, default=0, server_default="0")
     confirmed_by = Column(String(100), nullable=True)
     confirmed_at = Column(String(50), nullable=True)

@@ -27,7 +27,7 @@ from src.infrastructure.common.constants import (
     generate_entity_id,
 )
 from src.infrastructure.pdf.image_service import split_pdf, process_raw_image, format_page_filename
-from src.domain.services.classifier import classify_document
+from src.application.usecases.classifier import classify_document
 from src.infrastructure.storage.storage_manager import storage_manager
 
 

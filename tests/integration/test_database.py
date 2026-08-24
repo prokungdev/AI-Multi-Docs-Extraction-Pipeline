@@ -208,7 +208,7 @@ class TestDatabase(unittest.TestCase):
 
         doc = get_document_by_id(doc_id)
         self.assertEqual(doc["status_code"], "APPROVED")
-        self.assertEqual(doc["is_locked"], 1)
+        self.assertEqual(doc["is_closed"], 1)
         self.assertEqual(doc["confirmed_by"], "test_user")
 
         # Verify it is no longer in pending documents list
@@ -249,7 +249,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.engine = get_engine()
-        Base.metadata.create_all(cls.engine)
+        initialize_db_schema()
 
     def test_01_database_url_resolution(self):
         """Test database URL dynamic resolution."""
@@ -301,6 +301,246 @@ class TestSQLAlchemyORM(unittest.TestCase):
             self.assertEqual(fetched_merchant.merchant_name, "ORM Test Merchant Co., Ltd.")
             self.assertEqual(fetched_merchant.status_code, MerchantStatus.APPROVED.value)
 
+    def test_04_sqlite_pragma_event_listener(self):
+        """Test SQLite WAL mode and foreign keys are auto-enabled via connection listener."""
+        from src.infrastructure.persistence.connection import get_engine
+        engine = get_engine()
+        with engine.connect() as conn:
+            fk_res = conn.exec_driver_sql("PRAGMA foreign_keys;").scalar()
+            self.assertEqual(fk_res, 1)
+
+    def test_05_user_entity_crud_and_seed(self):
+        """Test User entity seeding, creation, retrieval, and unique email validation."""
+        from src.infrastructure.common.constants import SystemUserId, UserRole
+        from src.infrastructure.persistence.seeder import seed_initial_data
+        from src.infrastructure.persistence.masters import (
+            create_user,
+            get_user_by_id,
+            get_user_by_email,
+            list_users,
+        )
+
+        seed_initial_data()
+
+        # 1. Verify default seeded users exist
+        sys_user = get_user_by_id(SystemUserId.AUTO_SYSTEM)
+        self.assertIsNotNone(sys_user)
+        self.assertEqual(sys_user["role"], UserRole.SYSTEM.value)
+
+        dev_admin = get_user_by_id(SystemUserId.DEV_ADMIN)
+        self.assertIsNotNone(dev_admin)
+        self.assertEqual(dev_admin["role"], UserRole.ADMIN.value)
+
+        # 2. Create custom user with unique email
+        test_email = f"reviewer_{uuid.uuid4().hex[:6]}@test.local"
+        custom_user = create_user(
+            email=test_email,
+            full_name="Auditor One",
+            role=UserRole.REVIEWER.value
+        )
+        self.assertIsNotNone(custom_user)
+        self.assertEqual(custom_user["email"], test_email)
+        self.assertEqual(custom_user["role"], UserRole.REVIEWER.value)
+
+        # 3. Retrieve by email and list
+        fetched = get_user_by_email(test_email)
+        self.assertIsNotNone(fetched)
+        self.assertEqual(fetched["full_name"], "Auditor One")
+
+        all_users = list_users()
+        self.assertGreaterEqual(len(all_users), 3)
+
+        # 4. Duplicate email fail-fast check
+        with self.assertRaises(ValueError):
+            create_user(
+                email=test_email,
+                full_name="Auditor Duplicate",
+                role=UserRole.REVIEWER.value
+            )
+
+    def test_06_atomic_locking_concurrency(self):
+        """Test atomic concurrency lock guard preventing double-approval and lost updates."""
+        from src.infrastructure.common.constants import SystemUserId, DocumentStatusCode
+        from src.infrastructure.persistence.documents import (
+            create_batch,
+            create_document,
+            update_document_to_approved,
+            update_document_to_rejected,
+            update_document_payload,
+            get_document_by_id,
+        )
+
+        batch_id = f"batch_{uuid.uuid4().hex[:8]}"
+        doc_id = f"doc_{uuid.uuid4().hex[:8]}"
+
+        create_batch(
+            batch_id=batch_id,
+            original_filename="concurrency_test.pdf",
+            total_pages=1,
+            storage_path="storage/companies/C00000_SAMPLE/expense_receipt/05_archive/raw",
+            file_hash=f"hash_{uuid.uuid4().hex}"
+        )
+
+        create_document(
+            document_id=doc_id,
+            batch_id=batch_id,
+            doc_type_id="expense_receipt",
+            source_id="NO_TAXID",
+            status_code=DocumentStatusCode.NEEDS_REVIEW,
+            doc_number="CONC-001",
+            doc_date="2026-08-24",
+            entity_name="Initial Vendor",
+            total_amount=500.0,
+            search_text="concurrency test document",
+            data_payload='{"net_amount": 500.0}'
+        )
+
+        # Step 1: User A approves the document successfully
+        success_a = update_document_to_approved(
+            document_id=doc_id,
+            confirmed_by="usr_user_a",
+            doc_number="CONC-001-A",
+            total_amount=500.0
+        )
+        self.assertTrue(success_a)
+
+        doc_after_a = get_document_by_id(doc_id)
+        self.assertEqual(doc_after_a["is_closed"], 1)
+        self.assertEqual(doc_after_a["status_code"], DocumentStatusCode.APPROVED)
+        self.assertEqual(doc_after_a["confirmed_by"], "usr_user_a")
+
+        # Step 2: User B tries to approve the already-closed document concurrently
+        success_b = update_document_to_approved(
+            document_id=doc_id,
+            confirmed_by="usr_user_b",
+            doc_number="CONC-001-B",
+            total_amount=999.0
+        )
+        self.assertFalse(success_b, "Guard must reject double-approval on closed document.")
+
+        # Step 3: User B tries to update payload on the closed document
+        payload_update_success = update_document_payload(
+            document_id=doc_id,
+            entity_name="Hijacked Vendor",
+            total_amount=999.0
+        )
+        self.assertFalse(payload_update_success, "Guard must reject payload update on closed document.")
+
+        # Step 4: User B tries to reject the closed document
+        reject_success = update_document_to_rejected(
+            document_id=doc_id,
+            reason="Late rejection attempt",
+            confirmed_by="usr_user_b"
+        )
+        self.assertFalse(reject_success, "Guard must reject status alteration on closed document.")
+
+        # Step 5: Verify original User A state remains 100% intact
+        final_doc = get_document_by_id(doc_id)
+        self.assertEqual(final_doc["confirmed_by"], "usr_user_a")
+        self.assertEqual(final_doc["total_amount"], 500.0)
+        self.assertEqual(final_doc["doc_number"], "CONC-001-A")
+
+    def test_07_airline_ticket_hold_concurrency_and_ttl(self):
+        """
+        Test Airline Ticket Hold pattern (15-min TTL, renew heartbeat, and auto-release on expiration).
+        """
+        from datetime import datetime, timezone, timedelta
+        from src.infrastructure.common.constants import DocumentStatusCode
+        from src.infrastructure.persistence.connection import get_db_session
+        from src.infrastructure.persistence.models import Document
+        from src.infrastructure.persistence.documents import (
+            create_batch,
+            create_document,
+            acquire_document_lock,
+            renew_document_lock,
+            release_document_lock,
+            get_document_lock_status,
+            update_document_to_approved,
+        )
+
+        batch_id = f"batch_{uuid.uuid4().hex[:8]}"
+        doc_id = f"doc_{uuid.uuid4().hex[:8]}"
+
+        create_batch(
+            batch_id=batch_id,
+            original_filename="ticket_hold_test.pdf",
+            total_pages=1,
+            storage_path="storage/companies/C00000_SAMPLE/expense_receipt/05_archive/raw",
+            file_hash=f"hash_{uuid.uuid4().hex}"
+        )
+
+        create_document(
+            document_id=doc_id,
+            batch_id=batch_id,
+            doc_type_id="expense_receipt",
+            source_id="NO_TAXID",
+            status_code=DocumentStatusCode.NEEDS_REVIEW,
+            doc_number="HOLD-001",
+            doc_date="2026-08-24",
+            entity_name="Ticket Vendor",
+            total_amount=1500.0,
+            search_text="ticket hold test document",
+            data_payload='{"net_amount": 1500.0}'
+        )
+
+        # 1. User A acquires exclusive 15-minute lock (900 seconds)
+        success_a, msg_a, _ = acquire_document_lock(doc_id, user_id="usr_user_a", ttl_seconds=900)
+        self.assertTrue(success_a)
+        self.assertEqual(msg_a, "LOCK_ACQUIRED")
+
+        status = get_document_lock_status(doc_id, ttl_seconds=900)
+        self.assertTrue(status["is_locked"])
+        self.assertEqual(status["locked_by"], "usr_user_a")
+        self.assertGreater(status["remaining_seconds"], 880.0)
+        self.assertFalse(status["is_expired"])
+
+        # 2. User B tries to acquire the same document -> Rejected
+        success_b, msg_b, _ = acquire_document_lock(doc_id, user_id="usr_user_b", ttl_seconds=900)
+        self.assertFalse(success_b)
+        self.assertEqual(msg_b, "LOCKED_BY_usr_user_a")
+
+        # 3. Heartbeat / Extension Renewal
+        renew_b = renew_document_lock(doc_id, user_id="usr_user_b", ttl_seconds=900)
+        self.assertFalse(renew_b, "Non-owner cannot renew lock")
+
+        renew_a = renew_document_lock(doc_id, user_id="usr_user_a", ttl_seconds=900)
+        self.assertTrue(renew_a, "Owner can renew lock")
+
+        # 4. TTL Expiration & Auto-Release (Inject past timestamp 16 minutes ago)
+        stale_time = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
+        with get_db_session() as session:
+            doc = session.scalars(select(Document).filter_by(document_id=doc_id)).first()
+            doc.locked_at = stale_time
+
+        status_stale = get_document_lock_status(doc_id, ttl_seconds=900)
+        self.assertTrue(status_stale["is_expired"])
+        self.assertEqual(status_stale["remaining_seconds"], 0.0)
+
+        # User B now acquires the expired document -> Auto-Release grants lock to User B
+        success_b_takeover, msg_b_takeover, _ = acquire_document_lock(doc_id, user_id="usr_user_b", ttl_seconds=900)
+        self.assertTrue(success_b_takeover, "Auto-Release must allow User B to acquire expired lock")
+        self.assertEqual(msg_b_takeover, "LOCK_ACQUIRED")
+
+        status_b = get_document_lock_status(doc_id, ttl_seconds=900)
+        self.assertEqual(status_b["locked_by"], "usr_user_b")
+        self.assertTrue(status_b["is_locked"])
+
+        # 5. Voluntary Release
+        rel_success = release_document_lock(doc_id, user_id="usr_user_b")
+        self.assertTrue(rel_success)
+
+        status_unlocked = get_document_lock_status(doc_id, ttl_seconds=900)
+        self.assertFalse(status_unlocked["is_locked"])
+        self.assertIsNone(status_unlocked["locked_by"])
+
+        # 6. Closed Document Lock Protection
+        update_document_to_approved(doc_id, confirmed_by="usr_admin", total_amount=1500.0)
+        success_on_closed, msg_closed, _ = acquire_document_lock(doc_id, user_id="usr_user_a")
+        self.assertFalse(success_on_closed)
+        self.assertEqual(msg_closed, "DOCUMENT_ALREADY_CLOSED")
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

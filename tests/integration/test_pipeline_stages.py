@@ -7,10 +7,10 @@ from src.infrastructure.common.config_loader import load_system_settings
 from src.application.usecases.initializer import initialize_storage_directories
 from src.infrastructure.common.logger import setup_logger
 from src.infrastructure.pdf.image_service import split_pdf, process_raw_image, format_page_filename
-from src.domain.services.classifier import (
+from src.domain.services.classifier import sanitize_short_name
+from src.application.usecases.classifier import (
     classify_drop_zone_document,
     classify_document,
-    sanitize_short_name,
     fast_filename_prefix_match,
 )
 from src.application.pipeline.stage_1_ingestion import release_pending_merchant_files

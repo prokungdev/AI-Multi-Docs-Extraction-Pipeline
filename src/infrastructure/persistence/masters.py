@@ -5,6 +5,7 @@ import json
 import uuid
 import re
 from datetime import datetime, timezone
+from typing import Optional, List, Dict, Any
 from src.infrastructure.common.logger import logger
 from sqlalchemy import select, delete, func
 
@@ -292,31 +293,7 @@ def update_source_active_status(source_id: str, doc_type_id: str, is_active: int
 
 
 
-def sanitize_short_name(name: str) -> str:
-    """
-    Sanitizes a merchant name or identifier into a filesystem-safe short_name.
-    Converts to lowercase, removes stop words, replaces non-alphanumeric with underscore.
-    """
-    if not name or not name.strip():
-        return "merchant"
-
-    cleaned = name.strip()
-    prefixes = [
-        "บริษัท", "บจก.", "หจก.", "ห้างหุ้นส่วนจำกัด", "ร้าน", "บมจ.",
-        "co.,ltd.", "co., ltd.", "ltd.", "company limited", "corp.", "inc."
-    ]
-    for p in prefixes:
-        pattern = re.compile(re.escape(p), re.IGNORECASE)
-        cleaned = pattern.sub("", cleaned).strip()
-
-    cleaned = cleaned.replace(" ", "_")
-    cleaned = re.sub(r'[^a-zA-Z0-9_]', '', cleaned)
-    cleaned = re.sub(r'_+', '_', cleaned).strip('_')
-
-    if not cleaned:
-        cleaned = "merchant"
-
-    return cleaned[:35].lower()
+from src.domain.services.classifier import sanitize_short_name
 
 
 def get_merchants(company_id: str = None) -> list[dict]:
@@ -823,3 +800,88 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
     except Exception as e:
         logger.error(f"Failed to insert relational receipt for doc '{document_id}': {e}")
         return False
+
+
+from .models import User
+from src.infrastructure.common.constants import UserRole
+
+
+def create_user(
+    email: str,
+    full_name: str,
+    role: str = UserRole.ADMIN.value,
+    company_id: Optional[str] = None,
+    user_id: Optional[str] = None
+) -> dict:
+    """
+    Creates a new user entity in the database with fail-fast uniqueness validation.
+    """
+    clean_email = email.strip().lower()
+    clean_name = full_name.strip()
+    clean_role = role.strip().upper() if role else UserRole.ADMIN.value
+    uid = user_id or generate_entity_id(EntityIdPrefix.USER)
+    now_str = datetime.now(timezone.utc).isoformat()
+
+    try:
+        with get_db_session() as session:
+            stmt = select(User).filter_by(email=clean_email)
+            existing = session.scalars(stmt).first()
+            if existing:
+                error_msg = f"User with email '{clean_email}' already exists."
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+            new_user = User(
+                user_id=uid,
+                company_id=company_id,
+                email=clean_email,
+                full_name=clean_name,
+                role=clean_role,
+                is_active=1,
+                created_at=now_str
+            )
+            session.add(new_user)
+            session.flush()
+            logger.info(f"Created user '{clean_email}' with ID '{uid}' (Role: {clean_role}).")
+            return new_user.to_dict()
+    except Exception as e:
+        logger.error(f"Failed to create user '{clean_email}': {e}")
+        raise
+
+
+def get_user_by_id(user_id: str) -> Optional[dict]:
+    """Retrieves a user entity dictionary by user_id."""
+    try:
+        with get_db_session() as session:
+            stmt = select(User).filter_by(user_id=user_id.strip())
+            user = session.scalars(stmt).first()
+            return user.to_dict() if user else None
+    except Exception as e:
+        logger.error(f"Failed to get user by ID '{user_id}': {e}")
+        return None
+
+
+def get_user_by_email(email: str) -> Optional[dict]:
+    """Retrieves a user entity dictionary by email."""
+    try:
+        with get_db_session() as session:
+            stmt = select(User).filter_by(email=email.strip().lower())
+            user = session.scalars(stmt).first()
+            return user.to_dict() if user else None
+    except Exception as e:
+        logger.error(f"Failed to get user by email '{email}': {e}")
+        return None
+
+
+def list_users(company_id: Optional[str] = None) -> list[dict]:
+    """Lists users optionally filtered by company_id."""
+    try:
+        with get_db_session() as session:
+            stmt = select(User)
+            if company_id:
+                stmt = stmt.filter_by(company_id=company_id)
+            users = session.scalars(stmt).all()
+            return [u.to_dict() for u in users]
+    except Exception as e:
+        logger.error(f"Failed to list users: {e}")
+        return []

@@ -86,6 +86,30 @@ _engines: dict = {}
 _session_factories: dict = {}
 
 
+from sqlalchemy import event, Engine
+
+@event.listens_for(Engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    """Auto-enables WAL mode and foreign key constraints on SQLite connections."""
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA foreign_keys=ON;")
+        cursor.close()
+
+
+def dispose_all_engines():
+    """Disposes all cached engines and clears session factories (Used for clean test teardown)."""
+    global _engines, _session_factories
+    for eng in _engines.values():
+        try:
+            eng.dispose()
+        except Exception:
+            pass
+    _engines.clear()
+    _session_factories.clear()
+
+
 def get_engine(settings_path: str = DefaultPath.SETTINGS):
     """
     Returns a cached Engine instance per database URL with connection pooling.

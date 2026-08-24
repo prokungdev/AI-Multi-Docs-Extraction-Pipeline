@@ -17,7 +17,7 @@ from src.infrastructure.persistence import (
 )
 from src.infrastructure.persistence.connection import get_engine
 from src.infrastructure.ai.ai_service import ai_service
-from src.domain.services.classifier import classify_document
+from src.application.usecases.classifier import classify_document
 from src.application.usecases.extractor import extract_document_data
 
 
@@ -106,8 +106,10 @@ class TestAiTelemetryAndIsolation(unittest.TestCase):
 
     def test_03_extract_structured_json_writes_telemetry(self):
         """Verify extract_structured_json logs into api_call_logs table."""
+        rand_tax = f"9{uuid.uuid4().int % 1000000000000:012d}"
+        comp = create_company(company_code=f"C_{uuid.uuid4().hex[:6]}", company_name="Telemetry Test Co", short_name="TTC", tax_id=rand_tax)
+        test_comp_id = comp["company_id"]
         test_batch_id = f"batch_{uuid.uuid4().hex[:8]}"
-        test_comp_id = f"comp_{uuid.uuid4().hex[:8]}"
 
         mock_response = MagicMock()
         mock_response.text = '{"merchant_name": "Test Store", "tax_id": "0105559999999"}'

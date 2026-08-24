@@ -20,7 +20,7 @@ if project_root not in sys.path:
 from src.infrastructure.pdf.image_service import split_pdf
 from src.application.usecases.extractor import extract_document_data
 from src.domain.services.transformer import transform_data
-from src.infrastructure.common.constants import DefaultPath
+from src.infrastructure.common.constants import DefaultPath, SystemUserId
 from src.application.usecases.initializer import (
     validate_settings_config,
     validate_doc_type_config,
@@ -248,12 +248,13 @@ def main_app():
                 except Exception:
                     data = {}
                 
-                # Check locked state
-                is_locked = doc["is_locked"] == 1
+                # Check closed state
+                is_closed = doc.get("is_closed", 0) == 1
+                is_locked = is_closed
                 
-                # Warning banner if locked
-                if is_locked:
-                    st.warning("⚠️ เอกสารนี้ได้รับการอนุมัติและล็อคแล้ว ไม่สามารถทำการแก้ไขหรือประมวลผลซ้ำได้")
+                # Warning banner if closed
+                if is_closed:
+                    st.warning("⚠️ เอกสารนี้ได้รับการอนุมัติและปิดรอบแล้ว (Closed) ไม่สามารถทำการแก้ไขหรือประมวลผลซ้ำได้")
                 
                 # Warning banner if scan was incomplete
                 if doc["status_code"] == "FAILED" and doc["error_reason"]:
@@ -600,7 +601,7 @@ def main_app():
                                 entity_name=entity_name,
                                 total_amount=net_amount,
                                 data_payload=json.dumps(final_data, ensure_ascii=False),
-                                confirmed_by=reviewer_name or "admin"
+                                confirmed_by=reviewer_name or SystemUserId.DEV_ADMIN
                             )
                             
                             # Call centralized archiving and exporting helper with custom exporter params

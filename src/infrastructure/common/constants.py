@@ -39,9 +39,13 @@ class MerchantStatusCode:
     IGNORED = "IGNORED"
 
 
+import enum
+
+
 class EntityIdPrefix:
     """Standardized entity Primary Key prefixes for database models and logging."""
     COMPANY = "comp"
+    USER = "usr"
     BATCH = "batch"
     DOCUMENT = "doc"
     PAGE = "page"
@@ -50,6 +54,20 @@ class EntityIdPrefix:
     ITEM = "itm"
     API_LOG = "api"
     APP_LOG = "log"
+
+
+class SystemUserId:
+    """Centralized identifiers for system actors and default development accounts."""
+    AUTO_SYSTEM = "usr_system_auto"
+    DEV_ADMIN = "usr_dev_admin"
+
+
+class UserRole(str, enum.Enum):
+    """Standard Role-Based Access Control (RBAC) permission roles."""
+    ADMIN = "ADMIN"
+    REVIEWER = "REVIEWER"
+    VIEWER = "VIEWER"
+    SYSTEM = "SYSTEM"
 
 
 def generate_entity_id(prefix: str, hex_length: int = 12) -> str:

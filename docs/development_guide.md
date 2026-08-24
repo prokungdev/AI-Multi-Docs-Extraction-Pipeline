@@ -140,3 +140,18 @@ flowchart TD
 - [ ] **Testing:** `pytest` รันผ่านทั้งหมด และมี Coverage ครอบคลุม Business Critical Paths
 - [ ] **Security:** ผ่านการตรวจสอบช่องโหว่ความปลอดภัยระดับ Critical/High
 - [ ] **Documentation:** อัปเดต `README.md` และเอกสารใน `docs/` ด้วย Relative Links ทั้งหมดเรียบร้อย
+
+---
+
+## 📝 5. Feature Backlogs & Developer Notes
+
+### ✈️ UI Backlog (TODO List) - Airline Ticket Hold Concurrency Lock
+เมื่อพร้อมนำระบบ Concurrency Lock ไปต่อเชื่อมกับหน้าจอ Streamlit UI ให้ปฏิบัติตาม Checklist ดังนี้:
+
+- [ ] **1. Screen Entry Hook**: เมื่อคลิกเลือกเอกสารในหน้า Review & Verification ให้เรียก `acquire_document_lock(doc_id, current_user_id)` (ค่าเริ่มต้น TTL 15 นาที / 900 วินาที)
+- [ ] **2. Timer Badge Component**: แสดง Badge นาฬิกานับถอยหลัง 15 นาทีที่มุมบนขวา (`⏱️ ถือครองสิทธิ์: MM:SS นาที`)
+- [ ] **3. Conflict Warning Banner**: หากเอกสารถูกล็อกโดย User อื่น ให้ขึ้นแบนเนอร์สีเหลืองเตือน (`⚠️ เอกสารนี้กำลังตรวจโดย [user_id]`) และปิดฟอร์มแก้ไข (Disable inputs)
+- [ ] **4. Extension Prompt Modal (Pop-up ต่อเวลา)**: เมื่อเวลาเหลือ < 1 นาที ให้แสดงหน้าต่างเตือนพร้อมปุ่ม `[✅ ยืนยันต่อเวลา 15 นาที]` ซึ่งจะยิงเรียก `renew_document_lock()`
+- [ ] **5. Auto-Exit Handler**: เมื่อเวลานับถอยหลังถึง 0:00 และไม่มีการตอบรับ ให้เรียก `release_document_lock()` เคลียร์ Session และเปลี่ยนหน้ากลับไปที่ตารางคิวเอกสารส่วนกลางอัตโนมัติ
+- [ ] **6. Navigation Exit Hook**: เมื่อผู้ใช้กดปุ่ม "ย้อนกลับ" หรือกด "Approve/Reject" ให้ปล่อย Lock คืนสู่ส่วนกลางอัตโนมัติ
+
