@@ -58,6 +58,7 @@ Before writing any Review Report or assigning quality scores, the AI Agent **MUS
 | **Skill Agnostic & Tool Coupling Drift** | Repository-specific symbols, local table/function names, or third-party brand locks in `.agents/skills/` | `code-reviewer` / `project-standardizer` | **🚨 CRITICAL**: All skills in `.agents/skills/` (including `code-reviewer` itself and all sibling skills) MUST be 100% common, project-agnostic, and vendor/tool-agnostic. |
 | **Missing Test Database Isolation** | Tests performing DB CRUD without isolated temp DB / env override | `test-suite-generator` / `database-architect` | **🚨 CRITICAL (Auto-FAIL Test Suite)**: Any test suite connecting directly to dev/prod database instances without temp DB isolation must be immediately rejected. |
 | **Direct Project Storage Pollution in Tests** | Tests creating files or folders directly inside project's real storage tree | `test-suite-generator` / `project-standardizer` | **🚨 CRITICAL (Auto-FAIL Test Suite)**: Tests MUST generate mock files inside OS temporary directories (`tempfile.mkdtemp()`) and clean them up completely in teardown. |
+| **DDD Inward Dependency Violation** | `domain/` importing from `infrastructure/` or `apps/` | `python-enterprise-stack` / `code-reviewer` | **🚨 CRITICAL (Auto-FAIL Architecture)**: The Domain Layer (`domain/`) must remain pure and NEVER import technical adapters, database sessions, third-party SDKs, or delivery apps. |
 
 ---
 
@@ -70,7 +71,7 @@ The AI Agent MUST evaluate the target code across the following dimensions witho
    - Confirm all DB operations use Pure SQLAlchemy 2.0 syntax with transactional context managers or FastAPI `Depends()`.
 2. **🛡️ Security & Secret Safety (`security-auditor`)**:
    - Check for hardcoded API keys, secrets, passwords, or tokens.
-   - Verify input sanitization and prevention of injection vulnerabilities.
+   - Verify input sanitization, path traversal prevention, and multi-tenant tenant isolation scoping (`company_id`/`tenant_id`).
 3. **🐛 Logic Correctness, Edge Cases & Zero Redundancy**:
    - Check for null pointers, undefined variable references, off-by-one errors, and boundary conditions.
    - Verify that exception handling is explicit and does NOT swallow errors silently (`except: pass`).
@@ -78,8 +79,9 @@ The AI Agent MUST evaluate the target code across the following dimensions witho
 4. **⚡ Performance & Resilience (`refactoring-expert`)**:
    - Identify redundant DB queries, N+1 query patterns, missing rate-limit retries (exponential backoff), or missing fast-path bypasses.
    - Eliminate dead code branches and ghost fallback lookups to obsolete system paths.
-5. **🧪 Testability & Clean Architecture (`test-suite-generator` / `refactoring-expert`)**:
-   - Verify decoupling between UI, API, and Core Engine.
+5. **🧪 Testability & Clean Architecture (`test-suite-generator` / `refactoring-expert` / `python-enterprise-stack`)**:
+   - **Canonical 4-Layer DDD Dependency Rule**: Verify inward dependency flow (`apps` ➔ `application` ➔ `domain` ➔ `infrastructure`). The Domain Layer (`domain/`) must remain 100% pure and decoupled from external frameworks/SDKs.
+   - **Strict Model Separation**: SQLAlchemy ORM models reside strictly in `infrastructure/persistence/models.py`, while Pydantic DTOs reside in `application/dtos/`.
    - **Enforce Dual Test Isolation**: Confirm that all test suites execute against temporary/mock databases and temporary directories (`tempfile.mkdtemp()`) with zero artifact writes to real project storage.
    - Confirm test suite passes 100% with explicit resource teardown on Windows (`engine.dispose()`, `gc.collect()`, `shutil.rmtree()`).
    - Verify that third-party processing engines (e.g. PDF parsing, image rendering, external APIs) are encapsulated in dedicated **Service Wrappers / Adapters** rather than directly imported across multiple business modules.

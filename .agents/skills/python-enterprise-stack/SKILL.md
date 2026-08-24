@@ -222,44 +222,51 @@ To ensure rock-solid production readiness and fail-fast guarantees:
 
 ---
 
-## 9. Modular Sub-Package Layering & Clean Core Architecture
+## 9. Canonical 4-Layer Domain-Driven Design (DDD) Architecture
 
-To avoid monolithic or flat core folders (where infrastructure, external services, data models, and business logic intermingle), enterprise Python codebases must organize the core engine into distinct, single-responsibility sub-packages:
+To avoid monolithic architectures or flat package layouts, enterprise Python codebases must structure the core application into **4 Canonical DDD Layers** (Eric Evans Standard):
 
-### 1. Standard Sub-Package Taxonomy
-- **`common/` (or `infra/`)**: Cross-cutting foundation independent of business domain:
-  - Centralized constants & state enums (`constants.py`)
-  - Universal dual logging gateway (`logger.py`)
-  - Configuration loaders (`config_loader.py`)
-  - Shared utility functions & hashers (`utils.py`)
-  - Health checks & system probes (`healthcheck.py`)
-- **`services/`**: External adapters, SDK integrations, and domain engine services:
-  - Third-party API / LLM clients (e.g. `ai_service.py`)
-  - Document rendering & file conversion services (e.g. `pdf_service.py`, `pdf_splitter.py`)
-  - Cost, token, or metering engines (`cost_estimator.py`)
-  - Multi-tenant directory & path managers (`storage_manager.py`)
-- **`processors/`**: Business logic, rule engines, and data pipeline components:
-  - Workspace / tenant bootstrappers (`initializer.py`)
-  - Document / message classifiers (`classifier.py`)
-  - Structured extraction engines (`extractor.py`)
-  - Normalization & payload enrichment (`transformer.py`)
-  - Post-processing, tax calculation, and data balancing (`post_processor.py`)
-- **`schemas/`**: Pydantic v2 Data Transfer Objects (DTOs), API contracts, and validation models:
-  - System configuration models (`settings_schema.py`)
-  - Transactional payload models & DTOs (`document_schemas.py`)
-- **`db/`**: Pure SQLAlchemy 2.0 ORM layer:
-  - Database connection & session dependencies (`connection.py`)
-  - Database schema definitions & tables (`schema.py`)
-  - Pure SQLAlchemy 2.0 Entities (`models.py`)
-  - Repository & master data access functions (`masters.py`, `documents.py`, `logs.py`)
+```text
+src/
+├── domain/                      # 1. DOMAIN LAYER (Pure Business Logic & Models)
+│   ├── entities/                # Business Entities & Aggregates (e.g. Document, Company, Merchant)
+│   ├── policies/                # Business Rules, Specifications & Math Validation (e.g. TaxPolicy, MathRule)
+│   ├── services/                # Pure Domain Services (e.g. ClassifierService, NormalizerService)
+│   └── repositories/            # Abstract Repository Interfaces (Contracts)
+│
+├── application/                 # 2. APPLICATION LAYER (Use Cases & Orchestration)
+│   ├── pipeline/                # Sequential Workflow Stages (Stage 0 -> Stage N) & Coordinators
+│   ├── usecases/                # Application Interactors (e.g. IngestUseCase, ExtractUseCase, ExportUseCase)
+│   └── dtos/                    # Pydantic v2 Data Transfer Objects (DTOs) & Request/Response Contracts
+│
+├── infrastructure/              # 3. INFRASTRUCTURE LAYER (Technical Adapters & External Systems)
+│   ├── ai/                      # LLM Provider Clients, Token Engines, Cost Estimators
+│   ├── pdf/                     # PyMuPDF Document Renderers, Pillow Image Splitting & Optimization
+│   ├── persistence/             # Pure SQLAlchemy 2.0 ORM Models, Database Sessions, Schema DDL
+│   ├── storage/                 # Multi-tenant Local Disk / Cloud Storage Managers
+│   ├── exporters/               # Output Strategy Adapters (Express PV, JSON, CSV, Registry)
+│   └── common/                  # Dual Logger, Constants, Config Loader, Healthcheck Probes
+│
+└── apps/ (or interfaces/)       # 4. PRESENTATION / DELIVERY LAYER (User Interfaces)
+    ├── api/                     # FastAPI REST API Endpoints & Dependency Injection
+    ├── streamlit/               # Web UI Dashboard & Interactive Interfaces
+    └── cli/                     # CLI Console Runners (e.g. main.py)
+```
+
+### 1. Layer Responsibilities & Isolation Rules
+- **Domain Layer (`domain/`)**: Must remain **100% pure and decoupled from external frameworks/SDKs**. Zero dependencies on FastAPI, PyMuPDF, or external AI APIs. All business rules, financial math balancing, and tax calculations reside here to enable fast, offline unit testing.
+- **Application Layer (`application/`)**: Coordinates the execution flow, orchestrates domain services, and handles data mapping between DTOs and domain entities.
+- **Infrastructure Layer (`infrastructure/`)**: Houses all third-party tool adapters, SDK wrappers, database ORM repositories, and file I/O operations.
+- **Presentation Layer (`apps/`)**: Exposes entry points (FastAPI, Streamlit, CLI) and delegates execution to Application Layer Use Cases.
 
 ### 2. Unambiguous Model Separation Rule
 - **Never create ambiguous `models.py` at the package root**: Avoid mixing Pydantic schemas and database entities in the same file or package level.
 - **Strict Separation**:
-  - **SQLAlchemy ORM Entities** reside exclusively in `db/models.py`.
-  - **Pydantic Validation Models & DTOs** reside exclusively in `schemas/`.
+  - **SQLAlchemy ORM Entities** reside exclusively in `infrastructure/persistence/models.py`.
+  - **Pydantic Validation Models & DTOs** reside exclusively in `application/dtos/`.
 
 ### 3. Facade Pattern for Public API Export
 - The top-level package `__init__.py` acts as an enterprise **Facade Interface**, re-exporting canonical classes and functions from sub-packages.
 - This guarantees a clean, stable public API surface while allowing sub-packages to evolve internally without breaking external consumers.
+
 

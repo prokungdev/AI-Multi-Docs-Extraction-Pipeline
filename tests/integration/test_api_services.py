@@ -2,9 +2,8 @@ import os
 import shutil
 import unittest
 import uuid
-from fastapi.testclient import TestClient
+import pytest
 
-from apps.api.main import app
 from src.infrastructure.common.healthcheck import (
     run_healthcheck,
     check_database_status,
@@ -22,6 +21,21 @@ class TestHealthcheckServices(unittest.TestCase):
 
     def setUp(self):
         self.settings = load_system_settings()
+        self._orig_api_key = os.environ.get("GEMINI_API_KEY")
+        self._orig_free_key = os.environ.get("GEMINI_API_KEY_FREE")
+        os.environ["GEMINI_API_KEY"] = "mock_api_key_for_healthcheck_test"
+        os.environ["GEMINI_API_KEY_FREE"] = "mock_api_key_for_healthcheck_test"
+
+    def tearDown(self):
+        if self._orig_api_key is not None:
+            os.environ["GEMINI_API_KEY"] = self._orig_api_key
+        else:
+            os.environ.pop("GEMINI_API_KEY", None)
+
+        if self._orig_free_key is not None:
+            os.environ["GEMINI_API_KEY_FREE"] = self._orig_free_key
+        else:
+            os.environ.pop("GEMINI_API_KEY_FREE", None)
 
     def test_01_database_status_check(self):
         """Test database connection status check."""
@@ -56,6 +70,12 @@ class TestFastAPIRestAPI(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        try:
+            from fastapi.testclient import TestClient
+            from apps.api.main import app
+        except ImportError:
+            raise unittest.SkipTest("fastapi or testclient not installed in current environment")
+
         import tempfile
         from src.infrastructure.persistence import initialize_db_schema, seed_initial_data
         cls.test_db_path = os.path.join(tempfile.gettempdir(), f"test_api_db_{uuid.uuid4().hex[:8]}.db").replace("\\", "/")

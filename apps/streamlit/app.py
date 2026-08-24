@@ -62,7 +62,7 @@ from src.infrastructure.persistence import (
     update_company,
 )
 from src.application.pipeline import split_and_match, release_pending_merchant_files
-from src.domain.services.post_processor import post_process_document, archive_and_export_document
+from src.application.pipeline.stage_4_validation import post_process_document, archive_and_export_document
 
 
 from src.infrastructure.exporters import list_exporters

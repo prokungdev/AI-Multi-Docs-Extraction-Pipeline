@@ -19,7 +19,7 @@ from src.infrastructure.persistence import (
 )
 from src.application.dtos.document_dto import DocumentStatus
 from src.infrastructure.common.constants import EntityIdPrefix, generate_entity_id
-from src.domain.services.post_processor import post_process_document
+from src.application.pipeline.stage_4_validation import post_process_document
 
 
 def transform_to_db(

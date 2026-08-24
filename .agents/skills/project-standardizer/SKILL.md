@@ -21,11 +21,17 @@ my-project/
 │   ├── rules/                     # Team coding guidelines & architectural constraints
 │   └── skills/                    # Reusable operational runbooks & skills
 ├── .githooks/                     # Team-wide Git hooks (pre-commit, pre-push)
-├── configs/                       # Application settings, environment schemas, merchant rules
+├── apps/                          # Presentation & delivery layer (API, Web UI, Mobile)
+│   ├── api/                       # REST API (e.g. FastAPI / Express)
+│   └── web/                       # Web interface (e.g. Streamlit / React)
+├── configs/                       # Application settings, environment schemas, business rules
 ├── docs/                          # System documentation, guides, & architecture diagrams
 │   └── installation_guide.md      # Detailed installation & setup guide
 ├── scripts/                       # Maintenance, migration, & automation scripts
-├── src/                           # Core application source code
+├── src/                           # Canonical Domain-Driven Design (DDD) Core
+│   ├── domain/                    # Pure business entities, policies, and domain services
+│   ├── application/               # Use cases, pipeline stages, and DTOs
+│   └── infrastructure/            # Adapters (AI SDKs, persistence, storage, exporters)
 ├── tests/                         # Automated test suite (unit, integration, e2e)
 ├── .env.example                   # Environment variable template (NO secrets)
 ├── .gitignore                     # Git exclusion rules (.venv, .env, build outputs, logs)

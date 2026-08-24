@@ -36,5 +36,7 @@
 - `documents`, `expense_receipts`, `expense_receipt_items`: Extracted transactional data
 - `api_call_logs`, `application_logs`: Observability & telemetry
 
-## 4. Test Suite
-- Run all tests: `python -m unittest discover tests -v` (42 tests, isolated DB cleanup)
+## 4. Test Suite (Modern Pytest + DDD Layering)
+- Run all tests: `pytest tests/ -v` (85 unit & integration tests)
+- Run unit tests (offline & in-memory): `pytest tests/unit -v`
+- Run integration tests (DB & pipeline): `pytest tests/integration -v`
