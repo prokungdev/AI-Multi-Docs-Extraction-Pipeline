@@ -25,8 +25,8 @@ from src.infrastructure.persistence import (
     update_document_metadata,
     update_document_to_approved,
     get_db_session,
-    Document,
-    ProcessedBatch,
+    ExtractedDocument,
+    Batch,
 )
 from sqlalchemy import select
 from src.application.dtos.document_dto import DocumentStatus
@@ -166,9 +166,9 @@ def post_process_document(
     try:
         with get_db_session() as session:
             stmt = (
-                select(ProcessedBatch.original_pdf_name)
-                .join(Document, Document.batch_id == ProcessedBatch.batch_id)
-                .where(Document.document_id == document_id)
+                select(Batch.original_filename)
+                .join(ExtractedDocument, ExtractedDocument.batch_id == Batch.batch_id)
+                .where(ExtractedDocument.document_id == document_id)
             )
             result = session.scalars(stmt).first()
             if result:

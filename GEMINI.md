@@ -26,3 +26,4 @@
 - ❌ **No Premature Edits on Advisory Requests**: Strict READ-ONLY mode on questions, RCA, or advice.
 - ❌ **No Malformed Notebooks**: `.ipynb` must strictly comply with **Jupyter v4.5+** (`nbformat: 4.5`) with unique cell `id`s.
 - ❌ **No Inline PowerShell Quotes**: Never execute `python -c "..."` with nested quotes on Windows PowerShell. Execute standalone `.py` scripts or `pytest` directly.
+- ❌ **No System Python for Tests**: Always invoke pytest via `.venv\Scripts\pytest.exe` (or activate `.venv` first). Never call bare `pytest` or `python -m pytest` without confirming the active interpreter is `.venv`.

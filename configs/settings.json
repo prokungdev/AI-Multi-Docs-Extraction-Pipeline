@@ -85,12 +85,12 @@
   },
   "ai_provider": {
     "active_provider": "gemini",
-    "billing_tier": "free",
+    "billing_tier": "paid",
     "max_retries": 3,
     "max_images_per_request": 50,
     "gemini": {
-      "model_name": "gemini-3.5-flash",
-      "api_key_env": "GEMINI_API_KEY_FREE",
+      "model_name": "gemini-3.5-flash-lite",
+      "api_key_env": "GEMINI_API_KEY",
       "billing_tier": "free",
       "max_concurrent_requests": 8
     },
@@ -104,6 +104,10 @@
   "ai_pricing": {
     "exchange_rate_thb": 36.0,
     "models": {
+      "gemini-3.5-flash-lite": {
+        "input_per_million": 0.0375,
+        "output_per_million": 0.15
+      },
       "gemini-3.5-flash": {
         "input_per_million": 0.075,
         "output_per_million": 0.3

@@ -8,7 +8,17 @@ from src.infrastructure.common.logger import logger
 from sqlalchemy import select, update, delete, or_, and_, desc, asc, func
 
 from .connection import get_db_session
-from .models import Company, ProcessedBatch, DocumentPage, Document, DocumentStatus, Merchant
+from .models import (
+    Company,
+    Batch,
+    BatchPage,
+    ExtractedDocument,
+    DocumentStatus,
+    Merchant,
+    ProcessedBatch,
+    DocumentPage,
+    Document,
+)
 from src.infrastructure.common.constants import DefaultIdentifier, DocumentStatusCode, SystemUserId
 
 DEFAULT_LOCK_TTL_SECONDS = 900  # 15 minutes Airline Ticket Hold duration

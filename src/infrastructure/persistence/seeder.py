@@ -21,6 +21,8 @@ from .models import (
     Company,
     DocumentStatus,
     User,
+    Batch,
+    ExtractedDocument,
     ProcessedBatch,
     Document,
     Merchant,
@@ -50,8 +52,8 @@ def seed_default_company(session) -> Company:
 
     # Backfill legacy records without company_id
     default_cid = default_company.company_id
-    session.execute(update(ProcessedBatch).where(ProcessedBatch.company_id.is_(None)).values(company_id=default_cid))
-    session.execute(update(Document).where(Document.company_id.is_(None)).values(company_id=default_cid))
+    session.execute(update(Batch).where(Batch.company_id.is_(None)).values(company_id=default_cid))
+    session.execute(update(ExtractedDocument).where(ExtractedDocument.company_id.is_(None)).values(company_id=default_cid))
     session.execute(update(Merchant).where(Merchant.company_id.is_(None)).values(company_id=default_cid))
     session.execute(update(ExpenseReceipt).where(ExpenseReceipt.company_id.is_(None)).values(company_id=default_cid))
 

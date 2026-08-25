@@ -54,8 +54,8 @@ class Company(Base, DictSerializableMixin):
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
     updated_at = Column(String(50), nullable=True)
 
-    batches = relationship("ProcessedBatch", back_populates="company", cascade="all, delete-orphan")
-    documents = relationship("Document", back_populates="company", cascade="all, delete-orphan")
+    batches = relationship("Batch", back_populates="company", cascade="all, delete-orphan")
+    documents = relationship("ExtractedDocument", back_populates="company", cascade="all, delete-orphan")
     merchants = relationship("Merchant", back_populates="company", cascade="all, delete-orphan")
     expense_receipts = relationship("ExpenseReceipt", back_populates="company", cascade="all, delete-orphan")
     api_call_logs = relationship("ApiCallLog", back_populates="company")
@@ -87,9 +87,9 @@ class DocumentStatus(Base, DictSerializableMixin):
     description = Column(Text, nullable=True)
 
 
-class ProcessedBatch(Base, DictSerializableMixin):
+class Batch(Base, DictSerializableMixin):
     """Processed document batch metadata model."""
-    __tablename__ = "processed_batches"
+    __tablename__ = "batches"
 
     batch_id = Column(String(100), primary_key=True)
     company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=True, index=True)
@@ -100,17 +100,17 @@ class ProcessedBatch(Base, DictSerializableMixin):
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
 
     company = relationship("Company", back_populates="batches")
-    documents = relationship("Document", back_populates="batch", cascade="all, delete-orphan")
-    pages = relationship("DocumentPage", back_populates="batch", cascade="all, delete-orphan")
+    documents = relationship("ExtractedDocument", back_populates="batch", cascade="all, delete-orphan")
+    pages = relationship("BatchPage", back_populates="batch", cascade="all, delete-orphan")
 
 
-class Document(Base, DictSerializableMixin):
-    """Document master model."""
-    __tablename__ = "documents"
+class ExtractedDocument(Base, DictSerializableMixin):
+    """Extracted and validated business document model."""
+    __tablename__ = "extracted_documents"
 
     document_id = Column(String(100), primary_key=True)
     company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=True, index=True)
-    batch_id = Column(String(100), ForeignKey("processed_batches.batch_id", ondelete="CASCADE"), nullable=False)
+    batch_id = Column(String(100), ForeignKey("batches.batch_id", ondelete="CASCADE"), nullable=False)
     doc_type_id = Column(String(100), nullable=False, default="expense_receipt")
     merchant_id = Column(String(36), ForeignKey("merchants.merchant_id", ondelete="SET NULL"), nullable=True, index=True)
     status_code = Column(String(50), ForeignKey("document_statuses.status_code"), nullable=False)
@@ -145,20 +145,20 @@ class Document(Base, DictSerializableMixin):
     updated_at = Column(String(50), nullable=True)
 
     company = relationship("Company", back_populates="documents")
-    batch = relationship("ProcessedBatch", back_populates="documents")
+    batch = relationship("Batch", back_populates="documents")
     merchant = relationship("Merchant", backref="documents")
     status = relationship("DocumentStatus")
-    pages = relationship("DocumentPage", back_populates="document")
+    pages = relationship("BatchPage", back_populates="document")
     expense_receipts = relationship("ExpenseReceipt", back_populates="document", cascade="all, delete-orphan")
 
 
-class DocumentPage(Base, DictSerializableMixin):
-    """Document page image model."""
-    __tablename__ = "document_pages"
+class BatchPage(Base, DictSerializableMixin):
+    """Batch physical page image model."""
+    __tablename__ = "batch_pages"
 
     page_id = Column(String(100), primary_key=True)
-    batch_id = Column(String(100), ForeignKey("processed_batches.batch_id", ondelete="CASCADE"), nullable=False)
-    document_id = Column(String(100), ForeignKey("documents.document_id", ondelete="SET NULL"), nullable=True)
+    batch_id = Column(String(100), ForeignKey("batches.batch_id", ondelete="CASCADE"), nullable=False)
+    document_id = Column(String(100), ForeignKey("extracted_documents.document_id", ondelete="SET NULL"), nullable=True)
     page_number = Column(Integer, nullable=False)
     chunk_index = Column(Integer, default=1, server_default="1", nullable=False)
     image_path = Column(String(500), nullable=False)
@@ -166,9 +166,15 @@ class DocumentPage(Base, DictSerializableMixin):
     error_reason = Column(Text, nullable=True)
     created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
 
-    batch = relationship("ProcessedBatch", back_populates="pages")
-    document = relationship("Document", back_populates="pages")
+    batch = relationship("Batch", back_populates="pages")
+    document = relationship("ExtractedDocument", back_populates="pages")
     status = relationship("DocumentStatus")
+
+
+# Backward-compatible model aliases
+ProcessedBatch = Batch
+DocumentPage = BatchPage
+Document = ExtractedDocument
 
 
 class Merchant(Base, DictSerializableMixin):
@@ -209,7 +215,7 @@ class ExpenseReceipt(Base, DictSerializableMixin):
 
     receipt_id = Column(String(100), primary_key=True)
     company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=True, index=True)
-    document_id = Column(String(100), ForeignKey("documents.document_id", ondelete="CASCADE"), nullable=False)
+    document_id = Column(String(100), ForeignKey("extracted_documents.document_id", ondelete="CASCADE"), nullable=False)
     merchant_id = Column(String(100), ForeignKey("merchants.merchant_id"), nullable=False)
     transaction_date = Column(String(50), nullable=True)
     merchant_name = Column(String(200), nullable=True)
@@ -225,7 +231,7 @@ class ExpenseReceipt(Base, DictSerializableMixin):
     updated_at = Column(String(50), nullable=True)
 
     company = relationship("Company", back_populates="expense_receipts")
-    document = relationship("Document", back_populates="expense_receipts")
+    document = relationship("ExtractedDocument", back_populates="expense_receipts")
     merchant = relationship("Merchant", back_populates="receipts")
     items = relationship("ExpenseReceiptItem", back_populates="receipt", cascade="all, delete-orphan")
 

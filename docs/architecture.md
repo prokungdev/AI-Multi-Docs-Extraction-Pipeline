@@ -36,14 +36,19 @@
 - **Lifecycle & Concurrency Architecture**:
   - **Lifecycle Finalization (`is_closed`)**: Atomic guard (`is_closed == 0`) seals approved/rejected documents against post-approval modifications.
   - **Airline Ticket Hold Concurrency (`is_locked`, `locked_by`, `locked_at`)**: 15-minute exclusive editing lease with heartbeat renewal and automatic expiration/release to prevent stale locks.
-  - **Smart Chunk Checkpointing (`document_pages.chunk_index`)**: Multi-page PDF extraction tracks chunk-level progress (`PENDING` ➔ `EXTRACTED` / `FAILED`), caching completed chunks and allowing instant resuming for failed segments.
+  - **Smart Chunk Checkpointing (`batch_pages.chunk_index`)**: Multi-page PDF extraction tracks chunk-level progress (`PENDING` ➔ `EXTRACTED` / `FAILED`), caching completed chunks and allowing instant resuming for failed segments.
 - **Entities**:
   - `companies`, `users`, `merchants`: Master entities, multi-tenant isolation, and RBAC foundation
-  - `processed_batches`, `document_pages` (`chunk_index`): Raw ingestion & chunk checkpoint tracking
-  - `documents` (`doc_type_id`, `merchant_id`), `expense_receipts`, `expense_receipt_items`: Extracted transactional data
+  - `batches`, `batch_pages` (`chunk_index`): Raw ingestion & chunk checkpoint tracking
+  - `extracted_documents` (`doc_type_id`, `merchant_id`), `expense_receipts`, `expense_receipt_items`: Extracted transactional data
   - `api_call_logs`, `application_logs`: Observability & telemetry
 
-## 4. Test Suite (Targeted Testing Protocol)
-- Run all tests: `pytest tests/ -v` (99 unit & integration tests, 100% Passed)
-- Run unit tests (offline & in-memory): `pytest tests/unit -v`
-- Run integration tests (DB & pipeline): `pytest tests/integration -v`
+## 4. Test Suite (Targeted Testing Protocol & Two-Tier Test Harness)
+- **Two-Tier Test Isolation Guard**:
+  - **Tier 1 (Root Guard `tests/conftest.py`)**: Session-level isolation redirecting all DB operations to temporary SQLite database, setting `TEST_ENVIRONMENT="1"` and `APP_ENV="testing"` to bypass disk logging DB sink.
+  - **Tier 2 (Integration Guard `tests/integration/conftest.py`)**: Package-level fixture initializing schema (`initialize_db_schema()`) and seeding master data (`seed_initial_data()`) exclusively for integration tests.
+- **Environment-Aware Logging Gateway**: Bypass DB sink during testing to eliminate SQLite lock contention and maximize execution speed.
+- **Targeted Test Commands**:
+  - Run all tests: `pytest tests/ -v` (99 unit & integration tests, 100% Passed)
+  - Run unit tests (offline & pure logic): `pytest tests/unit -v`
+  - Run integration tests (DB & pipeline): `pytest tests/integration -v`

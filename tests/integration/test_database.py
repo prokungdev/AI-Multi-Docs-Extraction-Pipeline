@@ -28,6 +28,9 @@ from sqlalchemy import select
 from src.infrastructure.persistence.connection import get_db_session, get_engine, get_database_url
 from src.infrastructure.persistence.models import (
     Base,
+    Batch,
+    BatchPage,
+    ExtractedDocument,
     ProcessedBatch,
     Document,
     DocumentStatus,

@@ -294,6 +294,12 @@ def split_and_match(
             }
         )
 
+    # Cleanup empty staging directories after processing
+    try:
+        storage_manager.cleanup_empty_staging_folders(company_code=comp_code, doc_type=target_doc_type)
+    except Exception as clean_err:
+        logger.warning(f"Note: Post-split staging folder cleanup encountered: {clean_err}")
+
     return results
 
 
@@ -329,6 +335,17 @@ def release_pending_merchant_files(
             
     logger.info(f"Moved {len(moved_files)} pending files for merchant '{folder_name}' (Company: {comp_code}) to approved raw data.")
     
+    # Safe cleanup of emptied pending folder
+    try:
+        if os.path.exists(pending_folder) and len([f for f in os.listdir(pending_folder) if not f.startswith(".")]) == 0:
+            for dotf in os.listdir(pending_folder):
+                os.remove(os.path.join(pending_folder, dotf))
+            os.rmdir(pending_folder)
+            logger.info(f"Removed emptied pending staging folder: '{pending_folder}'.")
+        storage_manager.cleanup_empty_staging_folders(company_code=comp_code, doc_type=target_doc_type)
+    except Exception as rm_err:
+        logger.warning(f"Could not remove emptied pending folder '{pending_folder}': {rm_err}")
+
     # Trigger split on moved files
     results = []
     for mf in moved_files:

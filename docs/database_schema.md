@@ -10,21 +10,21 @@
 erDiagram
     COMPANIES ||--o{ USERS : "has users"
     COMPANIES ||--o{ MERCHANTS : "manages"
-    COMPANIES ||--o{ PROCESSED_BATCHES : "owns"
-    COMPANIES ||--o{ DOCUMENTS : "owns"
+    COMPANIES ||--o{ BATCHES : "owns"
+    COMPANIES ||--o{ EXTRACTED_DOCUMENTS : "owns"
     COMPANIES ||--o{ EXPENSE_RECEIPTS : "owns"
     COMPANIES ||--o{ API_CALL_LOGS : "monitors"
 
-    PROCESSED_BATCHES ||--o{ DOCUMENTS : "splits into"
-    PROCESSED_BATCHES ||--o{ DOCUMENT_PAGES : "contains"
+    BATCHES ||--o{ EXTRACTED_DOCUMENTS : "splits into"
+    BATCHES ||--o{ BATCH_PAGES : "contains"
 
-    DOCUMENT_STATUSES ||--o{ DOCUMENTS : "tracks"
-    DOCUMENT_STATUSES ||--o{ DOCUMENT_PAGES : "tracks"
+    DOCUMENT_STATUSES ||--o{ EXTRACTED_DOCUMENTS : "tracks"
+    DOCUMENT_STATUSES ||--o{ BATCH_PAGES : "tracks"
 
-    MERCHANTS ||--o{ DOCUMENTS : "identifies"
+    MERCHANTS ||--o{ EXTRACTED_DOCUMENTS : "identifies"
     MERCHANTS ||--o{ EXPENSE_RECEIPTS : "supplies"
 
-    DOCUMENTS ||--o{ EXPENSE_RECEIPTS : "normalizes to"
+    EXTRACTED_DOCUMENTS ||--o{ EXPENSE_RECEIPTS : "normalizes to"
     EXPENSE_RECEIPTS ||--o{ EXPENSE_RECEIPT_ITEMS : "has line items"
 ```
 
@@ -77,7 +77,7 @@ erDiagram
 
 ---
 
-### 2.4 `processed_batches` (Raw Ingestion Batch Tracker)
+### 2.4 `batches` (Raw Ingestion Batch Tracker)
 | Column | Type | Nullable | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `batch_id` 🔑 | `VARCHAR(100)` | NO | PK | Prefixed ID (e.g. `batch_123`) |
@@ -90,12 +90,12 @@ erDiagram
 
 ---
 
-### 2.5 `document_pages` (Physical Page Image & Smart Chunk Checkpoint)
+### 2.5 `batch_pages` (Physical Page Image & Smart Chunk Checkpoint)
 | Column | Type | Nullable | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `page_id` 🔑 | `VARCHAR(100)` | NO | PK | Prefixed ID (e.g. `page_4c1e19d110ab`) |
-| `batch_id` 🌐 | `VARCHAR(100)` | NO | FK (`processed_batches.batch_id`) | Parent batch ID |
-| `document_id` 🌐 | `VARCHAR(100)` | YES | FK (`documents.document_id`) | Associated logical document |
+| `batch_id` 🌐 | `VARCHAR(100)` | NO | FK (`batches.batch_id`) | Parent batch ID |
+| `document_id` 🌐 | `VARCHAR(100)` | YES | FK (`extracted_documents.document_id`) | Associated logical document |
 | `page_number` | `INTEGER` | NO | - | 1-based physical page index |
 | `chunk_index` | `INTEGER` | NO | `1` | AI extraction chunk sequence for smart checkpoint/resuming |
 | `image_path` | `VARCHAR(500)` | NO | - | Relative disk path to preprocessed JPG image |
@@ -105,12 +105,12 @@ erDiagram
 
 ---
 
-### 2.6 `documents` (Master Extracted Documents & Concurrency Lease)
+### 2.6 `extracted_documents` (Master Extracted Documents & Concurrency Lease)
 | Column | Type | Nullable | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `document_id` 🔑 | `VARCHAR(100)` | NO | PK | Prefixed ID (e.g. `doc_c4e5a5799901`) |
 | `company_id` 🌐 | `VARCHAR(36)` | YES | FK (`companies.company_id`) | Tenant scope |
-| `batch_id` 🌐 | `VARCHAR(100)` | NO | FK (`processed_batches.batch_id`) | Parent batch |
+| `batch_id` 🌐 | `VARCHAR(100)` | NO | FK (`batches.batch_id`) | Parent batch |
 | `doc_type_id` | `VARCHAR(100)` | NO | `'expense_receipt'` | Document taxonomy type |
 | `merchant_id` 🌐 | `VARCHAR(36)` | YES | FK (`merchants.merchant_id`) | Identified merchant |
 | `status_code` 🌐 | `VARCHAR(50)` | NO | FK (`document_statuses.status_code`) | Workflow status (`PENDING`, `PROCESSED`, `APPROVED`, etc.) |

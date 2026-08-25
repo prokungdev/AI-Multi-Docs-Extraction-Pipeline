@@ -116,33 +116,40 @@ def setup_logger(settings_path: str = DefaultPath.SETTINGS) -> None:
     )
 
     # 5. Add Database Sink to capture application logs automatically via SQLAlchemy ORM
-    def db_sink(message):
-        try:
-            record = message.record
-            lvl = record["level"].name
-            text = record["message"]
-            module = record.get("module") or "app"
-            func = record.get("function") or "main"
-            created_at = record["time"].isoformat()
-
-            from src.infrastructure.persistence import get_log_db_session, ApplicationLog
-            with get_log_db_session() as session:
-                entry = ApplicationLog(
-                    level=lvl,
-                    message=text,
-                    module=module,
-                    function=func,
-                    created_at=created_at
-                )
-                session.add(entry)
-        except Exception:
-            pass
-
-    _backend_logger.add(
-        db_sink,
-        level=level,
-        enqueue=True
+    # In testing environment (TEST_ENVIRONMENT == "1" or APP_ENV == "testing"), bypass DB sink to eliminate disk I/O
+    is_test_env = (
+        os.environ.get("TEST_ENVIRONMENT") == "1"
+        or os.environ.get("APP_ENV", "").lower() == "testing"
     )
+
+    if not is_test_env:
+        def db_sink(message):
+            try:
+                record = message.record
+                lvl = record["level"].name
+                text = record["message"]
+                module = record.get("module") or "app"
+                func = record.get("function") or "main"
+                created_at = record["time"].isoformat()
+
+                from src.infrastructure.persistence import get_log_db_session, ApplicationLog
+                with get_log_db_session() as session:
+                    entry = ApplicationLog(
+                        level=lvl,
+                        message=text,
+                        module=module,
+                        function=func,
+                        created_at=created_at
+                    )
+                    session.add(entry)
+            except Exception:
+                pass
+
+        _backend_logger.add(
+            db_sink,
+            level=level,
+            enqueue=True
+        )
 
 
 # Automatically initialize logging engine

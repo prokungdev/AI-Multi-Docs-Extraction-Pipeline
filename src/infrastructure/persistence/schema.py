@@ -12,6 +12,9 @@ from .models import (
     DocumentStatus,
     ExpenseReceiptItem,
     ExpenseReceipt,
+    BatchPage,
+    ExtractedDocument,
+    Batch,
     DocumentPage,
     Document,
     ProcessedBatch,
@@ -42,7 +45,7 @@ def initialize_log_db_schema(settings_path: str = "configs/settings.json"):
 def initialize_db_schema(drop_and_recreate: bool = False):
     """
     Creates relational database schema for all operational models via SQLAlchemy Base Metadata
-    and performs lightweight schema migrations for newly added columns.
+    and performs lightweight schema migrations for newly added columns and renamed tables.
     If drop_and_recreate is True, drops all operational tables first for a clean fresh start.
     """
     try:
@@ -59,6 +62,21 @@ def initialize_db_schema(drop_and_recreate: bool = False):
                     conn.exec_driver_sql("PRAGMA foreign_keys = ON;")
                 else:
                     Base.metadata.drop_all(current_engine)
+
+        # 1. Pre-creation Table Renaming Migration (for SQLite)
+        with current_engine.connect() as conn:
+            try:
+                res = conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'")
+                existing_tables = set(r[0] for r in res.fetchall())
+                if "processed_batches" in existing_tables and "batches" not in existing_tables:
+                    conn.exec_driver_sql("ALTER TABLE processed_batches RENAME TO batches")
+                if "document_pages" in existing_tables and "batch_pages" not in existing_tables:
+                    conn.exec_driver_sql("ALTER TABLE document_pages RENAME TO batch_pages")
+                if "documents" in existing_tables and "extracted_documents" not in existing_tables:
+                    conn.exec_driver_sql("ALTER TABLE documents RENAME TO extracted_documents")
+                conn.commit()
+            except Exception as rename_err:
+                logger.debug(f"Table rename check note: {rename_err}")
 
         Base.metadata.create_all(current_engine)
 
@@ -94,53 +112,53 @@ def initialize_db_schema(drop_and_recreate: bool = False):
             except Exception as mig_err:
                 logger.debug(f"Merchants schema migration note: {mig_err}")
 
-            # 2. Documents table migrations
+            # 2. Extracted Documents table migrations
             try:
-                res = conn.exec_driver_sql("PRAGMA table_info(documents)")
+                res = conn.exec_driver_sql("PRAGMA table_info(extracted_documents)")
                 existing_cols = [row[1] for row in res.fetchall()]
                 if "domain_id" in existing_cols and "doc_type_id" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents RENAME COLUMN domain_id TO doc_type_id")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents RENAME COLUMN domain_id TO doc_type_id")
                 elif "doc_type_id" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN doc_type_id VARCHAR(100) DEFAULT 'expense_receipt'")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents ADD COLUMN doc_type_id VARCHAR(100) DEFAULT 'expense_receipt'")
 
                 if "source_id" in existing_cols and "merchant_id" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents RENAME COLUMN source_id TO merchant_id")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents RENAME COLUMN source_id TO merchant_id")
                 elif "merchant_id" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN merchant_id VARCHAR(36)")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents ADD COLUMN merchant_id VARCHAR(36)")
 
                 if "company_id" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN company_id VARCHAR(36)")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents ADD COLUMN company_id VARCHAR(36)")
                 if "is_closed" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN is_closed INTEGER DEFAULT 0")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents ADD COLUMN is_closed INTEGER DEFAULT 0")
                 if "is_locked" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN is_locked INTEGER DEFAULT 0")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents ADD COLUMN is_locked INTEGER DEFAULT 0")
                 if "locked_by" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN locked_by VARCHAR(36)")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents ADD COLUMN locked_by VARCHAR(36)")
                 if "locked_at" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN locked_at VARCHAR(50)")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents ADD COLUMN locked_at VARCHAR(50)")
                 if "is_auto_approved" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN is_auto_approved INTEGER DEFAULT 0")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents ADD COLUMN is_auto_approved INTEGER DEFAULT 0")
                 if "is_ambiguous" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN is_ambiguous INTEGER")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents ADD COLUMN is_ambiguous INTEGER")
                 if "cost_usd" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN cost_usd FLOAT DEFAULT 0.0")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents ADD COLUMN cost_usd FLOAT DEFAULT 0.0")
                 if "cost_thb" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN cost_thb FLOAT DEFAULT 0.0")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents ADD COLUMN cost_thb FLOAT DEFAULT 0.0")
                 if "is_free_tier" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN is_free_tier INTEGER DEFAULT 0")
+                    conn.exec_driver_sql("ALTER TABLE extracted_documents ADD COLUMN is_free_tier INTEGER DEFAULT 0")
             except Exception as mig_err:
-                logger.debug(f"Documents schema migration note: {mig_err}")
+                logger.debug(f"Extracted Documents schema migration note: {mig_err}")
 
-            # 3. Processed batches table migrations
+            # 3. Batches table migrations
             try:
-                res = conn.exec_driver_sql("PRAGMA table_info(processed_batches)")
+                res = conn.exec_driver_sql("PRAGMA table_info(batches)")
                 existing_cols = [row[1] for row in res.fetchall()]
                 if "company_id" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE processed_batches ADD COLUMN company_id VARCHAR(36)")
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN company_id VARCHAR(36)")
                 if "original_filename" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE processed_batches ADD COLUMN original_filename VARCHAR(255) DEFAULT 'document.pdf'")
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN original_filename VARCHAR(255) DEFAULT 'document.pdf'")
             except Exception as mig_err:
-                logger.debug(f"Processed Batches schema migration note: {mig_err}")
+                logger.debug(f"Batches schema migration note: {mig_err}")
 
             # 4. Expense receipts table migrations
             try:
@@ -166,14 +184,14 @@ def initialize_db_schema(drop_and_recreate: bool = False):
             except Exception as mig_err:
                 logger.debug(f"Api Call Logs schema migration note: {mig_err}")
 
-            # 6. Document pages table migrations
+            # 6. Batch pages table migrations
             try:
-                res = conn.exec_driver_sql("PRAGMA table_info(document_pages)")
+                res = conn.exec_driver_sql("PRAGMA table_info(batch_pages)")
                 existing_cols = [row[1] for row in res.fetchall()]
                 if "chunk_index" not in existing_cols:
-                    conn.exec_driver_sql("ALTER TABLE document_pages ADD COLUMN chunk_index INTEGER DEFAULT 1")
+                    conn.exec_driver_sql("ALTER TABLE batch_pages ADD COLUMN chunk_index INTEGER DEFAULT 1")
             except Exception as mig_err:
-                logger.debug(f"Document Pages schema migration note: {mig_err}")
+                logger.debug(f"Batch Pages schema migration note: {mig_err}")
 
             conn.commit()
 
@@ -194,9 +212,9 @@ def reset_pipeline_database(clear_documents_only: bool = True) -> dict:
             models_to_clear = [
                 ("expense_receipt_items", ExpenseReceiptItem),
                 ("expense_receipts", ExpenseReceipt),
-                ("document_pages", DocumentPage),
-                ("documents", Document),
-                ("processed_batches", ProcessedBatch),
+                ("batch_pages", BatchPage),
+                ("extracted_documents", ExtractedDocument),
+                ("batches", Batch),
                 ("api_call_logs", ApiCallLog)
             ]
             for tbl_name, model_cls in models_to_clear:

@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from sqlalchemy import select, update
 from src.infrastructure.persistence.connection import get_db_session
-from src.infrastructure.persistence.models import DocumentPage, ProcessedBatch, Document
+from src.infrastructure.persistence.models import BatchPage, Batch, ExtractedDocument
 from src.infrastructure.persistence.masters import insert_relational_receipt
 from src.infrastructure.common.constants import DocumentStatusCode, DefaultIdentifier, EntityIdPrefix, generate_entity_id
 from src.infrastructure.common.logger import logger
@@ -51,12 +51,12 @@ def seed_from_queue(storage_root: str = "pipeline_storage", domain: str = Defaul
 
                         # Match this page image to its database page record using Pure SQLAlchemy 2.0
                         stmt = select(
-                            DocumentPage,
-                            ProcessedBatch.original_filename
+                            BatchPage,
+                            Batch.original_filename
                         ).join(
-                            ProcessedBatch, DocumentPage.batch_id == ProcessedBatch.batch_id
+                            Batch, BatchPage.batch_id == Batch.batch_id
                         ).where(
-                            DocumentPage.image_path.like(f"%/{image_basename}.png")
+                            BatchPage.image_path.like(f"%/{image_basename}.png")
                         )
                         result = session.execute(stmt).first()
 
@@ -87,11 +87,11 @@ def seed_from_queue(storage_root: str = "pipeline_storage", domain: str = Defaul
                                 payment_method = payload.get("payment_method", "")
                                 search_text = f"{doc_number} {entity_name} {tax_id} {payment_method}".strip()
 
-                                new_doc = Document(
+                                new_doc = ExtractedDocument(
                                     document_id=doc_id,
                                     batch_id=batch_id,
-                                    domain_id=domain,
-                                    source_id=source or DefaultIdentifier.NO_TAX_ID,
+                                    doc_type_id=domain,
+                                    merchant_id=source or DefaultIdentifier.NO_TAX_ID,
                                     status_code=status_code,
                                     doc_number=doc_number,
                                     doc_date=doc_date,
