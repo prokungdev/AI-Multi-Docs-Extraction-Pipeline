@@ -24,3 +24,5 @@ uvicorn[standard]>=0.28.0
 # Interactive Jupyter Notebooks & Development
 ipykernel>=6.20.0
 
+# Testing Utilities
+pytest-timeout>=2.1.0

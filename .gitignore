@@ -68,13 +68,30 @@ storage/**
 # Ignore dynamic company workspaces created at runtime
 storage/companies/*
 
-# Explicitly keep and track C00000_SAMPLE template workspace and sample assets
+# Explicitly keep template workspace C00000_SAMPLE directory structure
 !storage/companies/C00000_SAMPLE/
-!storage/companies/C00000_SAMPLE/**
+!storage/companies/C00000_SAMPLE/**/
 
-# Exclude SQLite Database files explicitly
+# Track ONLY 01_drop_zone and 02_raw_data contents
+!storage/companies/C00000_SAMPLE/**/01_drop_zone/**
+!storage/companies/C00000_SAMPLE/**/02_raw_data/**
+
+# Ignore runtime staging stages (03_preprocess, 04_processing, 05_archive, 06_output)
+storage/**/03_preprocess/*
+storage/**/04_processing/*
+storage/**/05_archive/*
+storage/**/06_output/*
+!storage/**/03_preprocess/.gitkeep
+!storage/**/04_processing/.gitkeep
+!storage/**/05_archive/.gitkeep
+!storage/**/06_output/.gitkeep
+
+# Exclude SQLite Database files and lock files explicitly
 storage/**/pipeline.db
 storage/**/*.db
+storage/**/*.db-shm
+storage/**/*.db-wal
+storage/**/*.lock
 
 
 

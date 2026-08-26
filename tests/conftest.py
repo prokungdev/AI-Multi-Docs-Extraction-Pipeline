@@ -12,6 +12,18 @@ import pytest
 import tempfile
 from pathlib import Path
 
+
+def pytest_configure(config):
+    """
+    Set test environment variables BEFORE any test module is imported.
+    This is the earliest pytest hook — runs before conftest fixtures and before
+    any src module import, preventing Loguru db_sink (enqueue=True) from being
+    registered and causing pytest teardown to hang indefinitely.
+    """
+    os.environ["TEST_ENVIRONMENT"] = "1"
+    os.environ["APP_ENV"] = "testing"
+
+
 # Ensure project root is in sys.path for test discovery
 _project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
@@ -50,6 +62,14 @@ def global_test_database_guard():
     # Teardown: Close all connections and remove temporary session database
     dispose_all_engines()
     gc.collect()
+
+    # Flush & stop Loguru background enqueue thread
+    # ป้องกัน pytest ค้างที่ teardown เมื่อรันใน non-TTY environment (AI/CI)
+    try:
+        from loguru import logger as _loguru_backend
+        _loguru_backend.remove()
+    except Exception:
+        pass
 
     if original_override is not None:
         os.environ["DB_PATH_OVERRIDE"] = original_override
