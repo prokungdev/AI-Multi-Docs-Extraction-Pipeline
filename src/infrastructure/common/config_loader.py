@@ -267,15 +267,18 @@ def get_ai_provider_config(settings: dict = None) -> dict:
     if not model_name:
         raise ValueError(f"Missing required 'model_name' for AI provider '{active_provider}' in settings.")
 
-    api_key_env = provider_details.get("api_key_env")
+    billing_tier = ai_cfg.get("billing_tier", "free").strip().lower()
+    target_key = f"api_key_env_{billing_tier}"
+    api_key_env = provider_details.get(target_key)
     if not api_key_env:
-        raise ValueError(f"Missing required 'api_key_env' for AI provider '{active_provider}' in settings.")
+        raise ValueError(f"Missing required '{target_key}' for AI provider '{active_provider}' (billing_tier='{billing_tier}') in settings.")
 
     max_images = ai_cfg.get("max_images_per_request", settings.get("max_images_per_request", 50))
     max_concurrent = provider_details.get("max_concurrent_requests", provider_details.get("concurrency", 8))
 
     return {
         "active_provider": active_provider,
+        "billing_tier": billing_tier,
         "max_retries": int(ai_cfg.get("max_retries", 3)),
         "max_images_per_request": int(max_images),
         "model_name": model_name,

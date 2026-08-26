@@ -4,6 +4,7 @@ Uses pytest parameterization and clean AAA pattern.
 """
 
 import os
+import json
 import tempfile
 import uuid
 import pytest
@@ -14,7 +15,7 @@ from src.domain.policies.validators import (
     FinancialMathValidator,
     ValidationStrategyEngine,
 )
-from src.infrastructure.ai.cost_estimator import calculate_api_cost, format_cost_display
+from src.infrastructure.ai.cost_estimator import calculate_api_cost, format_cost_display, get_pricing_config
 from src.infrastructure.ai.ai_service import AIService
 from src.infrastructure.exporters.registry import get_exporter, list_exporters
 
@@ -136,6 +137,15 @@ def test_format_cost_display():
     assert "nominal" in free_str
 
 
+def test_get_pricing_config_resolution():
+    """Verify that get_pricing_config resolves billing_tier and model prices accurately."""
+    cfg = get_pricing_config()
+    assert "billing_tier" in cfg
+    assert cfg["billing_tier"] in ("free", "paid")
+    assert cfg["exchange_rate_thb"] > 0
+    assert "models" in cfg
+
+
 # ==============================================================================
 # AI Service & Exporter Strategy Tests
 # ==============================================================================
@@ -149,6 +159,32 @@ def test_ai_service_initialization():
     assert service.active_provider == "gemini"
     assert service.max_retries >= 1
     assert service.default_model is not None
+    assert service.api_key_env == "GEMINI_API_KEY_FREE"
+
+
+def test_ai_service_paid_tier_missing_key_fails_fast(monkeypatch, tmp_path):
+    """Test that paid tier without GEMINI_API_KEY_PAID fails fast with ValueError."""
+    # Arrange
+    monkeypatch.delenv("GEMINI_API_KEY_PAID", raising=False)
+    paid_settings = {
+        "ai_provider": {
+            "active_provider": "gemini",
+            "billing_tier": "paid",
+            "gemini": {
+                "model_name": "gemini-3.5-flash-lite",
+                "api_key_env_free": "GEMINI_API_KEY_FREE",
+                "api_key_env_paid": "GEMINI_API_KEY_PAID"
+            }
+        }
+    }
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps(paid_settings), encoding="utf-8")
+
+    service = AIService(settings_path=str(settings_file))
+
+    # Act & Assert
+    with pytest.raises(ValueError, match="is not set in environment or .env file"):
+        service.get_client()
 
 
 def test_exporter_registry_lookup():

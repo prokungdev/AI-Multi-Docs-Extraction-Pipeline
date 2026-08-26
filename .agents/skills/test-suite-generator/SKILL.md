@@ -24,11 +24,17 @@ When executed, the generated test suites MUST adhere to the following principles
 3. **🛡️ Zero-Tolerance Dual Test Isolation (Database + Storage Isolation)**:
    - **Database Isolation (Zero DB Leakage)**: All tests interacting with a database MUST execute against an isolated temporary database (via environment variable override, isolated temporary SQLite file, or In-Memory database). NEVER connect or perform CRUD operations against development, staging, or production database instances.
    - **File & Storage Isolation (Zero Storage Pollution)**: NEVER write test artifacts, temporary mock images, test PDFs, or dummy settings into the project's real storage root directory. All test file generation MUST use the operating system's standard temporary directory (`tempfile.mkdtemp()` or test runner temporary path fixtures).
-   - **Guaranteed Resource Teardown**: Every test class creating databases or files MUST implement explicit cleanup in `tearDownClass` / `tearDown` (e.g. `shutil.rmtree()`, disposing database connection pools/engines, and forcing garbage collection to release OS file locks on Windows).
+   - **Guaranteed Resource & Environment Teardown (Zero State Leakage)**: Every test class creating databases, temporary directories, or overriding environment variables MUST implement explicit cleanup in `tearDownClass` / `tearDown` (e.g. `shutil.rmtree()`, disposing database connection pools/engines, restoring original `os.environ` keys, or using test runner fixtures like `monkeypatch` to prevent state leakage across test suites).
+   - **Pre-Initialized Test Schemas**: Session-level test database fixtures must guarantee that database schemas and DDL tables are pre-initialized so isolated unit tests never encounter missing table errors.
 4. **Decoupled & Generic Test Data**:
    - **Domain Agnostic**: NEVER hardcode specific company names, vendor IDs, or environment-specific folder names in test code.
    - **Generic Mock Identifiers**: Use generic placeholders (e.g. `mock_source`, `sample_entity`, `test_vendor_01`) or resolve parameters dynamically from project configuration.
-5. **Test Naming Convention**:
+5. **Lean Test Runner Configuration**:
+   - Keep test runner options (e.g. `pytest.ini`) lean and free of third-party plugin flags that are not installed in the core virtual environment (e.g., avoid uninstalled `--timeout` flags).
+6. **Two-Tier Verification Protocol (Fast Feedback Loop)**:
+   - **Targeted Testing (Execution Phase)**: During active development and bug fixing, execute only the specific test files or test functions related to the modified modules for sub-second feedback.
+   - **Full Regression Testing (Post-Execution)**: Execute the full project test suite as a final verification step prior to committing or concluding the task.
+7. **Test Naming Convention**:
    - Use clear, descriptive test function names, e.g. `test_process_input_success()`, `test_validate_record_invalid_format_returns_false()`.
 
 ---

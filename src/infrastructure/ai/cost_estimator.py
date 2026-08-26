@@ -23,7 +23,7 @@ DEFAULT_EXCHANGE_RATE_THB: float = 36.0
 def get_pricing_config() -> Dict[str, Any]:
     """
     Loads AI pricing configuration from settings.json, resolving billing_tier
-    directly from the active ai_provider (Single Source of Truth).
+    from the global ai_provider configuration with fallback to paid tier.
     """
     try:
         settings = load_system_settings()

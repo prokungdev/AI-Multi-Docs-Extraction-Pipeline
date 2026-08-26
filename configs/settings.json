@@ -85,20 +85,14 @@
   },
   "ai_provider": {
     "active_provider": "gemini",
-    "billing_tier": "paid",
+    "billing_tier": "free",
     "max_retries": 3,
     "max_images_per_request": 50,
     "gemini": {
       "model_name": "gemini-3.5-flash-lite",
-      "api_key_env": "GEMINI_API_KEY",
-      "billing_tier": "free",
+      "api_key_env_free": "GEMINI_API_KEY_FREE",
+      "api_key_env_paid": "GEMINI_API_KEY_PAID",
       "max_concurrent_requests": 8
-    },
-    "openai": {
-      "model_name": "gpt-4o",
-      "api_key_env": "OPENAI_API_KEY",
-      "billing_tier": "paid",
-      "max_concurrent_requests": 3
     }
   },
   "ai_pricing": {
