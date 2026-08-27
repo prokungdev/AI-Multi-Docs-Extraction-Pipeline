@@ -33,6 +33,7 @@ class AIService:
         settings = load_system_settings(self.settings_path)
         ai_cfg = settings.get("ai_provider", {})
         self.active_provider = ai_cfg.get("active_provider", "gemini").lower()
+        self.billing_tier = ai_cfg.get("billing_tier", "free").strip().lower()
         self.max_retries = int(ai_cfg.get("max_retries", 3))
         self.max_images_per_request = int(ai_cfg.get("max_images_per_request", 50))
         
@@ -41,9 +42,10 @@ class AIService:
         if not self.default_model:
             raise ValueError(f"Missing required 'model_name' for AI provider '{self.active_provider}' in {self.settings_path}")
 
-        self.api_key_env = provider_cfg.get("api_key_env")
+        target_key = f"api_key_env_{self.billing_tier}"
+        self.api_key_env = provider_cfg.get(target_key)
         if not self.api_key_env:
-            raise ValueError(f"Missing required 'api_key_env' for AI provider '{self.active_provider}' in {self.settings_path}")
+            raise ValueError(f"Missing required '{target_key}' for AI provider '{self.active_provider}' (billing_tier='{self.billing_tier}') in {self.settings_path}")
 
         self.api_key = os.getenv(self.api_key_env, "").strip()
         self._client = None  # Invalidate cached client on config reload

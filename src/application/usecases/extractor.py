@@ -184,9 +184,11 @@ def extract_document_data(
     # 4. Resolve active credentials from settings
     ai_provider_cfg = settings.get("ai_provider", {})
     provider_cfg = ai_provider_cfg.get(provider, {})
-    default_env_var = provider_cfg.get("api_key_env")
+    billing_tier = ai_provider_cfg.get("billing_tier", "free").strip().lower()
+    target_key = f"api_key_env_{billing_tier}"
+    default_env_var = provider_cfg.get(target_key)
     if not default_env_var:
-        raise ValueError(f"Missing required 'api_key_env' for AI provider '{provider}' in {settings_path}")
+        raise ValueError(f"Missing required '{target_key}' for AI provider '{provider}' (billing_tier='{billing_tier}') in {settings_path}")
 
     credentials = [{
         "credential_id": "default",

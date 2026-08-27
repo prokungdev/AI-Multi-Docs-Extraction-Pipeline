@@ -155,7 +155,7 @@ def validate_environment(settings_path: str = DefaultPath.SETTINGS) -> list[str]
     settings = load_system_settings(settings_path)
     ai_cfg = get_ai_provider_config(settings)
     active_provider = ai_cfg.get("active_provider", "gemini")
-    api_key_env = ai_cfg.get("api_key_env", f"{active_provider.upper()}_API_KEY")
+    api_key_env = ai_cfg.get("api_key_env")
     
     # 2. Check .env file
     if not os.path.exists(".env"):

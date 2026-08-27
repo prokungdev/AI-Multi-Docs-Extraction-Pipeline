@@ -1,5 +1,5 @@
 from typing import List, Dict, Optional, Any
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 
 class DocTypeFilesConfigModel(BaseModel):
@@ -73,13 +73,21 @@ class ValidationThresholdsConfigModel(BaseModel):
         return v
 
 
+class GeminiConfigModel(BaseModel):
+    model_name: str = "gemini-3.5-flash-lite"
+    api_key_env_free: str = "GEMINI_API_KEY_FREE"
+    api_key_env_paid: str = "GEMINI_API_KEY_PAID"
+    max_concurrent_requests: int = 8
+
+
 class AIProviderConfigModel(BaseModel):
-    active_provider: str
-    billing_tier: str = "paid"
+    model_config = ConfigDict(extra="allow")
+
+    active_provider: str = "gemini"
+    billing_tier: str = "free"
     max_retries: int = 3
     max_images_per_request: int = 50
-    gemini: Dict[str, Any] = Field(default_factory=dict)
-    openai: Dict[str, Any] = Field(default_factory=dict)
+    gemini: GeminiConfigModel = Field(default_factory=GeminiConfigModel)
 
 
 class SQLiteConfigModel(BaseModel):
@@ -129,8 +137,13 @@ class SystemSettingsModel(BaseModel):
         # 2. AI Pricing Parity Check
         active_p = self.ai_provider.active_provider
         provider_cfg = getattr(self.ai_provider, active_p, {})
-        if isinstance(provider_cfg, dict) and provider_cfg.get("model_name"):
-            model_name = provider_cfg["model_name"]
+        model_name = None
+        if isinstance(provider_cfg, dict):
+            model_name = provider_cfg.get("model_name")
+        elif hasattr(provider_cfg, "model_name"):
+            model_name = getattr(provider_cfg, "model_name")
+
+        if model_name:
             pricing_models = self.ai_pricing.get("models", {})
             if pricing_models and model_name not in pricing_models:
                 raise ValueError(

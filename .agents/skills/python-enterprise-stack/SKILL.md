@@ -220,6 +220,14 @@ To ensure rock-solid production readiness and fail-fast guarantees:
 ### 4. Bidirectional Asset & Schema Sync
 - Verify that active features, templates, or domain types declared in configuration files have corresponding physical asset directories and schema definitions on disk, while flagging orphaned assets.
 
+### 5. Single Point of Control & Multi-Vendor Extensible Schema
+- For multi-vendor / multi-provider configurations (e.g. AI engines, payment gateways, cloud storage providers), centralize operational control switches (e.g., active provider, billing tier, environment profile) at a single top-level configuration key to avoid scattered duplicate knobs.
+- Utilize extensible schema patterns (`ConfigDict(extra="allow")` in Pydantic v2) paired with typed submodels for active providers so future providers can be registered without rigid schema breaking changes.
+
+### 6. Safe Polymorphic Attribute Access Across DTO Layers
+- When validating or reading attributes from configuration objects that may dynamically resolve as either Pydantic `BaseModel` instances or raw `dict` payloads, avoid rigid type assertions (`isinstance(obj, dict)`).
+- Use safe polymorphic attribute resolution (`getattr(obj, "field", None)` if not `dict` else `obj.get("field")`) or `.model_dump()` to prevent subtle validation bypasses.
+
 ---
 
 ## 9. Canonical 4-Layer Domain-Driven Design (DDD) Architecture

@@ -31,6 +31,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from src.infrastructure.persistence.connection import dispose_all_engines
+from src.infrastructure.persistence.schema import initialize_db_schema
 from src.infrastructure.common.logger import setup_logger
 
 
@@ -72,6 +73,9 @@ def global_test_database_guard():
 
     # Re-initialize logger to register test environment settings (bypassing DB sink)
     setup_logger()
+
+    # Initialize isolated schema in temporary test database
+    initialize_db_schema()
 
     yield session_db_path
 
