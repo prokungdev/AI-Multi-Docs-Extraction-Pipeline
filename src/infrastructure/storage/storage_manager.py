@@ -31,8 +31,11 @@ class StoragePathManager:
 
     @property
     def root(self) -> str:
-        """Returns normalized root storage path."""
-        return self.storage_root.replace("\\", "/")
+        """Returns normalized root storage path, dynamically evaluating environment overrides."""
+        override = os.environ.get("STORAGE_ROOT_OVERRIDE")
+        if override and override.strip():
+            return override.strip().replace("\\", "/")
+        return (self.storage_root or DefaultPath.STORAGE_ROOT).replace("\\", "/")
 
     def get_database_dir(self) -> str:
         """Returns the central SQLite database directory (storage/database)."""

@@ -65,20 +65,20 @@ class TaxIDValidator(BaseValidator):
         needs_review = False
         reasons = []
         context = context or {}
-        source = context.get("source", "NO_TAX_LABEL")
+        merchant_id = context.get("merchant_id") or context.get("source", "NO_TAX_LABEL")
         allowed_tax_ids = context.get("allowed_tax_ids", [])
 
         merchant_obj = payload.get("merchant", {})
         extracted_tax_id = merchant_obj.get("tax_id") or payload.get("tax_id", "")
         clean_tax_id = str(extracted_tax_id).replace(" ", "").replace("-", "").strip() if extracted_tax_id else ""
 
-        if source not in ("NO_TAXID", "NO_TAX_LABEL") and allowed_tax_ids:
+        if merchant_id not in ("NO_TAXID", "NO_TAX_LABEL") and allowed_tax_ids:
             if not clean_tax_id:
                 needs_review = True
-                reasons.append(f"Missing merchant tax ID for source '{source}'")
+                reasons.append(f"Missing merchant tax ID for merchant '{merchant_id}'")
             elif clean_tax_id not in allowed_tax_ids:
                 needs_review = True
-                reasons.append(f"Merchant tax ID '{extracted_tax_id}' does not match allowed list for '{source}'")
+                reasons.append(f"Merchant tax ID '{extracted_tax_id}' does not match allowed list for '{merchant_id}'")
 
         return payload, needs_review, reasons
 

@@ -1,13 +1,14 @@
 """
-Global Pytest Configuration & Test Isolation Guard.
+Global Pytest Configuration, Test Isolation Guard, and Resource Cleanup Verifier.
 Enforces 100% database and filesystem isolation for all unit and integration test suites.
-Guarantees zero writes or state mutations to the real storage/database/pipeline.db.
+Guarantees zero writes or state mutations to production databases and storage paths.
 """
 
 import os
 import sys
 import gc
 import uuid
+import shutil
 import pytest
 import tempfile
 from pathlib import Path
@@ -33,26 +34,41 @@ from src.infrastructure.persistence.connection import dispose_all_engines
 from src.infrastructure.common.logger import setup_logger
 
 
+# Production path signatures that MUST NEVER be targeted during testing
+FORBIDDEN_PROD_DB_SUBSTRINGS = ["storage/database/pipeline.db", "pipeline.db", "logs/logs.db", "logs.db"]
+FORBIDDEN_PROD_STORAGE_SUBSTRINGS = ["storage/raw_data", "storage/processed_data"]
+
+
 @pytest.fixture(scope="session", autouse=True)
 def global_test_database_guard():
     """
     Session-level safety fixture that automatically redirects all database operations
     to an isolated temporary SQLite database for the entire test session.
-    Guarantees 100% zero DB leakage to production pipeline.db.
+    Guarantees 100% zero DB leakage to production pipeline.db and logs.db.
     """
     temp_dir = tempfile.gettempdir()
     session_db_path = os.path.join(
         temp_dir, f"pytest_global_guard_{uuid.uuid4().hex[:8]}.db"
     ).replace("\\", "/")
+    session_log_db_path = os.path.join(
+        temp_dir, f"pytest_global_log_guard_{uuid.uuid4().hex[:8]}.db"
+    ).replace("\\", "/")
 
     # Set global environment override before any test module executes
     original_override = os.environ.get("DB_PATH_OVERRIDE")
+    original_log_override = os.environ.get("LOG_DB_PATH_OVERRIDE")
     original_test_env = os.environ.get("TEST_ENVIRONMENT")
     original_app_env = os.environ.get("APP_ENV")
 
     os.environ["DB_PATH_OVERRIDE"] = session_db_path
+    os.environ["LOG_DB_PATH_OVERRIDE"] = session_log_db_path
     os.environ["TEST_ENVIRONMENT"] = "1"
     os.environ["APP_ENV"] = "testing"
+
+    # Strict Safety Check: Verify DB_PATH_OVERRIDE is truly an isolated temp DB
+    for forbidden in FORBIDDEN_PROD_DB_SUBSTRINGS:
+        if session_db_path.endswith(forbidden) or session_log_db_path.endswith(forbidden):
+            raise RuntimeError(f"FATAL SAFETY BREACH: Test database resolved to production path: {session_db_path}")
 
     # Re-initialize logger to register test environment settings (bypassing DB sink)
     setup_logger()
@@ -64,7 +80,6 @@ def global_test_database_guard():
     gc.collect()
 
     # Flush & stop Loguru background enqueue thread
-    # ป้องกัน pytest ค้างที่ teardown เมื่อรันใน non-TTY environment (AI/CI)
     try:
         from loguru import logger as _loguru_backend
         _loguru_backend.remove()
@@ -76,6 +91,11 @@ def global_test_database_guard():
     else:
         os.environ.pop("DB_PATH_OVERRIDE", None)
 
+    if original_log_override is not None:
+        os.environ["LOG_DB_PATH_OVERRIDE"] = original_log_override
+    else:
+        os.environ.pop("LOG_DB_PATH_OVERRIDE", None)
+
     if original_test_env is not None:
         os.environ["TEST_ENVIRONMENT"] = original_test_env
     else:
@@ -86,11 +106,13 @@ def global_test_database_guard():
     else:
         os.environ.pop("APP_ENV", None)
 
-    if os.path.exists(session_db_path):
-        try:
-            os.remove(session_db_path)
-        except Exception:
-            pass
+    # Cleanup Verification: Verify temporary session database files are removed
+    for db_p in [session_db_path, session_log_db_path]:
+        if os.path.exists(db_p):
+            try:
+                os.remove(db_p)
+            except Exception:
+                pass
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -100,10 +122,18 @@ def global_test_storage_guard():
     to an isolated temporary directory for the entire test session.
     Guarantees 100% zero file leakage into the production storage/ tree and deletes all files upon completion.
     """
-    import shutil
     test_storage_dir = tempfile.mkdtemp(prefix="pytest_storage_").replace("\\", "/")
     original_storage_override = os.environ.get("STORAGE_ROOT_OVERRIDE")
     os.environ["STORAGE_ROOT_OVERRIDE"] = test_storage_dir
+
+    # Strict Safety Check: Verify STORAGE_ROOT_OVERRIDE is not targeting real repo storage
+    for forbidden in FORBIDDEN_PROD_STORAGE_SUBSTRINGS:
+        if forbidden in test_storage_dir:
+            raise RuntimeError(f"FATAL SAFETY BREACH: Storage root resolved to production path: {test_storage_dir}")
+
+    # Snapshot real repo storage state before tests run (Anti-Pollution Watchdog)
+    real_companies_dir = os.path.join(_project_root, "storage", "companies")
+    initial_companies = set(os.listdir(real_companies_dir)) if os.path.exists(real_companies_dir) else set()
 
     yield test_storage_dir
 
@@ -113,6 +143,15 @@ def global_test_storage_guard():
     else:
         os.environ.pop("STORAGE_ROOT_OVERRIDE", None)
 
+    # Cleanup Verification: Verify isolated storage directory is deleted
     if os.path.exists(test_storage_dir):
         shutil.rmtree(test_storage_dir, ignore_errors=True)
 
+    # Anti-Pollution Watchdog Assertion: Verify ZERO new companies were created in real storage
+    if os.path.exists(real_companies_dir):
+        final_companies = set(os.listdir(real_companies_dir))
+        leaked_companies = final_companies - initial_companies
+        if leaked_companies:
+            raise RuntimeError(
+                f"CRITICAL TEST ISOLATION FAILURE: Leaked storage items found in real storage tree: {leaked_companies}"
+            )

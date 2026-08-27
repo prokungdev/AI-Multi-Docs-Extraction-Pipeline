@@ -229,27 +229,27 @@ To avoid monolithic architectures or flat package layouts, enterprise Python cod
 ```text
 src/
 ├── domain/                      # 1. DOMAIN LAYER (Pure Business Logic & Models)
-│   ├── entities/                # Business Entities & Aggregates (e.g. Document, Company, Merchant)
-│   ├── policies/                # Business Rules, Specifications & Math Validation (e.g. TaxPolicy, MathRule)
-│   ├── services/                # Pure Domain Services (e.g. ClassifierService, NormalizerService)
+│   ├── entities/                # Business Entities & Aggregates (e.g. User, Order, Invoice, Account)
+│   ├── policies/                # Business Rules, Specifications & Math Validation (e.g. PricingPolicy, MathRule)
+│   ├── services/                # Pure Domain Services (e.g. ValidationEngine, NormalizerService)
 │   └── repositories/            # Abstract Repository Interfaces (Contracts)
 │
 ├── application/                 # 2. APPLICATION LAYER (Use Cases & Orchestration)
 │   ├── pipeline/                # Sequential Workflow Stages (Stage 0 -> Stage N) & Coordinators
-│   ├── usecases/                # Application Interactors (e.g. IngestUseCase, ExtractUseCase, ExportUseCase)
+│   ├── usecases/                # Application Interactors (e.g. IngestUseCase, ProcessUseCase, ExportUseCase)
 │   └── dtos/                    # Pydantic v2 Data Transfer Objects (DTOs) & Request/Response Contracts
 │
 ├── infrastructure/              # 3. INFRASTRUCTURE LAYER (Technical Adapters & External Systems)
-│   ├── ai/                      # LLM Provider Clients, Token Engines, Cost Estimators
-│   ├── pdf/                     # PyMuPDF Document Renderers, Pillow Image Splitting & Optimization
+│   ├── ai/                      # AI / LLM Provider Clients, Token Engines, Cost Estimators
+│   ├── io/                      # Document Renderers, File Splitting & Media Processing Adapters
 │   ├── persistence/             # Pure SQLAlchemy 2.0 ORM Models, Database Sessions, Schema DDL
-│   ├── storage/                 # Multi-tenant Local Disk / Cloud Storage Managers
-│   ├── exporters/               # Output Strategy Adapters (Express PV, JSON, CSV, Registry)
+│   ├── storage/                 # Multi-tenant Local Disk / Cloud Storage Adapters
+│   ├── exporters/               # Output Strategy Adapters (JSON, CSV, Parquet, Formats Registry)
 │   └── common/                  # Dual Logger, Constants, Config Loader, Healthcheck Probes
 │
 └── apps/ (or interfaces/)       # 4. PRESENTATION / DELIVERY LAYER (User Interfaces)
     ├── api/                     # FastAPI REST API Endpoints & Dependency Injection
-    ├── streamlit/               # Web UI Dashboard & Interactive Interfaces
+    ├── ui/                      # Web UI Dashboard & Interactive Interfaces
     └── cli/                     # CLI Console Runners (e.g. main.py)
 ```
 

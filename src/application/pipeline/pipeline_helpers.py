@@ -2,7 +2,7 @@ import copy
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 from src.application.dtos.document_dto import DocumentStatus, ReviewPriority
-from src.domain.services.post_processor import apply_source_rules
+from src.domain.policies.validators import ValidationStrategyEngine
 from src.infrastructure.storage.storage_manager import StoragePathManager, storage_manager
 from src.infrastructure.common.config_loader import get_validation_thresholds
 from src.infrastructure.common.constants import (
@@ -112,11 +112,11 @@ def merge_chunk_payloads(payloads: list[dict]) -> dict:
 def validate_and_process_payload(
     payload: dict,
     doc_type: str = None,
-    source: str = None,
+    merchant_id: str = None,
     settings_path: str = DefaultPath.SETTINGS
 ) -> tuple[dict, str, list[str]]:
     """
-    Applies source validation rules, financial math checks, and sets review priority
+    Applies domain validation strategies, financial math checks, and sets review priority
     using strictly configured thresholds from settings.json.
     """
     validation_notes = []
@@ -127,10 +127,14 @@ def validate_and_process_payload(
     confidence_low = float(thresholds["confidence_low"])
     confidence_review = float(thresholds["confidence_review"])
 
-    # 1. Apply Merchant Rules (Tax ID, Date BE->AD, Default Categories/Units)
-    processed_payload, req_review, review_reason = apply_source_rules(payload, doc_type=target_dt, source=source)
-    if req_review and review_reason:
-        validation_notes.append(review_reason)
+    # 1. Apply Domain Validation Strategies (Date Normalization, Tax ID, Financial Math)
+    engine = ValidationStrategyEngine()
+    processed_payload, req_review, reasons = engine.run_validation(
+        payload,
+        context={"doc_type": target_dt, "merchant_id": merchant_id}
+    )
+    if req_review and reasons:
+        validation_notes.extend(reasons)
 
     # 2. Mathematical Validation Checks
     fin = processed_payload.get("totals") or processed_payload.get("financial_summary", {})

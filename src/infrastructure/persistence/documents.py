@@ -193,8 +193,6 @@ def create_document(
     batch_id: str,
     doc_type_id: str = None,
     merchant_id: str = None,
-    domain_id: str = None,
-    source_id: str = None,
     status_code: str = DocumentStatusCode.PROCESSED,
     doc_number: str = None,
     doc_date: str = None,
@@ -223,8 +221,8 @@ def create_document(
     """
     Inserts or updates a document record using Pure SQLAlchemy 2.0 ORM.
     """
-    final_dt = doc_type_id or domain_id or DefaultIdentifier.DOC_TYPE
-    final_merchant_id = merchant_id or source_id or DefaultIdentifier.NO_TAX_ID
+    final_dt = doc_type_id or DefaultIdentifier.DOC_TYPE
+    final_merchant_id = merchant_id or DefaultIdentifier.NO_TAX_ID
     final_auto_approved = is_auto_approved if is_auto_approved is not None else (auto_approved or 0)
     final_ambiguous = is_ambiguous if is_ambiguous is not None else (has_ambiguous_fields or 0)
 
@@ -388,15 +386,13 @@ def get_pending_documents(
     doc_type_id: str = None,
     merchant_id: str = None,
     company_id: str = None,
-    domain_id: str = None,
-    source_id: str = None,
 ) -> list[dict]:
     """
     Retrieves documents waiting for review using Pure SQLAlchemy 2.0 ORM.
     Optionally filters by company_id, doc_type_id, or merchant_id.
     """
-    target_dt = doc_type_id or domain_id
-    target_merchant = merchant_id or source_id
+    target_dt = doc_type_id
+    target_merchant = merchant_id
     try:
         with get_db_session() as session:
             stmt = select(Document, ProcessedBatch).join(
@@ -440,15 +436,13 @@ def get_all_documents(
     merchant_id: str = None,
     status_code: str = None,
     company_id: str = None,
-    domain_id: str = None,
-    source_id: str = None,
 ) -> list[dict]:
     """
     Retrieves all documents matching criteria using Pure SQLAlchemy 2.0 ORM.
     Optionally filters by company_id, doc_type_id, or merchant_id.
     """
-    target_dt = doc_type_id or domain_id
-    target_merchant = merchant_id or source_id
+    target_dt = doc_type_id
+    target_merchant = merchant_id
     try:
         with get_db_session() as session:
             stmt = select(Document, ProcessedBatch).join(
@@ -829,15 +823,13 @@ def search_documents(
     end_date: str = None,
     keyword: str = None,
     company_id: str = None,
-    domain_id: str = None,
-    source_id: str = None,
 ) -> list[dict]:
     """
     Performs dynamic lookup of documents using Pure SQLAlchemy 2.0 ORM.
     Optionally filters by company_id, doc_type_id, or merchant_id.
     """
-    target_dt = doc_type_id or domain_id or DefaultIdentifier.DOC_TYPE
-    target_merchant = merchant_id or source_id
+    target_dt = doc_type_id or DefaultIdentifier.DOC_TYPE
+    target_merchant = merchant_id
     try:
         with get_db_session() as session:
             stmt = select(Document, ProcessedBatch).join(
@@ -1025,13 +1017,12 @@ def get_documents_for_export(
     doc_type_id: str = None,
     status_codes: list[str] = None,
     company_id: str = None,
-    domain_id: str = None,
 ) -> list[dict]:
     """
     Fetches approved/processed document records joined with batch info for report exporters using Pure SQLAlchemy 2.0 ORM.
     Optionally filters by company_id.
     """
-    target_dt = doc_type_id or domain_id or DefaultIdentifier.DOC_TYPE
+    target_dt = doc_type_id or DefaultIdentifier.DOC_TYPE
     if status_codes is None:
         status_codes = [DocumentStatusCode.APPROVED, DocumentStatusCode.PROCESSED]
 

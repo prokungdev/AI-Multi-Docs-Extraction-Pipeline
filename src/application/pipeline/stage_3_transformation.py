@@ -66,11 +66,11 @@ def transform_to_db(
 
             folder_name = os.path.basename(storage_path)
             from src.infrastructure.common.constants import DefaultIdentifier
-            source = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
+            merchant_folder = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
 
             image_basename = os.path.splitext(os.path.basename(image_path))[0]
             json_filename = f"{image_basename}.json"
-            json_filepath = os.path.join(queue_dir, source, json_filename).replace("\\", "/")
+            json_filepath = os.path.join(queue_dir, merchant_folder, json_filename).replace("\\", "/")
 
             if not os.path.exists(json_filepath):
                 alt_path = os.path.join(queue_dir, json_filename).replace("\\", "/")
@@ -95,7 +95,7 @@ def transform_to_db(
             post_result = post_process_document(
                 document_id=document_id,
                 payload=extracted_data,
-                source_id=source,
+                merchant_id=merchant_folder,
                 doc_type_id=target_doc_type,
                 settings=settings,
             )
@@ -126,7 +126,7 @@ def transform_to_db(
                 company_id=company_id,
                 batch_id=batch_id,
                 doc_type_id=target_doc_type,
-                source_id=source,
+                merchant_id=merchant_folder,
                 status_code=status_code,
                 doc_number=doc_number,
                 doc_date=doc_date,

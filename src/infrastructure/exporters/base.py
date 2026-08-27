@@ -16,9 +16,8 @@ class BaseOutputExporter(ABC):
     encoding: str = "utf-8-sig"
     delimiter: str = ","
 
-    def __init__(self, doc_type_id: str = None, domain_id: str = None):
-        self.doc_type_id = doc_type_id or domain_id or "expense_receipt"
-        self.domain_id = self.doc_type_id
+    def __init__(self, doc_type_id: str = None):
+        self.doc_type_id = doc_type_id or "expense_receipt"
         if not self.display_name:
             self.display_name = self.__class__.__name__
 

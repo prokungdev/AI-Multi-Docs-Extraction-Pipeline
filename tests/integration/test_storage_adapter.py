@@ -1,32 +1,42 @@
 """
-Unit Tests for Storage Adapters and Storage Abstraction Layer.
-Validates LocalStorageAdapter CRUD, Image/JSON handling, atomic safety, and directory management.
+Integration Test Suite for Storage Adapters and Filesystem Abstraction Layer.
+Validates LocalStorageAdapter CRUD, Image/JSON handling, atomic safety, directory management,
+and strictly verifies post-test directory cleanup.
 """
 
 import os
 import shutil
 import tempfile
 import unittest
-import uuid
 from PIL import Image
 
 from src.infrastructure.storage.base import BaseStorageAdapter
 from src.infrastructure.storage.local_adapter import LocalStorageAdapter
-from src.infrastructure.storage.storage_manager import StoragePathManager, storage_manager
+from src.infrastructure.storage.storage_manager import StoragePathManager
 
 
-class TestStorageAdapters(unittest.TestCase):
+class TestLocalStorageAdapterIntegration(unittest.TestCase):
     """
-    Unit test suite for LocalStorageAdapter and StoragePathManager integration.
+    Integration test suite for LocalStorageAdapter with real filesystem I/O.
+    Enforces isolated temporary sandbox and verifies complete cleanup.
     """
 
     def setUp(self):
-        self.test_dir = tempfile.mkdtemp(prefix="test_storage_")
+        self.test_dir = tempfile.mkdtemp(prefix="test_storage_adapter_")
         self.adapter = LocalStorageAdapter()
+        # Verify test directory is in temp and not production
+        self.assertNotIn("storage/raw_data", self.test_dir)
+        self.assertNotIn("storage/processed_data", self.test_dir)
 
     def tearDown(self):
+        # 1. Clean up temporary test directory
         if os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir, ignore_errors=True)
+        # 2. Cleanup Verification Step: Verify test folder is completely deleted
+        self.assertFalse(
+            os.path.exists(self.test_dir),
+            f"Cleanup failure: Test directory {self.test_dir} was not cleaned up!"
+        )
 
     def test_01_read_write_text_and_bytes(self):
         """Test reading and writing raw bytes and UTF-8 text."""
@@ -116,8 +126,8 @@ class TestStorageAdapters(unittest.TestCase):
         self.assertEqual(self.adapter.read_text(move_dst), "Original content")
 
         # Delete
-        self.adapter.delete(copy_dst)
-        self.assertFalse(self.adapter.exists(copy_dst))
+        self.adapter.delete(move_dst)
+        self.assertFalse(self.adapter.exists(move_dst))
 
     def test_06_missing_file_raises_filenotfound(self):
         """Test reading non-existent files raises explicit FileNotFoundError."""

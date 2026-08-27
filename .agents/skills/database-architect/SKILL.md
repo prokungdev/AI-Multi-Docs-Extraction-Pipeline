@@ -16,22 +16,22 @@ This skill defines universal enterprise database design standards, table/column 
 All relational database models and schema definitions MUST strictly follow these enterprise naming rules:
 
 ### 1.1 Table Names
-- **Plural & `snake_case`**: Always use plural English nouns in `snake_case` (e.g., `merchants`, `documents`, `orders`, `order_items`).
+- **Plural & `snake_case`**: Always use plural English nouns in `snake_case` (e.g., `users`, `orders`, `order_items`, `invoices`).
 - **NO Cryptic Abbreviations**: Never use legacy abbreviations (e.g., do NOT use `_d` for detail tables; use `_items` or `_details` instead).
-- **NO Singular + Suffix Mixes**: Do NOT use `merchant_master`; use `merchants` (or `merchant_masters` consistently).
+- **NO Singular + Suffix Mixes**: Do NOT use `user_master`; use `users` (or `user_masters` consistently).
 
 ### 1.2 Column Names
-- **Primary Keys**: Always format as **`{singular_table}_id`** (e.g., `user_id`, `document_id`, `order_id`, `item_id`, `page_id`, `log_id`).
-- **Foreign Keys**: Always match the primary key name of the referenced table (e.g., `batch_id`, `document_id`, `order_id`, `user_id`).
-- **Status Columns**: Standardize on **`status_code`** across all entities (e.g., `documents.status_code`, `users.status_code`, `api_call_logs.status_code`).
+- **Primary Keys**: Always format as **`{singular_table}_id`** (e.g., `user_id`, `order_id`, `item_id`, `invoice_id`, `log_id`).
+- **Foreign Keys**: Always match the primary key name of the referenced table (e.g., `user_id`, `order_id`, `account_id`).
+- **Status Columns**: Standardize on **`status_code`** across all entities (e.g., `orders.status_code`, `users.status_code`, `api_call_logs.status_code`).
 - **Timestamp Columns**: Standardize on **`created_at`** and **`updated_at`** (UTC ISO format string or DateTime). Never use unstructured `timestamp` or `time`.
-- **Boolean Flags**: Must start with **`is_`** prefix (e.g., `is_active`, `is_locked`, `is_manually_edited`, `is_auto_approved`, `is_verified`).
-- **Financial & Quantity Fields**: Use explicit full words (e.g., `quantity`, `unit_price`, `subtotal`, `discount_amount`, `vat_amount`, `net_amount`).
+- **Boolean Flags**: Must start with **`is_`** prefix (e.g., `is_active`, `is_locked`, `is_verified`, `is_deleted`).
+- **Financial & Quantity Fields**: Use explicit full words (e.g., `quantity`, `unit_price`, `subtotal`, `discount_amount`, `tax_amount`, `net_amount`).
 
 ### 1.3 Prefixed Primary Key Identifier Standard (Stripe-Style Pattern)
-- **Standard Format**: Primary Key string columns (`{singular_table}_id`) MUST use prefixed entity identifiers: `<entity_prefix>_<entropy_hex>` (e.g. `12` to `16` hexadecimal characters derived from UUID4, such as `doc_c4e5a5799901`, `batch_b8f2a1d933e4`, `merch_99a81e320f11`).
+- **Standard Format**: Primary Key string columns (`{singular_table}_id`) MUST use prefixed entity identifiers: `<entity_prefix>_<entropy_hex>` (e.g. `usr_c4e5a5799901`, `ord_b8f2a1d933e4`, `inv_99a81e320f11`).
 - **Centralized Entity Prefixes**: All entity prefixes MUST be declared in a centralized constants namespace class (`EntityIdPrefix`).
-- **Benefits**: Visual entity identification in logs and database views, cross-entity type-safety in API endpoints, compact index size, and zero collision across distributed nodes.
+- **Benefits**: Visual entity identification in logs/DB views, cross-entity type-safety, compact index size, and zero collision across distributed nodes.
 
 ---
 

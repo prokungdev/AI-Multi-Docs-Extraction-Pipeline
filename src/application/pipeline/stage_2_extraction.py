@@ -29,7 +29,7 @@ from src.infrastructure.common.utils import chunk_list
 
 def extract_documents(
     doc_type: str = None,
-    source: str = None,
+    merchant_id: str = None,
     company_code: str = None
 ) -> dict:
     """
@@ -71,11 +71,11 @@ def extract_documents(
             pdf_name = b["original_pdf_name"]
             storage_path = b["storage_path"]
 
-            # Resolve source
+            # Resolve merchant
             folder_name = os.path.basename(storage_path)
             from src.infrastructure.common.constants import DefaultIdentifier
-            batch_source = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
-            if source and source != batch_source:
+            batch_merchant = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
+            if merchant_id and merchant_id != batch_merchant:
                 continue
 
             pages = get_batch_pages(batch_id)
@@ -120,7 +120,7 @@ def extract_documents(
                     logger.info(f"Sending AI extraction request for Batch '{batch_id}' Chunk #{chunk_idx} ({len(chunk_images)} pages)...")
                     payload = extract_document_data(
                         image_paths=chunk_images,
-                        source=batch_source,
+                        merchant_id=batch_merchant,
                         doc_type=target_doc_type,
                         batch_id=batch_id,
                         chunk_index=chunk_idx,
@@ -149,12 +149,12 @@ def extract_documents(
             merged_payload = merge_chunk_payloads(chunk_payloads)
 
             # Save final JSON in company 04_processing
-            source_queue_dir = os.path.join(queue_dir, batch_source).replace("\\", "/")
-            os.makedirs(source_queue_dir, exist_ok=True)
+            merchant_queue_dir = os.path.join(queue_dir, batch_merchant).replace("\\", "/")
+            os.makedirs(merchant_queue_dir, exist_ok=True)
 
             for p in pages:
                 image_basename = os.path.splitext(os.path.basename(p["image_path"]))[0]
-                json_path = os.path.join(source_queue_dir, f"{image_basename}.json").replace("\\", "/")
+                json_path = os.path.join(merchant_queue_dir, f"{image_basename}.json").replace("\\", "/")
                 with open(json_path, "w", encoding="utf-8") as qf:
                     json.dump(merged_payload, qf, ensure_ascii=False, indent=2)
 
@@ -179,7 +179,7 @@ def extract_documents(
 
 async def async_extract_documents(
     doc_type: str = None,
-    source: str = None,
+    merchant_id: str = None,
     company_code: str = None
 ) -> dict:
     """
@@ -223,8 +223,8 @@ async def async_extract_documents(
 
             folder_name = os.path.basename(storage_path)
             from src.infrastructure.common.constants import DefaultIdentifier
-            batch_source = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
-            if source and source != batch_source:
+            batch_merchant = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
+            if merchant_id and merchant_id != batch_merchant:
                 return False
 
             pages = get_batch_pages(batch_id)
@@ -259,7 +259,7 @@ async def async_extract_documents(
                 try:
                     payload = await async_extract_document_data(
                         image_paths=chunk_images,
-                        source=batch_source,
+                        merchant_id=batch_merchant,
                         doc_type=target_doc_type,
                         batch_id=batch_id,
                         chunk_index=chunk_idx,
@@ -282,12 +282,12 @@ async def async_extract_documents(
                 return False
 
             merged_payload = merge_chunk_payloads(chunk_payloads)
-            source_queue_dir = os.path.join(queue_dir, batch_source).replace("\\", "/")
-            os.makedirs(source_queue_dir, exist_ok=True)
+            merchant_queue_dir = os.path.join(queue_dir, batch_merchant).replace("\\", "/")
+            os.makedirs(merchant_queue_dir, exist_ok=True)
 
             for p in pages:
                 image_basename = os.path.splitext(os.path.basename(p["image_path"]))[0]
-                json_path = os.path.join(source_queue_dir, f"{image_basename}.json").replace("\\", "/")
+                json_path = os.path.join(merchant_queue_dir, f"{image_basename}.json").replace("\\", "/")
                 with open(json_path, "w", encoding="utf-8") as qf:
                     json.dump(merged_payload, qf, ensure_ascii=False, indent=2)
 

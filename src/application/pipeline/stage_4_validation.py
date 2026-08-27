@@ -39,7 +39,7 @@ def archive_and_export_document(
     payload: dict,
     original_pdf_name: str,
     doc_type_id: str = None,
-    source_id: str = None,
+    merchant_id: str = None,
     settings: dict = None,
     **kwargs
 ) -> bool:
@@ -58,45 +58,57 @@ def archive_and_export_document(
     # Find and copy original file from raw_data or drop_zone
     raw_dirs = [
         storage_manager.get_raw_data_dir(comp_code, target_dt),
-        storage_manager.get_drop_zone_dir(comp_code, target_dt),
+        storage_manager.get_drop_zone_dir(comp_code, target_dt, "Upload"),
+        storage_manager.get_drop_zone_dir(comp_code, target_dt, "Auto_Scanner")
     ]
-    for r_dir in raw_dirs:
-        if os.path.exists(r_dir):
-            for root_dir, _, files in os.walk(r_dir):
-                for f in files:
-                    safe_stem = os.path.basename(original_pdf_name).split(".")[0]
-                    if os.path.splitext(f)[0] == safe_stem:
-                        src_f = os.path.join(root_dir, f).replace("\\", "/")
-                        dst_f = os.path.join(month_archive_raw, f).replace("\\", "/")
-                        shutil.copy(src_f, dst_f)
-                        break
-                        
-    # Copy split pages
-    pages = get_document_pages(document_id)
-    for page in pages:
-        img_path = page["image_path"]
-        if os.path.exists(img_path):
-            shutil.copy(img_path, os.path.join(month_archive_raw, os.path.basename(img_path)).replace("\\", "/"))
+    
+    found_pdf = None
+    for rd in raw_dirs:
+        candidate = os.path.join(rd, original_pdf_name)
+        if os.path.exists(candidate):
+            found_pdf = candidate
+            break
             
-    # Write verified JSON payload to archive
-    archive_json_path = os.path.join(month_archive_json, f"{document_id}.json").replace("\\", "/")
-    with open(archive_json_path, "w", encoding="utf-8") as jf:
-        json.dump(payload, jf, ensure_ascii=False, indent=2)
+    if found_pdf and os.path.exists(found_pdf):
+        dest_pdf = os.path.join(month_archive_raw, f"{document_id}_{original_pdf_name}")
+        shutil.copy2(found_pdf, dest_pdf)
+        logger.info(f"Archived raw input file to: {dest_pdf}")
         
-    # 2. Append to Registered DocType Exporters (Output to 06_output)
+    # Copy split page images
+    pages = get_document_pages(document_id)
+    for p in pages:
+        p_path = p.get("file_path", "")
+        if p_path and os.path.exists(p_path):
+            p_filename = os.path.basename(p_path)
+            dest_img = os.path.join(month_archive_raw, p_filename)
+            shutil.copy2(p_path, dest_img)
+            
+    # Save Verified JSON
+    verified_json_path = os.path.join(month_archive_json, f"{document_id}_verified.json")
+    with open(verified_json_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    logger.info(f"Saved verified JSON to: {verified_json_path}")
+    
+    # 2. Trigger Exporters
     try:
-        exporters_list = list_exporters(target_dt)
-        doc_data = {
-            "payload": payload,
-            "doc_type_id": target_dt,
-            "document_id": document_id,
-            "original_pdf_name": original_pdf_name
-        }
-        
-        for exp_meta in exporters_list:
-            exporter_id = exp_meta["exporter_id"]
-            handler = exp_meta["handler"]
+        from src.infrastructure.exporters.registry import list_exporters
+        exporters = list_exporters(doc_type_id=target_dt)
+        for exp in exporters:
+            exporter_id = exp["exporter_id"]
+            handler = exp["handler"]
             try:
+                # Prepare flattened payload dictionary
+                doc_data = {
+                    "document_id": document_id,
+                    "doc_type_id": target_dt,
+                    "merchant_id": merchant_id,
+                    "doc_number": payload.get("doc_number", ""),
+                    "doc_date": payload.get("transaction_date", ""),
+                    "entity_name": payload.get("merchant_name", ""),
+                    "total_amount": float(payload.get("totals", {}).get("net_amount", 0.0) if isinstance(payload.get("totals"), dict) else 0.0),
+                    "data_payload": payload,
+                    "payload": payload
+                }
                 output_dir = storage_manager.get_output_dir(comp_code, target_dt)
                 output_file_base = os.path.join(output_dir, f"{target_dt}_{exporter_id}_export").replace("\\", "/")
                 handler.export([doc_data], output_file_base, **kwargs)
@@ -111,9 +123,8 @@ def archive_and_export_document(
 def post_process_document(
     document_id: str,
     payload: dict,
-    source_id: str = None,
+    merchant_id: str = None,
     doc_type_id: str = None,
-    domain_id: str = None,
     settings: dict = None,
 ) -> dict:
     """
@@ -121,7 +132,7 @@ def post_process_document(
     and archives/exports the document if auto-approved.
     Updates the SQLite documents table metadata columns.
     """
-    target_dt = doc_type_id or domain_id or get_default_doc_type()
+    target_dt = doc_type_id or get_default_doc_type()
     
     # 1. Parse extraction metadata
     ext_meta = payload.get("extraction_metadata", {})
@@ -132,8 +143,9 @@ def post_process_document(
     confidence_notes = ext_meta.get("confidence_notes", "")
     
     # 2. Mathematical validation
-    from src.domain.services.post_processor import validate_financial_math
-    is_discrepant, discrepancy_notes = validate_financial_math(payload)
+    from src.domain.policies.validators import FinancialMathValidator
+    math_val = FinancialMathValidator()
+    _, is_discrepant, discrepancy_notes = math_val.validate(payload)
     if is_discrepant:
         has_ambiguous_fields = 1
         confidence_notes += f" [Validation Alert: {', '.join(discrepancy_notes)}]"
@@ -198,7 +210,7 @@ def post_process_document(
                 payload=payload,
                 original_pdf_name=original_pdf_name,
                 doc_type_id=target_dt,
-                source_id=source_id,
+                merchant_id=merchant_id,
                 settings=settings
             )
         else:
@@ -267,11 +279,11 @@ def validate_documents(
             storage_path = p["storage_path"]
 
             folder_name = os.path.basename(storage_path)
-            source = DefaultIdentifier.NO_TAX_LABEL if folder_name in ("_uncategorized", "NO_TAXID") else folder_name
+            merchant_folder = DefaultIdentifier.NO_TAX_LABEL if folder_name in (DefaultIdentifier.NO_TAX_LABEL, DefaultIdentifier.NO_TAX_ID, "_uncategorized") else folder_name
 
             image_basename = os.path.splitext(os.path.basename(image_path))[0]
             json_filename = f"{image_basename}.json"
-            json_path = os.path.join(queue_dir, source, json_filename).replace("\\", "/")
+            json_path = os.path.join(queue_dir, merchant_folder, json_filename).replace("\\", "/")
 
             if not os.path.exists(json_path):
                 alt_path = os.path.join(queue_dir, json_filename).replace("\\", "/")
@@ -287,7 +299,7 @@ def validate_documents(
                 logger.error(f"Failed to read JSON at {json_path}: {read_err}")
                 continue
 
-            processed_payload, new_status, notes = validate_and_process_payload(raw_payload, target_doc_type, source)
+            processed_payload, new_status, notes = validate_and_process_payload(raw_payload, target_doc_type, merchant_id=merchant_folder)
 
             try:
                 with open(json_path, "w", encoding="utf-8") as wf:

@@ -58,11 +58,8 @@ class TestDatabase(unittest.TestCase):
     def tearDownClass(cls):
         # Clean up the test database file and dispose SQLAlchemy engine
         import gc
-        from src.infrastructure.persistence.connection import get_engine
-        try:
-            get_engine().dispose()
-        except Exception:
-            pass
+        from src.infrastructure.persistence.connection import dispose_all_engines
+        dispose_all_engines()
         gc.collect()
         if os.path.exists(cls.db_path):
             try:
@@ -70,6 +67,7 @@ class TestDatabase(unittest.TestCase):
             except Exception:
                 pass
         os.environ.pop("DB_PATH_OVERRIDE", None)
+        assert not os.path.exists(cls.db_path), f"Leakage detected: {cls.db_path} was not deleted!"
 
     def test_01_init_and_seed(self):
         """Test database schema initialization and seeding."""
@@ -127,7 +125,7 @@ class TestDatabase(unittest.TestCase):
             document_id=doc_id,
             batch_id=batch_id,
             doc_type_id=test_doc_type,
-            source_id=test_source,
+            merchant_id=test_source,
             status_code="PROCESSED",
             doc_number="DOC-001",
             doc_date="2026-08-15",
@@ -171,7 +169,7 @@ class TestDatabase(unittest.TestCase):
             document_id=doc_id,
             batch_id=batch_id,
             doc_type_id=test_doc_type,
-            source_id=test_source,
+            merchant_id=test_source,
             status_code="PROCESSED",
             doc_number="DOC-001",
             doc_date="2026-08-15",
@@ -390,7 +388,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
             document_id=doc_id,
             batch_id=batch_id,
             doc_type_id="expense_receipt",
-            source_id="NO_TAXID",
+            merchant_id="NO_TAXID",
             status_code=DocumentStatusCode.NEEDS_REVIEW,
             doc_number="CONC-001",
             doc_date="2026-08-24",
@@ -478,7 +476,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
             document_id=doc_id,
             batch_id=batch_id,
             doc_type_id="expense_receipt",
-            source_id="NO_TAXID",
+            merchant_id="NO_TAXID",
             status_code=DocumentStatusCode.NEEDS_REVIEW,
             doc_number="HOLD-001",
             doc_date="2026-08-24",

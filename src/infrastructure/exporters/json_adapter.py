@@ -15,8 +15,8 @@ class JsonConfigExporter(BaseOutputExporter):
         "accounting_line_items": "Accounting Line Items (รายงานแยกรายการสินค้า)"
     }
 
-    def __init__(self, doc_type_id: str = None, template_name: str = None, display_name: str = None, domain_id: str = None):
-        target_dt = doc_type_id or domain_id or "expense_receipt"
+    def __init__(self, doc_type_id: str = None, template_name: str = None, display_name: str = None):
+        target_dt = doc_type_id or "expense_receipt"
         super().__init__(doc_type_id=target_dt)
         self.template_name = template_name
         self.display_name = display_name or self.DISPLAY_NAMES.get(template_name, (template_name or "").replace("_", " ").title())

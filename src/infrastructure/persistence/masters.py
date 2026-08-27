@@ -222,7 +222,6 @@ def get_doc_types(settings_path: str = DefaultPath.SETTINGS) -> list[dict]:
             if d_id:
                 formatted_doc_types.append({
                     "doc_type_id": d_id,
-                    "domain_id": d_id,
                     "display_name": d.get("display_name", d_id),
                     "is_active": 1 if d.get("is_active", True) else 0,
                     "sort_order": d.get("sort_order", 0)
@@ -445,7 +444,7 @@ def get_or_create_merchant_auto(
     tax_id: str,
     merchant_name: str,
     suggested_short_name: str = None,
-    domain_id: str = "expense_receipt",
+    doc_type_id: str = "expense_receipt",
     company_id: str = None
 ) -> tuple[dict, bool]:
     """

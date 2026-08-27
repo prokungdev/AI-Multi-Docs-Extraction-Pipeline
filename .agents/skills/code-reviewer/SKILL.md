@@ -1,14 +1,11 @@
 ---
 name: code-reviewer
-description: >-
-  Audits code quality, identifies logic bugs, unhandled edge cases, performance bottlenecks, and security vulnerabilities.
-  Integrates the full skill ecosystem (database-architect, python-enterprise-stack, security-auditor,
-  refactoring-expert, test-suite-generator, documentation-generator, project-standardizer) into structured Code Review Reports.
+description: Audits code quality, architecture, performance bottlenecks, and security vulnerabilities across the skill ecosystem.
 ---
 
 # 🔍 Code Reviewer Skill
 
-This skill guides the AI Agent to perform strict, automated, and comprehensive peer reviews on source code files, modules, or git diffs against enterprise software quality standards across all specialized project skills.
+Guides automated, comprehensive peer reviews on source code files, modules, or git diffs against enterprise software quality standards.
 
 ---
 
@@ -53,11 +50,13 @@ Before writing any Review Report or assigning quality scores, the AI Agent **MUS
 | **Hardcoded State & Status Literals** | `status == "..."`, `status_code in ["..."`, `action = "..."`, `state == "..."` | `python-enterprise-stack` | **🚨 CRITICAL (Auto-FAIL Code Review)**: Absolutely NO raw string literals permitted for state transitions, entity lifecycle statuses, routing actions, or system fallback placeholders. All states must reference strongly-typed `Enum` or centralized constants classes. |
 | **Ghost Code & Dead Fallback Lookups** | Obsolete fallback lookups to deleted folders or legacy configuration layouts | `refactoring-expert` | **⚠️ WARNING**: Code must never retain dead fallback lookups to deprecated directory layouts or obsolete config structures. |
 | **Duplicated Execution & Redundant Logic** | Redundant processing steps, double entity registrations, or copy-pasted blocks | `refactoring-expert` | **⚠️ WARNING**: Functions must be strictly idempotent and free of duplicated execution blocks or redundant file/database operations. |
-| **Vocabulary & Schema Drift** | Lingering deprecated terms or renamed schema keys in comments, logs, or kwargs | `documentation-generator` / `project-standardizer` | **⚠️ WARNING**: Terminology and parameter names must remain 100% consistent across code, schemas, docstrings, and logging. |
-| **Lingering Aliases & Vocabulary Drift** | Function/class/property aliases, legacy wrapper functions, parameter dual-naming | `python-enterprise-stack` / `refactoring-expert` | **⚠️ WARNING**: Must eliminate redundant backward-compatibility wrapper aliases and enforce a single canonical API across all modules. |
+| **Vocabulary Drift & Redundant Aliases** | Deprecated terms, renamed schema keys, lingering backward-compatibility function/property aliases | `python-enterprise-stack` / `refactoring-expert` | **⚠️ WARNING**: Terminology and parameters must remain 100% consistent across code, schemas, docstrings, and logging. Eliminate backward-compatibility wrapper aliases. |
 | **Skill Agnostic & Tool Coupling Drift** | Repository-specific symbols, local table/function names, or third-party brand locks in `.agents/skills/` | `code-reviewer` / `project-standardizer` | **🚨 CRITICAL**: All skills in `.agents/skills/` (including `code-reviewer` itself and all sibling skills) MUST be 100% common, project-agnostic, and vendor/tool-agnostic. |
 | **Missing Test Database Isolation** | Tests performing DB CRUD without isolated temp DB / env override | `test-suite-generator` / `database-architect` | **🚨 CRITICAL (Auto-FAIL Test Suite)**: Any test suite connecting directly to dev/prod database instances without temp DB isolation must be immediately rejected. |
 | **Direct Project Storage Pollution in Tests** | Tests creating files or folders directly inside project's real storage tree | `test-suite-generator` / `project-standardizer` | **🚨 CRITICAL (Auto-FAIL Test Suite)**: Tests MUST generate mock files inside OS temporary directories (`tempfile.mkdtemp()`) and clean them up completely in teardown. |
+| **Static Storage Path Caching** | Path/Storage managers caching `os.environ` into static attributes without dynamic resolution | `python-enterprise-stack` / `test-suite-generator` | **🚨 CRITICAL**: Storage path root properties (`.root`) must resolve environment overrides (`STORAGE_ROOT_OVERRIDE`) dynamically on every access to prevent test leakage into production storage. |
+| **Monolithic Test Dumping Grounds** | Test files packing unrelated helpers, schemas, and I/O handlers together | `test-suite-generator` | **⚠️ WARNING**: Enforce Single Responsibility (1 Topic = 1 File). Unit tests and integration tests must be distinctly categorized. |
+| **Missing Test Cleanup Verification** | Teardown blocks lacking explicit post-deletion existence assertions | `test-suite-generator` | **⚠️ WARNING**: Every test creating temporary files/databases must assert that resources are completely removed (`assert not os.path.exists(...)`). |
 | **DDD Inward Dependency Violation** | `domain/` importing from `infrastructure/` or `apps/` | `python-enterprise-stack` / `code-reviewer` | **🚨 CRITICAL (Auto-FAIL Architecture)**: The Domain Layer (`domain/`) must remain pure and NEVER import technical adapters, database sessions, third-party SDKs, or delivery apps. |
 
 ---
@@ -71,7 +70,7 @@ The AI Agent MUST evaluate the target code across the following dimensions witho
    - Confirm all DB operations use Pure SQLAlchemy 2.0 syntax with transactional context managers or FastAPI `Depends()`.
 2. **🛡️ Security & Secret Safety (`security-auditor`)**:
    - Check for hardcoded API keys, secrets, passwords, or tokens.
-   - Verify input sanitization, path traversal prevention, and multi-tenant tenant isolation scoping (`company_id`/`tenant_id`).
+   - Verify input sanitization, path traversal prevention, and multi-tenant isolation scoping (`tenant_id`/`org_id`).
 3. **🐛 Logic Correctness, Edge Cases & Zero Redundancy**:
    - Check for null pointers, undefined variable references, off-by-one errors, and boundary conditions.
    - Verify that exception handling is explicit and does NOT swallow errors silently (`except: pass`).
@@ -82,7 +81,8 @@ The AI Agent MUST evaluate the target code across the following dimensions witho
 5. **🧪 Testability & Clean Architecture (`test-suite-generator` / `refactoring-expert` / `python-enterprise-stack`)**:
    - **Canonical 4-Layer DDD Dependency Rule**: Verify inward dependency flow (`apps` ➔ `application` ➔ `domain` ➔ `infrastructure`). The Domain Layer (`domain/`) must remain 100% pure and decoupled from external frameworks/SDKs.
    - **Strict Model Separation**: SQLAlchemy ORM models reside strictly in `infrastructure/persistence/models.py`, while Pydantic DTOs reside in `application/dtos/`.
-   - **Enforce Dual Test Isolation**: Confirm that all test suites execute against temporary/mock databases and temporary directories (`tempfile.mkdtemp()`) with zero artifact writes to real project storage.
+   - **Enforce Dual Test Isolation & Cleanup**: Confirm that all test suites execute against temporary/mock databases and temporary directories (`tempfile.mkdtemp()`) with zero artifact writes to real project storage, and verify that teardown contains explicit existence assertions (`assert not os.path.exists(...)`).
+   - **1 Topic = 1 File Architecture**: Verify that tests are cleanly organized by domain/concern (Unit vs Integration) and avoid monolithic mega-test files.
    - Confirm test suite passes 100% with explicit resource teardown on Windows (`engine.dispose()`, `gc.collect()`, `shutil.rmtree()`).
    - Verify that third-party processing engines (e.g. PDF parsing, image rendering, external APIs) are encapsulated in dedicated **Service Wrappers / Adapters** rather than directly imported across multiple business modules.
 6. **📝 Logging & Observability Audit (`python-enterprise-stack`)**:

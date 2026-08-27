@@ -216,7 +216,21 @@ def get_db_connection(settings_path: str = DefaultPath.SETTINGS) -> sqlite3.Conn
 def get_log_database_url(settings_path: str = DefaultPath.SETTINGS) -> str:
     """
     Resolves log database connection URL pointing to logs/logs.db.
+    Supports environment override and automatic test isolation.
     """
+    env_url = os.environ.get("LOG_DB_URL_OVERRIDE")
+    if env_url:
+        return env_url
+
+    override_path = os.environ.get("LOG_DB_PATH_OVERRIDE")
+    if override_path:
+        return f"sqlite:///{override_path.replace('\\', '/')}"
+
+    if os.environ.get("TEST_ENVIRONMENT") == "1" or os.environ.get("APP_ENV") == "testing":
+        import tempfile
+        fallback_test_log_db = os.path.join(tempfile.gettempdir(), "pytest_fail_safe_logs.db").replace("\\", "/")
+        return f"sqlite:///{fallback_test_log_db}"
+
     abs_settings_path = PROJECT_ROOT / settings_path if not os.path.isabs(settings_path) else Path(settings_path)
     logs_dir = "logs"
     if abs_settings_path.exists():

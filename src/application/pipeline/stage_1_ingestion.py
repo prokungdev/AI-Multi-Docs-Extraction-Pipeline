@@ -60,9 +60,9 @@ def split_and_match(
     company_code: str = None
 ) -> list[dict]:
     """
-    Stage 2: Split multi-page PDFs or process raw images into optimized page images and match merchant source.
+    Stage 2: Split multi-page PDFs or process raw images into optimized page images and match merchant.
     """
-    logger.info("Starting Stage 2 (Split & Match): Processing Files & Matching Sources")
+    logger.info("Starting Stage 2 (Split & Match): Processing Files & Matching Merchants")
 
     if input_file is None and input_pdf is not None:
         input_file = input_pdf
@@ -73,7 +73,7 @@ def split_and_match(
     comp_info = get_company_by_code(comp_code)
     company_id = comp_info["company_id"] if comp_info else None
 
-    target_doc_type = resolve_doc_type(doc_type or domain)
+    target_doc_type = resolve_doc_type(doc_type)
 
     img_cfg = get_image_processing_config(settings)
     ai_cfg = get_ai_provider_config(settings)
@@ -152,7 +152,7 @@ def split_and_match(
         from src.infrastructure.common.constants import DefaultIdentifier, PipelineAction, PipelineStageFolder
         dest_file_path = file_path
         dest_folder = os.path.dirname(file_path)
-        matched_source = DefaultIdentifier.NO_TAX_LABEL
+        matched_merchant = DefaultIdentifier.NO_TAX_LABEL
         pipeline_action = PipelineAction.PROCEED
 
         try:
@@ -174,7 +174,7 @@ def split_and_match(
                     os.makedirs(target_folder, exist_ok=True)
                     shutil.move(file_path, dest_file_path)
 
-            matched_source = cls_res.get("folder_identifier", DefaultIdentifier.NO_TAX_LABEL)
+            matched_merchant = cls_res.get("folder_identifier", DefaultIdentifier.NO_TAX_LABEL)
 
             if pipeline_action == PipelineAction.HOLD:
                 logger.warning(f"File '{filename}' held in '{target_folder}' awaiting merchant approval.")
@@ -218,7 +218,7 @@ def split_and_match(
                 page_filename = format_page_filename(
                     pattern=filename_pattern,
                     doc_type=target_doc_type,
-                    source=matched_source,
+                    merchant_id=matched_merchant,
                     original_filename=filename,
                     page_no=idx,
                     batch_id=batch_id,
@@ -245,7 +245,7 @@ def split_and_match(
             page_filename = format_page_filename(
                 pattern=filename_pattern,
                 doc_type=target_doc_type,
-                source=matched_source,
+                merchant_id=matched_merchant,
                 original_filename=filename,
                 page_no=1,
                 batch_id=batch_id,
@@ -288,7 +288,8 @@ def split_and_match(
             {
                 "batch_id": batch_id,
                 "filename": filename,
-                "matched_source": matched_source,
+                "matched_source": matched_merchant,
+                "matched_merchant": matched_merchant,
                 "total_pages": total_pages,
                 "page_images": created_pages,
             }

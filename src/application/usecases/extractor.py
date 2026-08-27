@@ -33,7 +33,7 @@ def clean_schema_for_structured_output(schema: dict) -> dict:
 
 def extract_document_data(
     image_paths: str | list[str],
-    source: str,
+    merchant_id: str = None,
     doc_type: str = None,
     configs_dir: str = "configs",
     batch_id: str = None,
@@ -42,6 +42,7 @@ def extract_document_data(
 ) -> dict:
     """Extracts structured data from document images using multimodal AI and configured schemas."""
     target_doc_type = doc_type or get_default_doc_type()
+    merchant_key = merchant_id or "NO_TAX_LABEL"
     if isinstance(image_paths, str):
         image_paths = [image_paths]
 
@@ -57,7 +58,7 @@ def extract_document_data(
 
     # Resolve AI provider and model configuration for this doc_type
     provider, model_name = load_doc_type_ai_config(target_doc_type, settings)
-    logger.info(f"AI Config resolved for doc_type '{target_doc_type}' (source '{source}'): Provider='{provider}', Model='{model_name}'")
+    logger.info(f"AI Config resolved for doc_type '{target_doc_type}' (merchant '{merchant_key}'): Provider='{provider}', Model='{model_name}'")
 
     from src.infrastructure.common.config_loader import load_doc_type_schema, load_doc_type_prompt
     raw_schema = load_doc_type_schema(target_doc_type, configs_dir=configs_dir)
@@ -219,7 +220,7 @@ import asyncio
 
 async def async_extract_document_data(
     image_paths: str | list[str],
-    source: str,
+    merchant_id: str = None,
     doc_type: str = None,
     configs_dir: str = "configs",
     batch_id: str = None,
@@ -237,7 +238,7 @@ async def async_extract_document_data(
             return await asyncio.to_thread(
                 extract_document_data,
                 image_paths=image_paths,
-                source=source,
+                merchant_id=merchant_id,
                 doc_type=target_doc_type,
                 configs_dir=configs_dir,
                 batch_id=batch_id,
@@ -248,7 +249,7 @@ async def async_extract_document_data(
         return await asyncio.to_thread(
             extract_document_data,
             image_paths=image_paths,
-            source=source,
+            merchant_id=merchant_id,
             doc_type=target_doc_type,
             configs_dir=configs_dir,
             batch_id=batch_id,

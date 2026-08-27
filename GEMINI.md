@@ -14,6 +14,11 @@
   - 🟡 **Database / Pipeline / APIs**: `pytest tests/integration -v`
   - 🔵 **Major Refactor**: Full `pytest tests/ -v`
   - ⚪ **Non-Code / Docs / Configs**: `Unit Test Required: NO` (Never run pytest)
+- **Mandatory Post-Test Debrief**: Every test run (after plan implementation or explicit test commands) MUST conclude with a structured Thai debrief:
+  1. 📊 **Test Execution Summary** (Total passed/failed, duration, layers)
+  2. 🔴 **Issues Encountered & Root Causes** (Exact error trace & why it happened, or "None")
+  3. 🛠️ **Resolution Details** (How it was fixed, file modified)
+  4. 🧹 **Resource Cleanup Verification** (100% temp isolation & teardown confirmation)
 - **Skill-First Execution**: Plans MUST declare `Required Skills`. AI MUST inspect matching `.agents/skills/<skill>/SKILL.md` before modifying code.
 - **Execution**: Strictly ONE phase at a time. Auto-sync `docs/architecture.md` on structural changes.
 

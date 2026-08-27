@@ -28,7 +28,8 @@ def format_page_filename(
     pattern: str = "{doc_type}_{tax_id}_{original_filename}_{batch_id}_p{page_no}",
     doc_type: Optional[str] = None,
     tax_id: str = "",
-    source: str = "_uncategorized",
+    merchant_id: str = None,
+    source: str = None,
     original_filename: str = "document",
     page_no: int = 1,
     batch_id: str = "",
@@ -37,7 +38,7 @@ def format_page_filename(
 ) -> str:
     """
     Formats split page filename based on configurable pattern.
-    Supported placeholders: {doc_type}, {tax_id}, {source}, {original_filename}, {original_name},
+    Supported placeholders: {doc_type}, {tax_id}, {merchant}, {merchant_id}, {source}, {original_filename}, {original_name},
     {page_no}, {batch_id}, {short_batch_id}, {doc_no}.
     If tax_id is not provided or empty, it defaults to 'no_tax'.
     """
@@ -53,7 +54,8 @@ def format_page_filename(
     else:
         clean_tax_id = "no_tax"
 
-    clean_source = sanitize_filename_part(source)
+    raw_merchant = merchant_id or source or "_uncategorized"
+    clean_merchant = sanitize_filename_part(raw_merchant)
     short_batch = batch_id[:8].replace("-", "") if batch_id else ""
 
     # Fill format template safely
@@ -62,7 +64,9 @@ def format_page_filename(
             doc_type=clean_doc_type,
             domain=clean_doc_type,
             tax_id=clean_tax_id,
-            source=clean_source,
+            source=clean_merchant,
+            merchant=clean_merchant,
+            merchant_id=clean_merchant,
             original_filename=clean_orig,
             original_name=clean_orig,
             page_no=page_no,
