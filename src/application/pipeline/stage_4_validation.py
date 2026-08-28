@@ -134,8 +134,11 @@ def post_process_document(
     """
     target_dt = doc_type_id or get_default_doc_type()
     
+    from src.application.pipeline.pipeline_helpers import extract_page_document_payload
+    doc_payload = extract_page_document_payload(payload)
+
     # 1. Parse extraction metadata
-    ext_meta = payload.get("extraction_metadata", {})
+    ext_meta = doc_payload.get("extraction_metadata", {})
     overall_confidence = float(ext_meta.get("overall_confidence", 0.70))
     confidence_level = ext_meta.get("confidence_level", "MEDIUM")
     is_blurry = 1 if ext_meta.get("is_blurry", False) else 0
@@ -145,14 +148,14 @@ def post_process_document(
     # 2. Mathematical validation
     from src.domain.policies.validators import FinancialMathValidator
     math_val = FinancialMathValidator()
-    _, is_discrepant, discrepancy_notes = math_val.validate(payload)
+    _, is_discrepant, discrepancy_notes = math_val.validate(doc_payload)
     if is_discrepant:
         has_ambiguous_fields = 1
         confidence_notes += f" [Validation Alert: {', '.join(discrepancy_notes)}]"
         
     # 3. Determine priority
     from src.domain.services.post_processor import evaluate_review_priority
-    val_meta = payload.get("validation_meta", {})
+    val_meta = doc_payload.get("validation_meta", {})
     is_complete = val_meta.get("is_complete", True)
     review_priority = evaluate_review_priority(overall_confidence, bool(is_blurry), bool(has_ambiguous_fields), is_complete)
     
@@ -243,6 +246,7 @@ def post_process_document(
 
 
 def validate_documents(
+    batch_id: str,
     doc_type: str = None,
     company_code: str = None
 ) -> dict:
@@ -250,7 +254,11 @@ def validate_documents(
     Stage 4: Validation & Post-Processing.
     Applies merchant rules, Tax ID verification, date conversions (BE->AD), math checks, and sets priority.
     """
-    logger.info("Starting Stage 4 (Validate): Validation & Rule Processing")
+    if not batch_id or not str(batch_id).strip():
+        raise ValueError("batch_id is required for validate_documents (Fail-Fast).")
+
+    clean_batch_id = str(batch_id).strip()
+    logger.info(f"Starting Stage 4 (Validate): Validation & Rule Processing [Batch: {clean_batch_id}]")
 
     settings = load_system_settings()
     comp_code = company_code or get_default_company_code()
@@ -261,7 +269,7 @@ def validate_documents(
     queue_dir = storage_manager.get_processing_dir(comp_code, target_doc_type)
 
     try:
-        pages = get_pages_by_status([DocumentStatus.EXTRACTED.value], company_id=company_id)
+        pages = get_pages_by_status([DocumentStatus.EXTRACTED.value], company_id=company_id, batch_id=clean_batch_id)
 
         if not pages:
             logger.info(f"No pages found with status 'EXTRACTED' to validate for company '{comp_code}'.")

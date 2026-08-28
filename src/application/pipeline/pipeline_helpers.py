@@ -195,3 +195,32 @@ def validate_and_process_payload(
     }
 
     return processed_payload, status_code, validation_notes
+
+
+def extract_page_document_payload(payload: dict, page_number: int = 1) -> dict:
+    """
+    Extracts/unwraps single-page document dictionary from multi-page AI payload.
+    Matches by logical_page_number or 0-based page index.
+    Preserves top-level _metadata if present.
+    """
+    if not isinstance(payload, dict):
+        return {}
+
+    docs = payload.get("extracted_documents")
+    if isinstance(docs, list) and docs:
+        target_doc = None
+        for doc in docs:
+            if isinstance(doc, dict) and doc.get("logical_page_number") == page_number:
+                target_doc = copy.deepcopy(doc)
+                break
+        if target_doc is None:
+            target_idx = min(max(0, page_number - 1), len(docs) - 1)
+            if isinstance(docs[target_idx], dict):
+                target_doc = copy.deepcopy(docs[target_idx])
+
+        if target_doc:
+            if "_metadata" in payload and "_metadata" not in target_doc:
+                target_doc["_metadata"] = payload["_metadata"]
+            return target_doc
+
+    return payload

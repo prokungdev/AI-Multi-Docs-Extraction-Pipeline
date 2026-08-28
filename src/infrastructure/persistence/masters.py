@@ -694,12 +694,16 @@ def delete_merchant(merchant_id: str) -> bool:
         return False
 
 
-def insert_relational_receipt(document_id: str, payload: dict, original_filename: str, company_id: str = None) -> bool:
+def insert_relational_receipt(document_id: str, payload: dict, original_filename: str, company_id: str = None, page_number: int = 1) -> bool:
     """
     Parses extracted JSON payload and inserts header and items into relational tables using Pure SQLAlchemy 2.0 ORM.
+    Supports both unwrapped single document dict and wrapped multi-page AI payload.
     Also auto-registers new merchants in merchants table.
     """
     try:
+        from src.application.pipeline.pipeline_helpers import extract_page_document_payload
+        doc_payload = extract_page_document_payload(payload, page_number=page_number)
+
         with get_db_session() as session:
             now_str = datetime.now(timezone.utc).isoformat()
 
@@ -715,12 +719,12 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
                         target_cid = def_comp.company_id
 
             # 1. Extract merchant & receipt information with fallbacks
-            merchant_obj = payload.get("merchant", {})
-            receipt_info = payload.get("receipt_info", {})
-            totals_obj = payload.get("totals", {}) or payload.get("financial_summary", {})
+            merchant_obj = doc_payload.get("merchant", {})
+            receipt_info = doc_payload.get("receipt_info", {})
+            totals_obj = doc_payload.get("totals", {}) or doc_payload.get("financial_summary", {})
 
-            merchant_name = merchant_obj.get("name") or payload.get("merchant_name") or "Unknown Merchant"
-            tax_id = merchant_obj.get("tax_id") or payload.get("tax_id")
+            merchant_name = merchant_obj.get("name") or doc_payload.get("merchant_name") or "Unknown Merchant"
+            tax_id = merchant_obj.get("tax_id") or doc_payload.get("tax_id")
             if tax_id:
                 tax_id = tax_id.strip()
 
@@ -753,14 +757,14 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
             receipt_id = generate_entity_id(EntityIdPrefix.RECEIPT)
 
             # 4. Save Header
-            subtotal = totals_obj.get("subtotal", 0.0)
-            discount = totals_obj.get("discount", 0.0)
-            vat_amount = totals_obj.get("vat_amount", 0.0)
-            net_amount = totals_obj.get("net_amount", 0.0)
+            subtotal = float(totals_obj.get("subtotal", 0.0))
+            discount = float(totals_obj.get("discount", 0.0))
+            vat_amount = float(totals_obj.get("vat_amount", 0.0))
+            net_amount = float(totals_obj.get("net_amount", 0.0))
 
-            transaction_date = receipt_info.get("transaction_date") or payload.get("transaction_date")
-            expense_category = receipt_info.get("expense_category") or payload.get("expense_category")
-            payment_method = receipt_info.get("payment_method") or payload.get("payment_method")
+            transaction_date = receipt_info.get("transaction_date") or doc_payload.get("transaction_date")
+            expense_category = receipt_info.get("expense_category") or doc_payload.get("expense_category")
+            payment_method = receipt_info.get("payment_method") or doc_payload.get("payment_method")
 
             receipt = ExpenseReceipt(
                 receipt_id=receipt_id,
@@ -783,7 +787,7 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
             session.flush()
 
             # 5. Save Details (line items)
-            for item in payload.get("items", []):
+            for item in doc_payload.get("items", []):
                 item_name = item.get("name")
                 if not item_name:
                     continue

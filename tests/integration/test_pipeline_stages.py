@@ -1,4 +1,5 @@
 import os
+import json
 import unittest
 import pymupdf as fitz
 from PIL import Image
@@ -145,13 +146,15 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import tempfile, uuid
+        cls.temp_dir = tempfile.mkdtemp()
         cls.db_path = os.path.join(tempfile.gettempdir(), f"test_classifier_{uuid.uuid4().hex[:8]}.db").replace("\\", "/")
         os.environ["DB_PATH_OVERRIDE"] = cls.db_path
+        os.environ["STORAGE_ROOT_OVERRIDE"] = cls.temp_dir
         initialize_db_schema()
         seed_initial_data()
 
-        # Create mock PDF with Thai tax ID
-        cls.pdf_path = "test_classifier_sample.pdf"
+        # Create mock PDF with Thai tax ID inside isolated temp dir
+        cls.pdf_path = os.path.join(cls.temp_dir, "test_classifier_sample.pdf").replace("\\", "/")
         doc = fitz.open()
         p = doc.new_page()
         p.insert_text(
@@ -167,20 +170,22 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        import gc
+        import gc, shutil
         from src.infrastructure.persistence.connection import get_engine
         try:
             get_engine().dispose()
         except Exception:
             pass
         gc.collect()
-        for f in [cls.pdf_path, cls.db_path]:
-            if os.path.exists(f):
-                try:
-                    os.remove(f)
-                except Exception:
-                    pass
+        if hasattr(cls, "temp_dir") and os.path.exists(cls.temp_dir):
+            shutil.rmtree(cls.temp_dir, ignore_errors=True)
+        if hasattr(cls, "db_path") and os.path.exists(cls.db_path):
+            try:
+                os.remove(cls.db_path)
+            except Exception:
+                pass
         os.environ.pop("DB_PATH_OVERRIDE", None)
+        os.environ.pop("STORAGE_ROOT_OVERRIDE", None)
 
     def test_01_sanitize_short_name(self):
         """Test short_name sanitization rules."""
@@ -302,6 +307,7 @@ class TestUnifiedSourceClassifier(unittest.TestCase):
         cls.temp_dir = tempfile.mkdtemp()
         cls.db_path = os.path.join(tempfile.gettempdir(), f"test_unified_{uuid.uuid4().hex[:8]}.db").replace("\\", "/")
         os.environ["DB_PATH_OVERRIDE"] = cls.db_path
+        os.environ["STORAGE_ROOT_OVERRIDE"] = cls.temp_dir
         initialize_db_schema()
         seed_initial_data()
 
@@ -332,6 +338,7 @@ class TestUnifiedSourceClassifier(unittest.TestCase):
             except Exception:
                 pass
         os.environ.pop("DB_PATH_OVERRIDE", None)
+        os.environ.pop("STORAGE_ROOT_OVERRIDE", None)
 
     def test_classify_document_pipeline(self):
         """Test unified document classification routing with AI fallback or safe quarantine."""
@@ -354,6 +361,7 @@ class TestSmartChunkCheckpointAndResume(unittest.TestCase):
         cls.temp_dir = tempfile.mkdtemp()
         cls.db_path = os.path.join(tempfile.gettempdir(), f"test_chunking_{uuid.uuid4().hex[:8]}.db").replace("\\", "/")
         os.environ["DB_PATH_OVERRIDE"] = cls.db_path
+        os.environ["STORAGE_ROOT_OVERRIDE"] = cls.temp_dir
         initialize_db_schema()
         seed_initial_data()
 
@@ -380,6 +388,7 @@ class TestSmartChunkCheckpointAndResume(unittest.TestCase):
             except Exception:
                 pass
         os.environ.pop("DB_PATH_OVERRIDE", None)
+        os.environ.pop("STORAGE_ROOT_OVERRIDE", None)
 
     def test_01_multi_page_splitting_and_chunk_assignment(self):
         """Test that PDF splitting correctly computes and records chunk_index per page in DB."""
@@ -426,7 +435,7 @@ class TestSmartChunkCheckpointAndResume(unittest.TestCase):
             return {"documents": [{"doc_number": "INV-003", "total_amount": 300.0}]}
 
         with patch("src.application.pipeline.stage_2_extraction.extract_document_data", side_effect=mock_extract_document_data):
-            res = extract_documents(doc_type="expense_receipt")
+            res = extract_documents(batch_id=batch_id, doc_type="expense_receipt")
             # Should have processed 0 completed batches because chunk 2 failed
             self.assertEqual(res["batches_processed"], 0)
 
@@ -460,7 +469,7 @@ class TestSmartChunkCheckpointAndResume(unittest.TestCase):
                 return {"documents": [{"doc_number": "INV-003", "total_amount": 300.0}]}
 
         with patch("src.application.pipeline.stage_2_extraction.extract_document_data", side_effect=mock_resume_extract):
-            res = extract_documents(doc_type="expense_receipt")
+            res = extract_documents(batch_id=batch_id, doc_type="expense_receipt")
             self.assertEqual(res["batches_processed"], 1)
 
         # Chunk 1 was loaded from cache and NOT re-called!
@@ -477,6 +486,289 @@ class TestSmartChunkCheckpointAndResume(unittest.TestCase):
         # Unextracted chunks should now be empty
         self.assertEqual(get_unextracted_chunks_for_batch(batch_id), [])
 
+    def test_03_fail_fast_when_batch_id_missing(self):
+        """Verify that Stage 3, 4, 5 strictly raise ValueError when batch_id is omitted or empty."""
+        from src.application.pipeline.stage_2_extraction import extract_documents, async_extract_documents
+        from src.application.pipeline.stage_4_validation import validate_documents
+        from src.application.pipeline.stage_3_transformation import transform_to_db
+
+        with self.assertRaises(ValueError):
+            extract_documents(batch_id=None)
+
+        with self.assertRaises(ValueError):
+            extract_documents(batch_id="")
+
+        with self.assertRaises(ValueError):
+            validate_documents(batch_id=None)
+
+        with self.assertRaises(ValueError):
+            validate_documents(batch_id="")
+
+        with self.assertRaises(ValueError):
+            transform_to_db(batch_id=None)
+
+        with self.assertRaises(ValueError):
+            transform_to_db(batch_id="")
+
+
+class TestStage5DatabaseTransformation(unittest.TestCase):
+    """
+    Integration test suite for Stage 5 Database Transformation and AI Payload Unwrapping.
+    Verifies that multi-page AI payload accurately populates extracted_documents,
+    expense_receipts, and expense_receipt_items with full non-empty values.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        cls.temp_dir = tempfile.mkdtemp()
+        os.environ["STORAGE_ROOT_OVERRIDE"] = cls.temp_dir
+        setup_logger("configs/settings.json")
+        initialize_db_schema(drop_and_recreate=True)
+        seed_initial_data()
+
+    @classmethod
+    def tearDownClass(cls):
+        import shutil
+        if "STORAGE_ROOT_OVERRIDE" in os.environ:
+            del os.environ["STORAGE_ROOT_OVERRIDE"]
+        if hasattr(cls, "temp_dir") and os.path.exists(cls.temp_dir):
+            shutil.rmtree(cls.temp_dir, ignore_errors=True)
+
+    def test_01_extract_page_document_payload_matching(self):
+        """Test unwrapping document by logical_page_number and fallback indexing."""
+        from src.application.pipeline.pipeline_helpers import extract_page_document_payload
+
+        mock_payload = {
+            "extracted_documents": [
+                {
+                    "logical_page_number": 1,
+                    "receipt_info": {"receipt_number": "REC-001", "transaction_date": "2026-06-01"},
+                    "merchant": {"name": "Grab 1", "tax_id": "1111111111111"},
+                    "totals": {"net_amount": 100.0}
+                },
+                {
+                    "logical_page_number": 2,
+                    "receipt_info": {"receipt_number": "REC-002", "transaction_date": "2026-06-02"},
+                    "merchant": {"name": "Grab 2", "tax_id": "2222222222222"},
+                    "totals": {"net_amount": 200.0}
+                }
+            ],
+            "_metadata": {"model_used": "gemini-3.5-flash-lite", "input_tokens": 100}
+        }
+
+        # Match page 1
+        doc1 = extract_page_document_payload(mock_payload, page_number=1)
+        self.assertEqual(doc1["receipt_info"]["receipt_number"], "REC-001")
+        self.assertEqual(doc1["totals"]["net_amount"], 100.0)
+        self.assertEqual(doc1["_metadata"]["model_used"], "gemini-3.5-flash-lite")
+
+        # Match page 2
+        doc2 = extract_page_document_payload(mock_payload, page_number=2)
+        self.assertEqual(doc2["receipt_info"]["receipt_number"], "REC-002")
+        self.assertEqual(doc2["totals"]["net_amount"], 200.0)
+
+        # Single object without extracted_documents wrapper
+        single_payload = {"receipt_info": {"receipt_number": "SINGLE-001"}}
+        doc_single = extract_page_document_payload(single_payload, page_number=1)
+        self.assertEqual(doc_single["receipt_info"]["receipt_number"], "SINGLE-001")
+
+    def test_02_insert_relational_receipt_with_items_and_metadata(self):
+        """Test insert_relational_receipt persists header and item rows with Pure SQLAlchemy 2.0."""
+        from src.infrastructure.persistence import (
+            create_batch,
+            create_document,
+            insert_relational_receipt,
+            get_db_session,
+            ExpenseReceipt,
+            ExpenseReceiptItem,
+            get_all_companies
+        )
+        from sqlalchemy import select
+
+        comps = get_all_companies(active_only=True)
+        comp_id = comps[0]["company_id"]
+
+        batch_id = "test_batch_receipt_001"
+        create_batch(batch_id=batch_id, original_filename="test.pdf", total_pages=1, storage_path="fake/path", file_hash="hash_rcpt_001", company_id=comp_id)
+
+        doc_id = "doc_test_relational_001"
+        create_document(document_id=doc_id, batch_id=batch_id, doc_type_id="expense_receipt", company_id=comp_id, status_code="PROCESSED")
+
+        mock_ai_payload = {
+            "extracted_documents": [
+                {
+                    "logical_page_number": 1,
+                    "receipt_info": {
+                        "receipt_number": "IM20260601034010",
+                        "transaction_date": "2026-06-01",
+                        "expense_category": "Transport",
+                        "payment_method": "Credit Card"
+                    },
+                    "merchant": {
+                        "name": "Grabtaxi (Thailand) Co., Ltd.",
+                        "tax_id": "0105556090377"
+                    },
+                    "totals": {
+                        "subtotal": 2167.8,
+                        "discount": 0.0,
+                        "vat_amount": 151.75,
+                        "net_amount": 2319.55
+                    },
+                    "items": [
+                        {
+                            "name": "Service Fee - 01-06-2026",
+                            "qty": 1,
+                            "unit_price": 2167.8,
+                            "total_price": 2167.8
+                        }
+                    ]
+                }
+            ]
+        }
+
+        success = insert_relational_receipt(
+            document_id=doc_id,
+            payload=mock_ai_payload,
+            original_filename="test.pdf",
+            company_id=comp_id,
+            page_number=1
+        )
+        self.assertTrue(success)
+
+        # Verify DB records
+        with get_db_session() as session:
+            receipt = session.scalars(select(ExpenseReceipt).filter_by(document_id=doc_id)).first()
+            self.assertIsNotNone(receipt)
+            self.assertEqual(receipt.merchant_name, "Grabtaxi (Thailand) Co., Ltd.")
+            self.assertEqual(receipt.tax_id, "0105556090377")
+            self.assertEqual(receipt.transaction_date, "2026-06-01")
+            self.assertEqual(receipt.expense_category, "Transport")
+            self.assertEqual(receipt.subtotal, 2167.8)
+            self.assertEqual(receipt.vat_amount, 151.75)
+            self.assertEqual(receipt.net_amount, 2319.55)
+
+            items = session.scalars(select(ExpenseReceiptItem).filter_by(receipt_id=receipt.receipt_id)).all()
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0].item_name, "Service Fee - 01-06-2026")
+            self.assertEqual(items[0].quantity, 1.0)
+            self.assertEqual(items[0].unit_price, 2167.8)
+            self.assertEqual(items[0].total_price, 2167.8)
+
+    def test_03_transform_to_db_end_to_end_populates_all_tables(self):
+        """Test transform_to_db full pipeline stage populates extracted_documents, receipts, and items."""
+        from src.application.pipeline.stage_3_transformation import transform_to_db
+        from src.infrastructure.persistence import (
+            create_batch,
+            create_page,
+            get_document_by_id,
+            get_all_companies,
+            get_db_session,
+            ExpenseReceipt,
+            ExpenseReceiptItem
+        )
+        from src.infrastructure.storage.storage_manager import storage_manager
+        from sqlalchemy import select
+
+        comps = get_all_companies(active_only=True)
+        comp_code = comps[0]["company_code"]
+        comp_id = comps[0]["company_id"]
+
+        batch_id = "test_batch_e2e_transform_001"
+        create_batch(batch_id=batch_id, original_filename="Grab_Sample.pdf", total_pages=1, storage_path="storage/companies/C00000_SAMPLE/expense_receipt/02_raw_data/0105556090377_grab", file_hash="hash_e2e_001", company_id=comp_id)
+
+        # Setup page image and json in isolated storage
+        prep_dir = storage_manager.get_preprocess_dir(comp_code, "expense_receipt")
+        os.makedirs(prep_dir, exist_ok=True)
+        fake_img_path = os.path.join(prep_dir, f"{batch_id}_page_1.jpg").replace("\\", "/")
+        with open(fake_img_path, "wb") as f:
+            f.write(b"fake_jpg_data")
+
+        create_page(page_id="page_e2e_001", batch_id=batch_id, page_number=1, image_path=fake_img_path, status_code="EXTRACTED")
+
+        proc_dir = storage_manager.get_processing_dir(comp_code, "expense_receipt")
+        merchant_proc_dir = os.path.join(proc_dir, "0105556090377_grab").replace("\\", "/")
+        os.makedirs(merchant_proc_dir, exist_ok=True)
+        json_path = os.path.join(merchant_proc_dir, f"{batch_id}_page_1.json").replace("\\", "/")
+
+        mock_payload = {
+            "extracted_documents": [
+                {
+                    "logical_page_number": 1,
+                    "receipt_info": {
+                        "receipt_number": "IM20260601034010",
+                        "transaction_date": "2026-06-01",
+                        "expense_category": "Transport",
+                        "payment_method": "Credit Card"
+                    },
+                    "merchant": {
+                        "name": "Grabtaxi (Thailand) Co., Ltd.",
+                        "tax_id": "0105556090377"
+                    },
+                    "totals": {
+                        "subtotal": 2167.8,
+                        "discount": 0.0,
+                        "vat_amount": 151.75,
+                        "net_amount": 2319.55
+                    },
+                    "items": [
+                        {
+                            "name": "Service Fee - 01-06-2026",
+                            "qty": 1,
+                            "unit_price": 2167.8,
+                            "total_price": 2167.8
+                        }
+                    ],
+                    "extraction_metadata": {
+                        "overall_confidence": 0.98,
+                        "confidence_level": "HIGH",
+                        "confidence_notes": "ตัวเลขชัดเจน หัวบิลและยอดรวมอ่านได้ครบถ้วน"
+                    }
+                }
+            ],
+            "_metadata": {
+                "model_used": "gemini-3.5-flash-lite",
+                "input_tokens": 1000,
+                "output_tokens": 200,
+                "cost_usd": 0.0001,
+                "cost_thb": 0.0036
+            }
+        }
+        with open(json_path, "w", encoding="utf-8") as jf:
+            json.dump(mock_payload, jf, ensure_ascii=False, indent=2)
+
+        # Run Stage 5 Transform to DB
+        result = transform_to_db(batch_id=batch_id, doc_type="expense_receipt", company_code=comp_code)
+        self.assertEqual(result.get("imported"), 1)
+        self.assertEqual(result.get("failed"), 0)
+
+        # Assert extracted_documents record
+        with get_db_session() as session:
+            from src.infrastructure.persistence.models import ExtractedDocument
+            doc = session.scalars(select(ExtractedDocument).filter_by(batch_id=batch_id)).first()
+            self.assertIsNotNone(doc)
+            self.assertEqual(doc.doc_number, "IM20260601034010")
+            self.assertEqual(doc.doc_date, "2026-06-01")
+            self.assertEqual(doc.entity_name, "Grabtaxi (Thailand) Co., Ltd.")
+            self.assertEqual(doc.total_amount, 2319.55)
+            self.assertEqual(doc.overall_confidence, 0.98)
+            self.assertEqual(doc.confidence_level, "HIGH")
+            self.assertEqual(doc.model_used, "gemini-3.5-flash-lite")
+
+            # Assert expense_receipts
+            receipt = session.scalars(select(ExpenseReceipt).filter_by(document_id=doc.document_id)).first()
+            self.assertIsNotNone(receipt)
+            self.assertEqual(receipt.merchant_name, "Grabtaxi (Thailand) Co., Ltd.")
+            self.assertEqual(receipt.tax_id, "0105556090377")
+            self.assertEqual(receipt.net_amount, 2319.55)
+
+            # Assert expense_receipt_items
+            items = session.scalars(select(ExpenseReceiptItem).filter_by(receipt_id=receipt.receipt_id)).all()
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0].item_name, "Service Fee - 01-06-2026")
+            self.assertEqual(items[0].total_price, 2167.8)
+
 
 if __name__ == "__main__":
     unittest.main()
+

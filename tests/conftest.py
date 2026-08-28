@@ -135,9 +135,10 @@ def global_test_storage_guard():
         if forbidden in test_storage_dir:
             raise RuntimeError(f"FATAL SAFETY BREACH: Storage root resolved to production path: {test_storage_dir}")
 
-    # Snapshot real repo storage state before tests run (Anti-Pollution Watchdog)
-    real_companies_dir = os.path.join(_project_root, "storage", "companies")
-    initial_companies = set(os.listdir(real_companies_dir)) if os.path.exists(real_companies_dir) else set()
+    # Snapshot real repo storage state before tests run (Deep Recursive Anti-Pollution Watchdog)
+    import glob
+    real_storage_dir = os.path.join(_project_root, "storage").replace("\\", "/")
+    initial_storage_files = set(f.replace("\\", "/") for f in glob.glob(f"{real_storage_dir}/**/*", recursive=True))
 
     yield test_storage_dir
 
@@ -151,11 +152,11 @@ def global_test_storage_guard():
     if os.path.exists(test_storage_dir):
         shutil.rmtree(test_storage_dir, ignore_errors=True)
 
-    # Anti-Pollution Watchdog Assertion: Verify ZERO new companies were created in real storage
-    if os.path.exists(real_companies_dir):
-        final_companies = set(os.listdir(real_companies_dir))
-        leaked_companies = final_companies - initial_companies
-        if leaked_companies:
+    # Deep Recursive Anti-Pollution Watchdog Assertion: Verify ZERO new files or directories were created in real storage tree
+    if os.path.exists(real_storage_dir):
+        final_storage_files = set(f.replace("\\", "/") for f in glob.glob(f"{real_storage_dir}/**/*", recursive=True))
+        leaked_files = final_storage_files - initial_storage_files
+        if leaked_files:
             raise RuntimeError(
-                f"CRITICAL TEST ISOLATION FAILURE: Leaked storage items found in real storage tree: {leaked_companies}"
+                f"CRITICAL TEST ISOLATION FAILURE: Leaked storage items found in real storage tree: {leaked_files}"
             )

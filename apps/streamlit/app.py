@@ -32,9 +32,8 @@ from src.infrastructure.common.config_loader import (
     load_system_settings,
     get_active_doc_types,
     get_default_company_code,
-    get_company_storage_dir,
-    get_company_pipeline_folder,
 )
+from src.infrastructure.storage.storage_manager import storage_manager
 from src.infrastructure.persistence import (
     calculate_file_hash,
     check_duplicate_document,
@@ -188,7 +187,7 @@ def main_app():
         export_fmt = st.sidebar.radio("ฟอร์แมตไฟล์ปลายทาง", ["CSV", "JSON"], horizontal=True)
         
         if st.sidebar.button("🚀 ประมวลผลเอกสารด้วย AI"):
-            inbox_upload = get_company_pipeline_folder(selected_company_code, "01_drop_zone", "Upload")
+            inbox_upload = storage_manager.get_drop_zone_dir(selected_company_code, selected_domain, "Upload")
             os.makedirs(inbox_upload, exist_ok=True)
             
             temp_path = os.path.join(inbox_upload, uploaded_file.name).replace("\\", "/")

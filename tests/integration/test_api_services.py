@@ -9,7 +9,7 @@ from src.infrastructure.common.healthcheck import (
     check_database_status,
     check_api_ready,
 )
-from src.infrastructure.common.config_loader import load_system_settings, get_company_storage_dir
+from src.infrastructure.common.config_loader import load_system_settings
 from src.infrastructure.persistence.connection import get_db_session
 from src.infrastructure.persistence.models import Company
 

@@ -532,7 +532,9 @@ class AIService:
             env_var = cred["api_key_env"]
             api_key = os.getenv(env_var)
 
+            # Strict Config Adherence: Fail-Fast if configured env_var is missing or empty
             if not api_key:
+                last_exception = ValueError(f"Environment variable '{env_var}' is empty or not set in .env")
                 logger.warning(f"API key env '{env_var}' is not set. Skipping credential '{cred_id}'.")
                 continue
 

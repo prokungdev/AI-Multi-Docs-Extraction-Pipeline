@@ -22,12 +22,12 @@
 - `configs/`: `settings.json` (Validated by `SystemSettingsModel`) & `doc_types/`
 - `storage/`: `database/` (`pipeline.db`) & `companies/` (Tenant data folders)
 
-## 2. Pipeline Workflow
+## 2. Pipeline Workflow (Per-Batch Concurrency Isolation)
 1. **Stage 0 (`init_system`)**: Validates config & initializes DB/storage.
-2. **Stage 1 (`split_and_match`)**: Splits PDF to JPGs, computes SHA-256, matches merchant rules.
-3. **Stage 2 (`extract_documents`)**: Multimodal AI extraction + token cost calculation.
-4. **Stage 3 (`transform_to_db`)**: Inserts normalized records into SQLite via SQLAlchemy 2.0.
-5. **Stage 4 (`validate_documents`)**: Verifies financial math balance & confidence scores.
+2. **Stage 1 (`split_and_match`)**: Splits PDF to JPGs, computes SHA-256, matches merchant rules, outputs `batch_id`.
+3. **Stage 2 (`extract_documents(batch_id)`)**: Multimodal AI extraction + token cost calculation for target batch.
+4. **Stage 3 (`transform_to_db(batch_id)`)**: Inserts normalized records into SQLite via SQLAlchemy 2.0 for target batch.
+5. **Stage 4 (`validate_documents(batch_id)`)**: Verifies financial math balance & confidence scores for target batch.
 6. **Exporters (`run_export_outputs`)**: Generates CSV, JSON, and CP874 Express PV files.
 
 ## 3. Database & Persistence Layer (Multi-Database Support)

@@ -584,6 +584,62 @@ class TestSQLAlchemyORM(unittest.TestCase):
             self.assertIsNotNone(saved_doc.merchant)
             self.assertEqual(saved_doc.merchant.short_name, "7eleven")
 
+    def test_10_postgresql_url_resolution_fail_fast(self):
+        """Verify get_database_url raises ValueError when postgresql driver is active but env var is missing."""
+        import tempfile
+        import json
+        from unittest.mock import patch
+
+        temp_settings = {
+            "storage_root": "storage",
+            "database": {
+                "active_driver": "postgresql",
+                "postgresql": {
+                    "url_env": "MISSING_PG_DATABASE_URL"
+                }
+            }
+        }
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
+            json.dump(temp_settings, tf)
+            temp_path = tf.name
+
+        try:
+            with patch.dict(os.environ, {"TEST_ENVIRONMENT": "0", "DB_URL_OVERRIDE": "", "DB_PATH_OVERRIDE": ""}, clear=False):
+                if "MISSING_PG_DATABASE_URL" in os.environ:
+                    del os.environ["MISSING_PG_DATABASE_URL"]
+                with self.assertRaises(ValueError) as ctx:
+                    get_database_url(temp_path)
+                self.assertIn("Active database driver is 'postgresql'", str(ctx.exception))
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def test_11_reset_pipeline_database_full_drop_and_reseed(self):
+        """Verify reset_pipeline_database(clear_documents_only=False) drops DB, recreates schema, and reseeds default master data."""
+        from src.infrastructure.persistence.schema import reset_pipeline_database
+        from src.infrastructure.persistence.models import Merchant, Company, DocumentStatus, User
+        from src.infrastructure.common.constants import DefaultIdentifier
+
+        # Call full reset
+        result = reset_pipeline_database(clear_documents_only=False)
+        self.assertEqual(result.get("status"), "SUCCESS")
+
+        # Verify only default master records exist
+        with get_db_session() as session:
+            merchants = session.scalars(select(Merchant)).all()
+            self.assertEqual(len(merchants), 1)
+            self.assertEqual(merchants[0].merchant_id, DefaultIdentifier.NO_TAX_ID)
+
+            companies = session.scalars(select(Company)).all()
+            self.assertGreaterEqual(len(companies), 1)
+
+            statuses = session.scalars(select(DocumentStatus)).all()
+            self.assertGreaterEqual(len(statuses), 8)
+
+            users = session.scalars(select(User)).all()
+            self.assertGreaterEqual(len(users), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

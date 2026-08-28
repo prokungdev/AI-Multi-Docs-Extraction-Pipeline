@@ -114,27 +114,6 @@ def get_default_company_code() -> str:
     return settings.get("default_company_code", DefaultIdentifier.COMPANY_CODE)
 
 
-def get_company_storage_dir(company_code: str = None, storage_root: str = None) -> str:
-    """
-    Returns the root storage directory for a specific company (e.g. storage/companies/C00000_SAMPLE).
-    """
-    if storage_root is None:
-        settings = load_system_settings()
-        storage_root = settings.get("storage_root", DefaultPath.STORAGE_ROOT)
-    code = company_code or get_default_company_code()
-    return os.path.join(storage_root, "companies", code)
-
-
-def get_company_pipeline_folder(company_code: str = None, folder_name: str = "01_drop_zone", doc_type_id: str = None) -> str:
-    """
-    Returns the path to a specific pipeline folder for a company (e.g. storage/companies/C00000_SAMPLE/expense_receipt/01_drop_zone).
-    """
-    base_comp_dir = get_company_storage_dir(company_code)
-    if doc_type_id:
-        return os.path.join(base_comp_dir, doc_type_id, folder_name)
-    return os.path.join(base_comp_dir, folder_name)
-
-
 def get_doc_type_config_dir(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> str:
     """
     Locates the configuration directory for a given doc_type_id.
@@ -227,16 +206,10 @@ def load_doc_type_ai_config(doc_type_id: str, settings: dict = None) -> tuple[st
     if settings is None:
         settings = load_system_settings()
 
-    provider = None
-    model = None
-
-    try:
-        rules = load_doc_type_rules(doc_type_id)
-        if rules:
-            provider = rules.get("ai_provider")
-            model = rules.get("ai_model")
-    except Exception:
-        pass
+    rules = load_doc_type_rules(doc_type_id)
+    if rules and isinstance(rules, dict):
+        provider = rules.get("ai_provider")
+        model = rules.get("ai_model")
 
     ai_provider_cfg = settings.get("ai_provider", {})
     if not provider:

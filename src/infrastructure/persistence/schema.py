@@ -201,12 +201,39 @@ def initialize_db_schema(drop_and_recreate: bool = False):
         raise e
 
 
-def reset_pipeline_database(clear_documents_only: bool = True) -> dict:
+def reset_pipeline_database(clear_documents_only: bool = False) -> dict:
     """
-    Safely resets pipeline database tables using Pure SQLAlchemy 2.0 ORM.
+    Safely resets pipeline database.
+    - If clear_documents_only is False (Default): Disposes engines, drops the database file directly from disk,
+      recreates the complete schema, and re-seeds default master data (NO_TAXID, Users, Company, Statuses).
+    - If clear_documents_only is True: Deletes transactional document records only.
     """
+    from .connection import get_database_url, dispose_all_engines
+    from .seeder import seed_initial_data
     from sqlalchemy import delete
+
     try:
+        if not clear_documents_only:
+            url = get_database_url()
+            if url.startswith("sqlite:///"):
+                db_path = url.replace("sqlite:///", "")
+                dispose_all_engines()
+                if os.path.exists(db_path):
+                    try:
+                        os.remove(db_path)
+                    except Exception as fe:
+                        logger.warning(f"Could not remove database file '{db_path}': {fe}")
+                for suffix in ["-wal", "-shm"]:
+                    if os.path.exists(db_path + suffix):
+                        try:
+                            os.remove(db_path + suffix)
+                        except Exception:
+                            pass
+
+            initialize_db_schema(drop_and_recreate=True)
+            seed_initial_data()
+            return {"status": "SUCCESS", "action": "DROPPED_DATABASE_AND_RESEEDED"}
+
         deleted_counts = {}
         with get_db_session() as session:
             models_to_clear = [

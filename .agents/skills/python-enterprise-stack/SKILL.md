@@ -30,6 +30,9 @@ This skill documents the universal technology stack standards, design patterns, 
   - Never retain module-level function aliases, wrapper functions, or class/property aliases solely for internal backward compatibility (e.g. `legacy_func = new_func`, `def old_func(): return new_func()`).
   - Eliminate vocabulary drift across codebase layers: enforce a single, canonical naming convention across all modules, schemas, database models, and API endpoints.
   - Consumers must import and invoke canonical functions directly without intermediate legacy translation layers.
+- **Zero Indirection Chaining & Subsystem Single Source of Truth**:
+  - **No Variable / Config Chaining**: Never configure variables that reference other variables or create multi-tier indirection chains (e.g. `config_key -> var_name -> fallback_var -> real_value`). Configurations and parameters must map directly to their canonical destinations in a single hop.
+  - **No Middleman Wrapper Functions**: Subsystem domain logic (e.g. filesystem path resolution, database session management, telemetry) must reside in its single authoritative manager class/service. Other utility modules (like config loaders) must NEVER re-implement or act as proxy middlemen for subsystem responsibilities. Callers must invoke the primary subsystem manager directly.
 - **High-Signal Commenting & Docstring Hygiene**:
   - **Explain WHY, not WHAT**: Code and type hints explain what and how; comments exist strictly to explain why (rationale, business rules, edge cases, workarounds, or mathematical formulas).
   - **Zero Noise & Obvious Boilerplate**: Never restate what the code clearly does (e.g. avoid comments like `# load json`, `# check if file exists`, or repetitive `Fail-Fast: Raises ...` above standard guard clauses).

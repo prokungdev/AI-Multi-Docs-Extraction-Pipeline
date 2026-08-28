@@ -236,7 +236,7 @@ def create_document(
                 else:
                     def_comp = session.scalars(select(Company).filter_by(company_code=DefaultIdentifier.COMPANY_CODE)).first()
             # Resolve and validate merchant_id against Merchant records
-            raw_merchant_key = merchant_id or source_id
+            raw_merchant_key = merchant_id
             final_merchant_id = None
             if raw_merchant_key:
                 merch_exists = session.scalars(select(Merchant.merchant_id).filter_by(merchant_id=raw_merchant_key)).first()
@@ -873,10 +873,10 @@ def search_documents(
         return []
 
 
-def get_unextracted_batches(status_codes: list[str] = None, company_id: str = None) -> list[dict]:
+def get_unextracted_batches(status_codes: list[str] = None, company_id: str = None, batch_id: str = None) -> list[dict]:
     """
     Fetches batches that contain pages matching specified status codes using Pure SQLAlchemy 2.0 ORM.
-    Optionally filters by company_id.
+    Optionally filters by company_id and batch_id.
     """
     if status_codes is None:
         status_codes = [DocumentStatusCode.PREPROCESSED, DocumentStatusCode.PENDING]
@@ -898,6 +898,9 @@ def get_unextracted_batches(status_codes: list[str] = None, company_id: str = No
             if company_id:
                 stmt = stmt.where(ProcessedBatch.company_id == company_id)
 
+            if batch_id:
+                stmt = stmt.where(ProcessedBatch.batch_id == batch_id)
+
             batches = session.execute(stmt).all()
 
             return [
@@ -916,10 +919,10 @@ def get_unextracted_batches(status_codes: list[str] = None, company_id: str = No
         return []
 
 
-def get_pages_by_status(status_codes: list[str] = None, company_id: str = None) -> list[dict]:
+def get_pages_by_status(status_codes: list[str] = None, company_id: str = None, batch_id: str = None) -> list[dict]:
     """
     Fetches document page records joined with batch info matching given status codes using Pure SQLAlchemy 2.0 ORM.
-    Optionally filters by company_id.
+    Optionally filters by company_id and batch_id.
     """
     if status_codes is None:
         status_codes = [DocumentStatusCode.EXTRACTED]
@@ -938,6 +941,9 @@ def get_pages_by_status(status_codes: list[str] = None, company_id: str = None) 
 
             if company_id:
                 stmt = stmt.where(ProcessedBatch.company_id == company_id)
+
+            if batch_id:
+                stmt = stmt.where(DocumentPage.batch_id == batch_id)
 
             stmt = stmt.order_by(
                 DocumentPage.batch_id.asc(),

@@ -8,7 +8,6 @@ from src.infrastructure.common.config_loader import (
     load_system_settings,
     get_default_doc_type,
     get_default_company_code,
-    get_company_pipeline_folder,
     get_ai_provider_config,
 )
 from src.infrastructure.persistence import (
@@ -28,6 +27,7 @@ from src.infrastructure.common.utils import chunk_list
 
 
 def extract_documents(
+    batch_id: str,
     doc_type: str = None,
     merchant_id: str = None,
     company_code: str = None
@@ -36,7 +36,11 @@ def extract_documents(
     Stage 3: AI Document Extraction with Smart Chunk-Level Checkpointing.
     Extracts structured JSON data per chunk, tracks chunk status in DB, and supports resuming.
     """
-    logger.info("Starting Stage 3 (Extract): Extracting Structured Data via Multimodal AI (Smart Checkpointing)")
+    if not batch_id or not str(batch_id).strip():
+        raise ValueError("batch_id is required for extract_documents (Fail-Fast).")
+
+    clean_batch_id = str(batch_id).strip()
+    logger.info(f"Starting Stage 3 (Extract): Extracting Structured Data via Multimodal AI [Batch: {clean_batch_id}]")
 
     load_dotenv()
     settings = load_system_settings()
@@ -54,7 +58,8 @@ def extract_documents(
     try:
         batches = get_unextracted_batches(
             [DocumentStatus.PREPROCESSED.value, DocumentStatus.PENDING.value, DocumentStatus.FAILED.value],
-            company_id=company_id
+            company_id=company_id,
+            batch_id=clean_batch_id
         )
 
         if not batches:
@@ -64,6 +69,7 @@ def extract_documents(
         logger.info(f"Found {len(batches)} batch(es) to extract with AI for company '{comp_code}'...")
 
         success_batches = 0
+        failed_batches = 0
         total_docs = 0
 
         for b in batches:
@@ -143,6 +149,7 @@ def extract_documents(
 
             if batch_failed or len(chunk_payloads) < len(all_chunk_indexes):
                 logger.warning(f"Batch '{batch_id}' partially completed or failed. Progress saved for retry/resume.")
+                failed_batches += 1
                 continue
 
             # Merge all chunks into final document payload
@@ -170,7 +177,13 @@ def extract_documents(
             success_batches += 1
             total_docs += 1
 
-        return {"success": True, "batches_processed": success_batches, "documents_extracted": total_docs}
+        is_success = (failed_batches == 0) and (success_batches > 0)
+        return {
+            "success": is_success,
+            "batches_processed": success_batches,
+            "batches_failed": failed_batches,
+            "documents_extracted": total_docs
+        }
 
     except Exception as e:
         logger.error(f"Error during AI extraction stage: {e}")
@@ -178,6 +191,7 @@ def extract_documents(
 
 
 async def async_extract_documents(
+    batch_id: str,
     doc_type: str = None,
     merchant_id: str = None,
     company_code: str = None
@@ -185,7 +199,11 @@ async def async_extract_documents(
     """
     Stage 3 (Async): Concurrent AI Document Extraction with Smart Chunk Checkpointing.
     """
-    logger.info("Starting Stage 3 (Async Extract): Concurrent AI Extraction (Smart Checkpointing)")
+    if not batch_id or not str(batch_id).strip():
+        raise ValueError("batch_id is required for async_extract_documents (Fail-Fast).")
+
+    clean_batch_id = str(batch_id).strip()
+    logger.info(f"Starting Stage 3 (Async Extract): Concurrent AI Extraction [Batch: {clean_batch_id}]")
 
     load_dotenv()
     settings = load_system_settings()
@@ -205,7 +223,8 @@ async def async_extract_documents(
     try:
         batches = get_unextracted_batches(
             [DocumentStatus.PREPROCESSED.value, DocumentStatus.PENDING.value, DocumentStatus.FAILED.value],
-            company_id=company_id
+            company_id=company_id,
+            batch_id=clean_batch_id
         )
 
         if not batches:
@@ -303,8 +322,15 @@ async def async_extract_documents(
 
         results = await asyncio.gather(*[process_single_batch(b) for b in batches])
         success_batches = sum(1 for r in results if r)
+        failed_batches = sum(1 for r in results if not r)
+        is_success = (failed_batches == 0) and (success_batches > 0)
 
-        return {"success": True, "batches_processed": success_batches, "documents_extracted": success_batches}
+        return {
+            "success": is_success,
+            "batches_processed": success_batches,
+            "batches_failed": failed_batches,
+            "documents_extracted": success_batches
+        }
 
     except Exception as e:
         logger.error(f"Error during async AI extraction stage: {e}")

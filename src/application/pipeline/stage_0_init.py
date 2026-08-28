@@ -74,7 +74,7 @@ def init_system(settings_path: str = "configs/settings.json", drop_and_recreate:
     initialize_log_db_schema(settings_path)
     initialize_db_schema(drop_and_recreate=drop_and_recreate)
     seed_initial_data(configs_dir=settings_path)
-    dir_count = initialize_storage_directories(settings_path)
+    dir_count = initialize_storage_directories(settings_path, clean_staging=drop_and_recreate)
     logger.info(f"[PASS] Ensured {dir_count} directories are created with .gitkeep.")
 
     logger.info("[SYSTEM STATUS] System is READY and fully configured!")

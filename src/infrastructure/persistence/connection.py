@@ -73,9 +73,11 @@ def get_database_url(settings_path: str = DefaultPath.SETTINGS) -> str:
         pg_cfg = db_cfg.get("postgresql", {})
         url_env_name = pg_cfg.get("url_env", "DATABASE_URL")
         pg_url = os.environ.get(url_env_name)
-        if pg_url:
-            return pg_url
-        logger.warning(f"PostgreSQL active driver selected but environment variable '{url_env_name}' is not set. Falling back to SQLite.")
+        if not pg_url or not pg_url.strip():
+            raise ValueError(
+                f"Active database driver is 'postgresql', but required environment variable '{url_env_name}' is not set in .env"
+            )
+        return pg_url
 
     # SQLite resolution (Default)
     sqlite_cfg = db_cfg.get("sqlite", {})

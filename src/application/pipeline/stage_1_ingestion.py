@@ -7,8 +7,6 @@ from src.infrastructure.common.config_loader import (
     load_system_settings,
     resolve_doc_type,
     resolve_company_code,
-    get_company_storage_dir,
-    get_company_pipeline_folder,
     get_image_processing_config,
     get_supported_extensions,
     get_ai_provider_config,

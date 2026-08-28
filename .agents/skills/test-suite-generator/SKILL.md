@@ -42,7 +42,7 @@ Guides the generation of robust, automated unit and integration test suites adhe
 
 ### 1.6 🛡️ Dynamic Environment Path Resolution & Anti-Pollution Watchdogs
 - **Dynamic Property Resolution**: Storage and Path managers must NEVER cache `os.environ` overrides into static instance attributes during `__init__`. Root properties (`.root`) MUST resolve `os.environ.get("STORAGE_ROOT_OVERRIDE")` dynamically on every access.
-- **Anti-Pollution Storage Watchdog**: Test fixtures must snapshot the real storage tree prior to execution and assert that ZERO new tenant directories, storage folders, or SQLite journals (`.db-wal`, `.db-shm`) were created in the real storage tree during test execution.
+- **Deep Recursive Anti-Pollution Storage Watchdog**: Test fixtures MUST take a **deep recursive snapshot** of the real storage tree prior to execution (`glob.glob("storage/**/*", recursive=True)` or `Path("storage").rglob("*")`). Watchdogs must NEVER rely on shallow directory listings (`os.listdir`), and MUST assert that ZERO new files, mock images, temporary directories (`tmp*`), or database journals (`.db-wal`, `.db-shm`) were created in any nested level of the real storage tree. Fail the entire test suite immediately if even 1 stray file is detected.
 
 ---
 

@@ -7,7 +7,6 @@ from src.infrastructure.common.config_loader import (
     load_system_settings,
     get_default_doc_type,
     get_default_company_code,
-    get_company_pipeline_folder,
 )
 from src.infrastructure.persistence import (
     get_pages_by_status,
@@ -23,6 +22,7 @@ from src.application.pipeline.stage_4_validation import post_process_document
 
 
 def transform_to_db(
+    batch_id: str,
     doc_type: str = None,
     company_code: str = None
 ) -> dict:
@@ -30,7 +30,11 @@ def transform_to_db(
     Stage 5: Database Transformation.
     Imports verified/review-needed records from 04_processing into relational SQLite tables.
     """
-    logger.info("Starting Stage 5 (Transform to DB): DB Transformation")
+    if not batch_id or not str(batch_id).strip():
+        raise ValueError("batch_id is required for transform_to_db (Fail-Fast).")
+
+    clean_batch_id = str(batch_id).strip()
+    logger.info(f"Starting Stage 5 (Transform to DB): DB Transformation [Batch: {clean_batch_id}]")
 
     settings = load_system_settings()
     comp_code = company_code or get_default_company_code()
@@ -47,7 +51,7 @@ def transform_to_db(
             DocumentStatus.PROCESSED.value,
             DocumentStatus.NEEDS_REVIEW.value,
             DocumentStatus.EXTRACTED.value,
-        ], company_id=company_id)
+        ], company_id=company_id, batch_id=clean_batch_id)
 
         if not pages:
             logger.info(f"No pages found for DB transformation for company '{comp_code}'.")
@@ -91,35 +95,46 @@ def transform_to_db(
                 failed_count += 1
                 continue
 
+            from src.application.pipeline.pipeline_helpers import extract_page_document_payload
+            doc_payload = extract_page_document_payload(extracted_data, page_number=p.get("page_number", 1))
+
             document_id = generate_entity_id(EntityIdPrefix.DOCUMENT)
             post_result = post_process_document(
                 document_id=document_id,
-                payload=extracted_data,
+                payload=doc_payload,
                 merchant_id=merchant_folder,
                 doc_type_id=target_doc_type,
                 settings=settings,
             )
             status_code = post_result.get("status_code", DocumentStatus.PROCESSED.value)
 
-            # Extract header fields
-            rec_info = extracted_data.get("receipt_info", {})
-            merch_info = extracted_data.get("merchant", {})
-            totals_info = extracted_data.get("totals") or extracted_data.get("financial_summary", {})
+            # Extract header fields from unwrapped page document payload
+            rec_info = doc_payload.get("receipt_info", {})
+            merch_info = doc_payload.get("merchant", {})
+            totals_info = doc_payload.get("totals") or doc_payload.get("financial_summary", {})
 
-            doc_number = rec_info.get("receipt_number") or extracted_data.get("doc_number", "")
-            doc_date = rec_info.get("transaction_date") or extracted_data.get("transaction_date", "")
-            entity_name = merch_info.get("name") or extracted_data.get("merchant_name", "")
+            doc_number = rec_info.get("receipt_number") or doc_payload.get("doc_number", "")
+            doc_date = rec_info.get("transaction_date") or doc_payload.get("transaction_date", "")
+            entity_name = merch_info.get("name") or doc_payload.get("merchant_name", "")
             total_amount = float(totals_info.get("net_amount", 0.0))
             search_text = f"{entity_name} {doc_number} {rec_info.get('expense_category', '')}".strip()
 
             # Extract AI and Cost metadata
-            ai_meta = extracted_data.get("_metadata", {})
+            ai_meta = doc_payload.get("_metadata") or extracted_data.get("_metadata", {})
             model_used = ai_meta.get("model_used")
             input_tokens = ai_meta.get("input_tokens", 0)
             output_tokens = ai_meta.get("output_tokens", 0)
             cost_usd = ai_meta.get("cost_usd", 0.0)
             cost_thb = ai_meta.get("cost_thb", 0.0)
             is_free_tier = ai_meta.get("is_free_tier", 0)
+
+            ext_meta = doc_payload.get("extraction_metadata", {})
+            overall_confidence = float(ext_meta.get("overall_confidence", 0.70))
+            confidence_level = ext_meta.get("confidence_level", "MEDIUM")
+            is_blurry = 1 if ext_meta.get("is_blurry", False) else 0
+            has_ambiguous = 1 if ext_meta.get("has_ambiguous_fields", False) else 0
+            confidence_notes = ext_meta.get("confidence_notes", "")
+            review_priority = ext_meta.get("review_priority", "LOW")
 
             create_success = create_document(
                 document_id=document_id,
@@ -140,11 +155,17 @@ def transform_to_db(
                 cost_usd=cost_usd,
                 cost_thb=cost_thb,
                 is_free_tier=is_free_tier,
+                overall_confidence=overall_confidence,
+                confidence_level=confidence_level,
+                is_blurry=is_blurry,
+                is_ambiguous=has_ambiguous,
+                confidence_notes=confidence_notes,
+                review_priority=review_priority,
             )
 
             if create_success:
                 link_pages_to_document(document_id, [page_id])
-                insert_relational_receipt(document_id, extracted_data, original_filename=pdf_name, company_id=company_id)
+                insert_relational_receipt(document_id, doc_payload, original_filename=pdf_name, company_id=company_id, page_number=p.get("page_number", 1))
                 imported_count += 1
                 logger.info(f"Imported document record '{document_id}' (Company: {comp_code}, Status: {status_code})")
             else:

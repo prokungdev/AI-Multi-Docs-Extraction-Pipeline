@@ -216,10 +216,11 @@ def validate_environment(settings_path: str = DefaultPath.SETTINGS) -> list[str]
 
     return messages
 
-def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS) -> int:
+def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS, clean_staging: bool = False) -> int:
     """
     Initializes storage directories for all active domains and companies defined in settings.json / database
     and ensures empty folders contain .gitkeep to remain tracked in Git.
+    If clean_staging is True, wipes all temporary files and staging merchant folders in 02_raw_data, 03_preprocess, 04_processing.
     
     Returns:
         The number of directories ensured.
@@ -294,6 +295,28 @@ def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS) ->
             for folder in folders:
                 path = os.path.join(dt_root, folder)
                 os.makedirs(path, exist_ok=True)
+
+                # If clean_staging is requested, wipe staging files/merchant folders in 02, 03, 04
+                if clean_staging and folder in ["02_raw_data", "03_preprocess", "04_processing"]:
+                    for item in os.listdir(path):
+                        if item.startswith(".gitkeep"):
+                            continue
+                        item_path = os.path.join(path, item).replace("\\", "/")
+                        if folder == "02_raw_data" and item == "0000000000000_no_taxid":
+                            for f in os.listdir(item_path):
+                                if not f.startswith(".gitkeep"):
+                                    try:
+                                        os.remove(os.path.join(item_path, f))
+                                    except Exception:
+                                        pass
+                        elif os.path.isdir(item_path):
+                            shutil.rmtree(item_path, ignore_errors=True)
+                        else:
+                            try:
+                                os.remove(item_path)
+                            except Exception:
+                                pass
+
                 gitkeep_path = os.path.join(path, ".gitkeep")
                 if not os.path.exists(gitkeep_path):
                     try:
@@ -311,6 +334,14 @@ def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS) ->
                         with open(os.path.join(sub_path, ".gitkeep"), "w", encoding="utf-8") as gf:
                             gf.write("# Keep directory in git\n")
                         ensured_count += 1
+
+                # Subfolder for 02_raw_data/0000000000000_no_taxid
+                if folder == "02_raw_data":
+                    no_tax_path = os.path.join(path, "0000000000000_no_taxid")
+                    os.makedirs(no_tax_path, exist_ok=True)
+                    with open(os.path.join(no_tax_path, ".gitkeep"), "w", encoding="utf-8") as gf:
+                        gf.write("# Default cash slip folder\n")
+                    ensured_count += 1
 
     # Ensure logging directory exists
     logging_cfg = settings.get("logging", {})
