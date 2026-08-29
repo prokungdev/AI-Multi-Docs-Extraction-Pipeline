@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from src.infrastructure.persistence import (
+from src.infrastructure.database import (
     get_db_session_dep,
     get_all_companies,
     get_company,

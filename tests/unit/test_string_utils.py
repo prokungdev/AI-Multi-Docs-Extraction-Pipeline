@@ -4,8 +4,8 @@ Pure helper function testing without side effects.
 """
 
 import pytest
-from src.infrastructure.common.utils import chunk_list
-from src.infrastructure.persistence.masters import sanitize_short_name
+from src.infrastructure.core.utils import chunk_list
+from src.infrastructure.database.repositories import sanitize_short_name
 
 
 # ==============================================================================

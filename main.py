@@ -1,8 +1,8 @@
 import argparse
 import sys
 import asyncio
-from src.infrastructure.common.config_loader import get_default_company_code
-from src.infrastructure.common.healthcheck import run_healthcheck, print_healthcheck_report
+from src.infrastructure.core.config import get_default_company_code
+from src.infrastructure.core.healthcheck import run_healthcheck, print_healthcheck_report
 from src.application.pipeline import (
     init_system,
     split_and_match,

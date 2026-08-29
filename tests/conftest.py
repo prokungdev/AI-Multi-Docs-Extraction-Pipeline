@@ -30,9 +30,9 @@ _project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from src.infrastructure.persistence.connection import dispose_all_engines
-from src.infrastructure.persistence.schema import initialize_db_schema
-from src.infrastructure.common.logger import setup_logger
+from src.infrastructure.database.engine import dispose_all_engines
+from src.infrastructure.database.schema import initialize_db_schema
+from src.infrastructure.core.logger import setup_logger
 
 
 # Production path signatures that MUST NEVER be targeted during testing

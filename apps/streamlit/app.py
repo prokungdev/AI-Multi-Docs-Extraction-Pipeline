@@ -17,24 +17,24 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Import core modules
-from src.infrastructure.pdf.image_service import split_pdf
+from src.infrastructure.external.pdf.image_service import split_pdf
 from src.application.usecases.extractor import extract_document_data
-from src.domain.services.transformer import transform_data
-from src.infrastructure.common.constants import DefaultPath, SystemUserId
+from src.domain.services.template_evaluator import transform_data
+from src.infrastructure.core.constants import DefaultPath, SystemUserId
 from src.application.usecases.initializer import (
     validate_settings_config,
     validate_doc_type_config,
     validate_environment,
     initialize_storage_directories
 )
-from src.infrastructure.common.logger import setup_logger
-from src.infrastructure.common.config_loader import (
+from src.infrastructure.core.logger import setup_logger
+from src.infrastructure.core.config import (
     load_system_settings,
     get_active_doc_types,
     get_default_company_code,
 )
-from src.infrastructure.storage.storage_manager import storage_manager
-from src.infrastructure.persistence import (
+from src.infrastructure.external.storage.storage_manager import storage_manager
+from src.infrastructure.database import (
     calculate_file_hash,
     check_duplicate_document,
     get_pending_documents,
@@ -64,8 +64,8 @@ from src.application.pipeline import split_and_match, release_pending_merchant_f
 from src.application.pipeline.stage_4_validation import post_process_document, archive_and_export_document
 
 
-from src.infrastructure.exporters import list_exporters
-from src.infrastructure.common.config_loader import get_app_metadata
+from src.application.exporters import list_exporters
+from src.infrastructure.core.config import get_app_metadata
 
 _app_meta = get_app_metadata()
 
@@ -134,7 +134,7 @@ def main_app():
     # Company Selection
     all_companies = get_all_companies(active_only=True)
     if not all_companies:
-        from src.infrastructure.persistence import get_or_create_default_company
+        from src.infrastructure.database import get_or_create_default_company
         default_c = get_or_create_default_company()
         all_companies = [default_c]
         
@@ -718,7 +718,7 @@ def main_app():
                         ).strip()
                         
                         # Real-time uniqueness alert
-                        from src.infrastructure.persistence import check_short_name_duplicate, check_file_prefix_duplicate
+                        from src.infrastructure.database import check_short_name_duplicate, check_file_prefix_duplicate
                         is_short_dup = check_short_name_duplicate(edit_short_name, exclude_merchant_id=m_id, company_id=selected_company_id)
                         is_pfx_dup = check_file_prefix_duplicate(edit_file_prefix, exclude_merchant_id=m_id, company_id=selected_company_id)
                         

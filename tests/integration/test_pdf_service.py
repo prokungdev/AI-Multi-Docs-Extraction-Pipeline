@@ -7,7 +7,7 @@ import os
 import tempfile
 import pytest
 import pymupdf as fitz
-from src.infrastructure.pdf.pdf_service import PDFService
+from src.infrastructure.external.pdf.pdf_service import PDFService
 
 
 def test_pdf_service_adapter():

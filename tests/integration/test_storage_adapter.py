@@ -10,9 +10,9 @@ import tempfile
 import unittest
 from PIL import Image
 
-from src.infrastructure.storage.base import BaseStorageAdapter
-from src.infrastructure.storage.local_adapter import LocalStorageAdapter
-from src.infrastructure.storage.storage_manager import StoragePathManager
+from src.infrastructure.external.storage.base import BaseStorageAdapter
+from src.infrastructure.external.storage.local_adapter import LocalStorageAdapter
+from src.infrastructure.external.storage.storage_manager import StoragePathManager
 
 
 class TestLocalStorageAdapterIntegration(unittest.TestCase):

@@ -31,7 +31,7 @@ my-project/
 ├── src/                           # Canonical Domain-Driven Design (DDD) Core
 │   ├── domain/                    # Pure business entities, policies, and domain services
 │   ├── application/               # Use cases, pipeline stages, and DTOs
-│   └── infrastructure/            # Adapters (AI SDKs, persistence, storage, exporters)
+│   └── infrastructure/            # Technical adapters (3 Pillars: database/, external/, core/)
 ├── tests/                         # Automated test suite (unit, integration, e2e)
 ├── .env.example                   # Environment variable template (NO secrets)
 ├── .gitignore                     # Git exclusion rules (.venv, .env, build outputs, logs)

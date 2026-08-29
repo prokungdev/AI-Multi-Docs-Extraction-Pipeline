@@ -2,9 +2,9 @@ import os
 import json
 import copy
 from PIL import Image
-from src.infrastructure.common.logger import logger
-from src.infrastructure.common.config_loader import load_doc_type_ai_config, load_system_settings, get_ai_provider_config, get_default_doc_type
-from src.infrastructure.ai.ai_service import ai_service
+from src.infrastructure.core.logger import logger
+from src.infrastructure.core.config import load_doc_type_ai_config, load_system_settings, get_ai_provider_config, get_default_doc_type
+from src.infrastructure.external.ai.ai_service import ai_service
 
 def clean_schema_for_structured_output(schema: dict) -> dict:
     """Converts a standard JSON Schema dictionary into the OpenAPI uppercase schema format."""
@@ -60,7 +60,7 @@ def extract_document_data(
     provider, model_name = load_doc_type_ai_config(target_doc_type, settings)
     logger.info(f"AI Config resolved for doc_type '{target_doc_type}' (merchant '{merchant_key}'): Provider='{provider}', Model='{model_name}'")
 
-    from src.infrastructure.common.config_loader import load_doc_type_schema, load_doc_type_prompt
+    from src.infrastructure.core.config import load_doc_type_schema, load_doc_type_prompt
     raw_schema = load_doc_type_schema(target_doc_type, configs_dir=configs_dir)
         
     # 1. Clean the schema for structured output
@@ -200,7 +200,7 @@ def extract_document_data(
     }]
 
     # Delegate credential rotation, retry, and logging to AIService (Single Responsibility)
-    from src.infrastructure.ai.ai_service import ai_service
+    from src.infrastructure.external.ai.ai_service import ai_service
     extracted_data, _metadata = ai_service.extract_with_credentials(
         prompt=prompt_text,
         images=images,

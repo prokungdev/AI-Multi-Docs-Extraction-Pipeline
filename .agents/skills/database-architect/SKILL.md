@@ -41,7 +41,8 @@ All relational database models and schema definitions MUST strictly follow these
    All database operations MUST execute inside a session context:
    ```python
    from sqlalchemy import select
-   from my_app.core.db import get_db_session, MasterEntity
+   from my_app.infrastructure.database.engine import get_db_session
+   from my_app.infrastructure.database.models import MasterEntity
 
    with get_db_session() as session:
        stmt = select(MasterEntity).filter_by(entity_code=entity_code)

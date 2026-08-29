@@ -4,8 +4,8 @@ Tests multi-provider cost calculation formulas (Gemini, OpenAI) without API netw
 """
 
 import pytest
-from src.infrastructure.ai.cost_estimator import calculate_api_cost, format_cost_display
-from src.infrastructure.ai.ai_service import AIService
+from src.infrastructure.external.ai.cost_estimator import calculate_api_cost, format_cost_display
+from src.infrastructure.external.ai.ai_service import AIService
 
 
 @pytest.mark.parametrize("provider, model, input_tokens, output_tokens, override_tier, expected_cost", [

@@ -48,6 +48,9 @@ Must contain:
 1. **Relative Links Only**: ALL markdown file links MUST use clean relative links (e.g. `docs/installation_guide.md`). NEVER use local absolute `file:///` URLs.
 2. **Valid Mermaid Diagrams**: Quote labels containing special characters and ensure diagram syntax compiles cleanly.
 3. **Synchronization with Codebase**: Always verify code imports, function signatures, and database table definitions against active source files before writing documentation.
+4. **Sequential Heading & Section Integrity**: Ensure all Markdown headers and table subsection numbers (e.g., `### 2.1`, `### 2.2`) are strictly sequential, unique, and free of accidental duplicate numbers.
+5. **Metric & Test Count Realism**: When documenting test suite coverage or total test counts in architecture overviews, the numbers MUST exactly match the latest live test execution results.
+6. **Holistic Workspace Sweep**: When auditing documentation, verify that no temporary test files (`_temp*`, mock images, leftover journals) linger in the repository root or storage directories.
 
 ---
 
@@ -55,14 +58,15 @@ Must contain:
 
 When triggered to **generate** or **update** project documentation, follow these steps:
 
-1. **Inspect Codebase**:
-   - Inspect source modules for application architecture.
+1. **Inspect Codebase & Workspace**:
+   - Inspect source modules for application architecture and Clean DDD boundaries.
    - Inspect database models for schema definitions.
-   - Inspect system configuration files.
-2. **Audit Existing Docs**:
-   - Check if `docs/architecture.md`, `docs/database_schema.md`, `docs/installation_guide.md`, and `README.md` exist and are up to date.
+   - Scan workspace root and storage trees for stray temporary artifacts.
+2. **Detect Stale Documents & Dead Links**:
+   - Check if `docs/architecture.md`, `docs/database_schema.md`, `docs/installation_guide.md`, `README.md`, and `notebooks/README.md` contain dead links, obsolete module names, or duplicate section numbers.
 3. **Present Implementation Plan**:
    - List missing or outdated documentation files and present an `implementation_plan.md` artifact to the user.
-4. **Generate & Update Docs**:
-   - Write/Update target markdown documentation files using `write_to_file`.
-   - Verify that all internal links are relative and all mermaid diagrams render cleanly.
+4. **Generate, Update & Sweep**:
+   - Write/Update target markdown documentation files.
+   - Verify that all internal links are relative, section numbers are sequential, and all mermaid diagrams render cleanly.
+   - Clean up any stray temporary files discovered during the sweep.

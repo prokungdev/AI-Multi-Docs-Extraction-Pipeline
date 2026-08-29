@@ -1,12 +1,29 @@
-"""
-Infrastructure Layer.
-Contains technical adapters, external SDKs, storage, database persistence, and output exporters.
-"""
+"""Infrastructure Layer organized into 3 enterprise pillars (database, external, core)."""
 
-from src.infrastructure import common, ai, pdf, persistence, storage, exporters  # noqa: F401
-from src.infrastructure.common import *  # noqa: F401, F403
-from src.infrastructure.ai import *  # noqa: F401, F403
-from src.infrastructure.pdf import *  # noqa: F401, F403
-from src.infrastructure.persistence import *  # noqa: F401, F403
-from src.infrastructure.storage import *  # noqa: F401, F403
-from src.infrastructure.exporters import *  # noqa: F401, F403
+from . import database, external, core
+from .database import engine, models, schema, seeder, repositories
+from .external import ai, pdf, storage
+from .core import constants, logger, config, lock, telemetry
+
+__all__ = [
+    # 3 Pillars
+    "database",
+    "external",
+    "core",
+    # Pillar 1: Database
+    "engine",
+    "models",
+    "schema",
+    "seeder",
+    "repositories",
+    # Pillar 2: External
+    "ai",
+    "pdf",
+    "storage",
+    # Pillar 3: Core
+    "constants",
+    "logger",
+    "config",
+    "lock",
+    "telemetry",
+]

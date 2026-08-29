@@ -5,8 +5,8 @@ Validates structured log bindings, level forwarding, and DTO validations without
 
 import uuid
 import pytest
-from src.infrastructure.common.logger import logger, get_logger, AppLogger
-from src.infrastructure.persistence.logs import ApiCallLogCreate
+from src.infrastructure.core.logger import logger, get_logger, AppLogger
+from src.infrastructure.core.telemetry import ApiCallLogCreate
 
 
 def test_app_logger_gateway_and_binding():

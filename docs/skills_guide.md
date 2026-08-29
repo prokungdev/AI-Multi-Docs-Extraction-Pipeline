@@ -28,8 +28,8 @@ Antigravity IDE automatically discovers all skills under `.agents/skills/`. You 
 > **English**: `Refactor database layer and logging to comply with skill python-enterprise-stack.`
 
 ### 2. `code-reviewer`
-> **Thai**: `ช่วยรีวิวโค้ดใน src/core/db/documents.py ตาม skill code-reviewer ให้หน่อย`  
-> **English**: `Review code in src/core/db/documents.py using skill code-reviewer.`
+> **Thai**: `ช่วยรีวิวโค้ดใน src/infrastructure/database/repositories/document_repo.py ตาม skill code-reviewer ให้หน่อย`  
+> **English**: `Review code in src/infrastructure/database/repositories/document_repo.py using skill code-reviewer.`
 
 ### 3. `project-standardizer`
 > **Thai**: `ช่วยสแกนและจัดโครงสร้างโปรเจกต์นี้ตาม skill project-standardizer ให้หน่อย`  
@@ -40,16 +40,16 @@ Antigravity IDE automatically discovers all skills under `.agents/skills/`. You 
 > **English**: `Update project documentation in docs/ according to skill documentation-generator.`
 
 ### 5. `test-suite-generator`
-> **Thai**: `ช่วยเขียน unit test ให้กับ src/core/pdf_splitter.py ตาม skill test-suite-generator`  
-> **English**: `Generate unit tests for src/core/pdf_splitter.py using skill test-suite-generator.`
+> **Thai**: `ช่วยเขียน unit test ให้กับ src/domain/services/template_evaluator.py ตาม skill test-suite-generator`  
+> **English**: `Generate unit tests for src/domain/services/template_evaluator.py using skill test-suite-generator.`
 
 ### 6. `bug-fixer-debugger`
 > **Thai**: `เกิด Error นี้ [แปะ Log] ช่วยวิเคราะห์และแก้ไขตาม skill bug-fixer-debugger ให้หน่อย`  
 > **English**: `Analyze this error stack trace and fix it using skill bug-fixer-debugger.`
 
 ### 7. `refactoring-expert`
-> **Thai**: `ช่วยปรับโค้ดใน src/core/db/connection.py ให้สะอาดขึ้นตาม skill refactoring-expert`  
-> **English**: `Refactor src/core/db/connection.py for better performance using skill refactoring-expert.`
+> **Thai**: `ช่วยปรับโค้ดใน src/infrastructure/database/engine.py ให้สะอาดขึ้นตาม skill refactoring-expert`  
+> **English**: `Refactor src/infrastructure/database/engine.py for better performance using skill refactoring-expert.`
 
 ### 8. `security-auditor`
 > **Thai**: `ช่วยสแกนความปลอดภัยของโปรเจกต์ตาม skill security-auditor ให้หน่อย`  

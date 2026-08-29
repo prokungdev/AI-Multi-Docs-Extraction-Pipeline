@@ -29,8 +29,8 @@ if hasattr(sys.stderr, "reconfigure"):
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.infrastructure.common.logger import logger
-from src.infrastructure.storage.storage_manager import storage_manager
+from src.infrastructure.core.logger import logger
+from src.infrastructure.external.storage.storage_manager import storage_manager
 from src.application.pipeline import (
     init_system,
     split_and_match,
@@ -40,7 +40,7 @@ from src.application.pipeline import (
     reset_pipeline_data,
     release_pending_merchant_files,
 )
-from src.infrastructure.persistence import (
+from src.infrastructure.database import (
     get_pending_merchants,
     approve_merchant,
     get_db_session,
@@ -139,7 +139,7 @@ def run_e2e_test(is_live: bool = False, comp_code: str = "C00000_SAMPLE", doc_ty
             tax_id = p.get("tax_id")
             short_name = p.get("short_name") or "grab"
             print(f"   Approving merchant: {p.get('merchant_name')} (ID: {merchant_id}, Tax ID: {tax_id})...")
-            ok, msg = approve_merchant(merchant_id=merchant_id, short_name=short_name)
+            ok, msg = approve_merchant(merchant_id=merchant_id, approved_by="usr_system_auto", short_name=short_name)
             print(f"   Approval status: {ok} ({msg if not ok else 'Success'})")
             rel = release_pending_merchant_files(doc_type=doc_type, tax_id=tax_id, short_name=short_name, company_code=comp_code)
             print(f"   Released {len(rel)} files for {tax_id}.")

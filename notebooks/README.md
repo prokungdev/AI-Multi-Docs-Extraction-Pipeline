@@ -6,21 +6,21 @@
 
 ## 📑 รายการ Notebooks ในโฟลเดอร์นี้
 
-### 1. [01_pipeline_walkthrough.ipynb](file:///d:/PROKUNG/Source/GitHub/AI-Multi-Docs-Extraction-Pipeline/notebooks/01_pipeline_walkthrough.ipynb)
+### 1. [`01_pipeline_walkthrough.ipynb`](01_pipeline_walkthrough.ipynb)
 - **วัตถุประสงค์:** E2E Interactive Pipeline Runner & Staging Dry-Run
 - **ฟังก์ชันการทำงาน:**
-  - รันการประมวลผลเอกสารจริงจาก `pipeline_storage/` ทีละขั้นตอน
+  - รันการประมวลผลเอกสารจริงจาก `storage/` ทีละขั้นตอน
   - แสดงภาพหน้าที่ตัดแยกแล้ว, ข้อมูลที่ AI สกัดได้, ผลการ Validate, และตารางในฐานข้อมูล SQLite
   - เหมาะสำหรับ: Developer & QA ตรวจสอบการทำงานแบบละเอียด
 
-### 2. [02_prompt_and_model_evaluation.ipynb](file:///d:/PROKUNG/Source/GitHub/AI-Multi-Docs-Extraction-Pipeline/notebooks/02_prompt_and_model_evaluation.ipynb)
+### 2. [`02_prompt_and_model_evaluation.ipynb`](02_prompt_and_model_evaluation.ipynb)
 - **วัตถุประสงค์:** AI Model & Prompt Benchmarking Evaluation
 - **ฟังก์ชันการทำงาน:**
   - เปรียบเทียบความแม่นยำ (Accuracy) ของการสกัดข้อมูลระหว่าง AI Models (`gemini-2.5-flash` vs `gpt-4o`)
   - เปรียบเทียบการใช้ Token และความเร็วในการตอบสนอง (Latency)
   - เหมาะสำหรับ: AI Engineer ปรับจูน System Prompt และ Rules
 
-### 3. [03_expense_analytics_insights.ipynb](file:///d:/PROKUNG/Source/GitHub/AI-Multi-Docs-Extraction-Pipeline/notebooks/03_expense_analytics_insights.ipynb)
+### 3. [`03_expense_analytics_insights.ipynb`](03_expense_analytics_insights.ipynb)
 - **วัตถุประสงค์:** Expense Data Analytics & Business Insights Dashboard
 - **ฟังก์ชันการทำงาน:**
   - วิเคราะห์ข้อมูลค่าใช้จ่ายที่ได้รับการอนุมัติแล้วจากฐานข้อมูล SQLite

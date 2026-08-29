@@ -4,7 +4,7 @@ Pure domain logic validation without I/O or network dependencies.
 """
 
 import pytest
-from src.domain.services.post_processor import normalize_date_to_ad
+from src.domain.services.text_normalizer import normalize_date_to_ad
 
 
 @pytest.mark.parametrize("input_date, expected", [

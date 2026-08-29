@@ -2,7 +2,7 @@ import unittest
 import os
 import json
 from pydantic import ValidationError
-from src.infrastructure.common.config_loader import (
+from src.infrastructure.core.config import (
     get_doctype_file_path,
     load_doc_type_schema,
     load_doc_type_classify_schema,

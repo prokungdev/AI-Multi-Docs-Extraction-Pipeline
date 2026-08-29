@@ -44,18 +44,28 @@ flowchart LR
 ## 📁 Repository Structure
 
 ```text
-├── configs/               # System settings, merchant rules & schemas
-├── docs/                  # System documentation & guides
-│   └── installation_guide.md # Detailed Installation & Environment Guide
+├── apps/                  # Presentation & Delivery Layer
+│   ├── api/               # FastAPI REST Endpoints & Dependency Injection
+│   └── streamlit/         # Streamlit Web UI Dashboard
+├── configs/               # System settings, document schemas & business rules
+├── docs/                  # Architectural documentation, database schema & guides
 ├── notebooks/             # Step-by-step walkthrough notebooks
-├── src/
-│   ├── core/              # Core business logic & pipeline services
-│   ├── db/                # SQLite connection & ORM helpers
-│   ├── exporters/         # Exporter modules (CSV, Excel, Express PV)
-│   ├── ui/                # Streamlit Web UI interface
-│   └── validators/        # Business rules & financial validators
+├── src/                   # Canonical Domain-Driven Design (DDD) Core
+│   ├── domain/            # 🧠 Pure Domain Layer (In-memory policies & services)
+│   │   ├── policies/      # Financial math, VAT 7%, WHT rules
+│   │   └── services/      # Text normalization, Buddhist era date parser, JSON evaluator
+│   ├── application/       # 🚀 Application Layer (Use Cases & Pipeline)
+│   │   ├── dtos/          # Pydantic v2 DTOs
+│   │   ├── usecases/      # Symmetrical Stage Use Cases (0-4)
+│   │   ├── pipeline/      # Pipeline Orchestrators
+│   │   └── exporters/     # Output Strategy Exporters (Express PV, JSON, Registry)
+│   └── infrastructure/    # ⚙️ Infrastructure Layer (3 Enterprise Pillars)
+│       ├── database/      # 🗄️ Pillar 1: Engine, Models, Schema, Repositories
+│       ├── external/      # 🔌 Pillar 2: External Adapters (AI, PDF, Storage)
+│       └── core/          # ⚙️ Pillar 3: Cross-Cutting Core (Constants, Logger, Config, Lock, Telemetry)
+├── tests/                 # Automated Test Suite (Unit & Integration)
 ├── main.py                # Pipeline CLI entry point
-├── setup_env.bat          # Automated environment setup script
+├── setup_env.py           # Automated environment setup script
 ├── run_ui_streamlit.bat   # Streamlit Web UI launcher
 └── requirements.txt       # Project dependencies
 ```

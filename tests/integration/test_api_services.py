@@ -4,14 +4,14 @@ import unittest
 import uuid
 import pytest
 
-from src.infrastructure.common.healthcheck import (
+from src.infrastructure.core.healthcheck import (
     run_healthcheck,
     check_database_status,
     check_api_ready,
 )
-from src.infrastructure.common.config_loader import load_system_settings
-from src.infrastructure.persistence.connection import get_db_session
-from src.infrastructure.persistence.models import Company
+from src.infrastructure.core.config import load_system_settings
+from src.infrastructure.database.engine import get_db_session
+from src.infrastructure.database.models import Company
 
 
 class TestHealthcheckServices(unittest.TestCase):

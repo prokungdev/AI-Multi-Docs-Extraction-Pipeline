@@ -4,8 +4,8 @@ import sys
 import shutil
 from dotenv import load_dotenv
 from pydantic import ValidationError
-from src.infrastructure.common.logger import logger
-from src.infrastructure.common.constants import DefaultPath
+from src.infrastructure.core.logger import logger
+from src.infrastructure.core.constants import DefaultPath
 from src.application.dtos.settings_dto import SystemSettingsModel
 
 def validate_settings_config(settings_path: str = DefaultPath.SETTINGS) -> tuple[bool, list[str]]:
@@ -100,7 +100,7 @@ def validate_doc_type_config(doc_type: str, configs_dir: str = "configs", settin
         errors.append(f"DocType config directory not found at: {doc_type_dir}")
         return False, errors
 
-    from src.infrastructure.common.config_loader import load_system_settings
+    from src.infrastructure.core.config import load_system_settings
     settings = load_system_settings(settings_path)
     doc_types = settings.get("doc_types", [])
     matched_dt = next((dt for dt in doc_types if dt.get("doc_type_id") == doc_type), None)
@@ -151,7 +151,7 @@ def validate_environment(settings_path: str = DefaultPath.SETTINGS) -> list[str]
     load_dotenv()
     
     # 1. Load active AI provider configuration from settings.json
-    from src.infrastructure.common.config_loader import load_system_settings, get_ai_provider_config
+    from src.infrastructure.core.config import load_system_settings, get_ai_provider_config
     settings = load_system_settings(settings_path)
     ai_cfg = get_ai_provider_config(settings)
     active_provider = ai_cfg.get("active_provider", "gemini")
@@ -248,7 +248,7 @@ def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS, cl
     if not doc_types:
         doc_types = [DefaultIdentifier.DOC_TYPE]
 
-    from src.infrastructure.common.constants import PipelineStageFolder
+    from src.infrastructure.core.constants import PipelineStageFolder
 
     folders = settings.get("pipeline_folders", [
         PipelineStageFolder.DROP_ZONE,
@@ -264,7 +264,7 @@ def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS, cl
     # 1. Discover all companies from DB (fallback to default_company_code)
     company_codes = [default_company_code]
     try:
-        from src.infrastructure.persistence import get_all_companies
+        from src.infrastructure.database import get_all_companies
         db_comps = get_all_companies(active_only=True)
         if db_comps:
             company_codes = list(set([c["company_code"] for c in db_comps]))

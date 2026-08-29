@@ -11,20 +11,19 @@ erDiagram
     COMPANIES ||--o{ USERS : "has users"
     COMPANIES ||--o{ MERCHANTS : "manages"
     COMPANIES ||--o{ BATCHES : "owns"
-    COMPANIES ||--o{ EXTRACTED_DOCUMENTS : "owns"
+    COMPANIES ||--o{ DOCUMENT_CONTROLS : "owns"
     COMPANIES ||--o{ EXPENSE_RECEIPTS : "owns"
     COMPANIES ||--o{ API_CALL_LOGS : "monitors"
 
-    BATCHES ||--o{ EXTRACTED_DOCUMENTS : "splits into"
+    BATCHES ||--o{ DOCUMENT_CONTROLS : "splits into"
     BATCHES ||--o{ BATCH_PAGES : "contains"
 
-    DOCUMENT_STATUSES ||--o{ EXTRACTED_DOCUMENTS : "tracks"
+    DOCUMENT_STATUSES ||--o{ DOCUMENT_CONTROLS : "tracks"
     DOCUMENT_STATUSES ||--o{ BATCH_PAGES : "tracks"
 
-    MERCHANTS ||--o{ EXTRACTED_DOCUMENTS : "identifies"
     MERCHANTS ||--o{ EXPENSE_RECEIPTS : "supplies"
 
-    EXTRACTED_DOCUMENTS ||--o{ EXPENSE_RECEIPTS : "normalizes to"
+    DOCUMENT_CONTROLS ||--o{ EXPENSE_RECEIPTS : "supertype to"
     EXPENSE_RECEIPTS ||--o{ EXPENSE_RECEIPT_ITEMS : "has line items"
 ```
 
@@ -95,7 +94,7 @@ erDiagram
 | :--- | :--- | :--- | :--- | :--- |
 | `page_id` 🔑 | `VARCHAR(100)` | NO | PK | Prefixed ID (e.g. `page_4c1e19d110ab`) |
 | `batch_id` 🌐 | `VARCHAR(100)` | NO | FK (`batches.batch_id`) | Parent batch ID |
-| `document_id` 🌐 | `VARCHAR(100)` | YES | FK (`extracted_documents.document_id`) | Associated logical document |
+| `document_id` 🌐 | `VARCHAR(100)` | YES | FK (`document_controls.document_id`) | Associated logical document |
 | `page_number` | `INTEGER` | NO | - | 1-based physical page index |
 | `chunk_index` | `INTEGER` | NO | `1` | AI extraction chunk sequence for smart checkpoint/resuming |
 | `image_path` | `VARCHAR(500)` | NO | - | Relative disk path to preprocessed JPG image |
@@ -105,19 +104,14 @@ erDiagram
 
 ---
 
-### 2.6 `extracted_documents` (Master Extracted Documents & Concurrency Lease)
+### 2.6 `document_controls` (Central Universal Supertype & Concurrency Lease)
 | Column | Type | Nullable | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `document_id` 🔑 | `VARCHAR(100)` | NO | PK | Prefixed ID (e.g. `doc_c4e5a5799901`) |
 | `company_id` 🌐 | `VARCHAR(36)` | YES | FK (`companies.company_id`) | Tenant scope |
 | `batch_id` 🌐 | `VARCHAR(100)` | NO | FK (`batches.batch_id`) | Parent batch |
-| `doc_type_id` | `VARCHAR(100)` | NO | `'expense_receipt'` | Document taxonomy type |
-| `merchant_id` 🌐 | `VARCHAR(36)` | YES | FK (`merchants.merchant_id`) | Identified merchant |
+| `doc_type_id` | `VARCHAR(100)` | NO | *(Required / No Default)* | Document taxonomy classification type |
 | `status_code` 🌐 | `VARCHAR(50)` | NO | FK (`document_statuses.status_code`) | Workflow status (`PENDING`, `PROCESSED`, `APPROVED`, etc.) |
-| `doc_number` | `VARCHAR(100)` | YES | - | Extracted invoice/receipt number |
-| `doc_date` | `VARCHAR(50)` | YES | - | Normalized ISO Date (`YYYY-MM-DD`) |
-| `entity_name` | `VARCHAR(200)` | YES | - | Seller / Vendor string from document |
-| `total_amount` | `FLOAT` | YES | - | Extracted total gross amount |
 | `search_text` | `TEXT` | YES | - | Full-text search index string |
 | `data_payload` | `TEXT` | YES | - | Normalized raw JSON payload |
 | `error_reason` | `TEXT` | YES | - | Error stack or validation failure note |
@@ -132,17 +126,24 @@ erDiagram
 | `cost_usd` | `FLOAT` | NO | `0.0` | Real AI extraction cost in USD |
 | `cost_thb` | `FLOAT` | NO | `0.0` | Converted AI extraction cost in THB |
 | `is_free_tier` | `INTEGER` | NO | `0` | Free tier cost bypass indicator |
+| `overall_confidence`| `FLOAT` | YES | - | Composite confidence score (0.00 - 1.00) |
+| `confidence_level` | `VARCHAR(20)`| YES | - | Categorical rating (`HIGH`, `MEDIUM`, `LOW`) |
+| `is_blurry` | `INTEGER` | NO | `0` | Visual quality indicator |
+| `is_ambiguous` | `INTEGER` | NO | `0` | Ambiguity indicator |
+| `confidence_notes` | `TEXT` | YES | - | Explanation of low confidence fields |
+| `review_priority` | `VARCHAR(20)`| NO | `'LOW'` | Review routing urgency (`URGENT`, `HIGH`, `LOW`) |
 | `created_at` | `VARCHAR(50)` | NO | UTC ISO | Creation timestamp |
+| `updated_at` | `VARCHAR(50)` | YES | - | Last modification timestamp |
 
 ---
 
-### 2.6 `expense_receipts` & `expense_receipt_items` (Financial Domain Breakdown)
-- **`expense_receipts`**: Header record storing Net Amount, VAT Amount, Withholding Tax, and Payment Method.
-- **`expense_receipt_items`**: Line items storing description, quantity, unit price, and subtotal.
+### 2.7 `expense_receipts` & `expense_receipt_items` (Financial Domain Breakdown)
+- **`expense_receipts`**: Subtype Header record storing `doc_number`, `transaction_date`, `merchant_id`, `subtotal`, `discount_amount`, `vat_amount`, `net_amount`, `payment_method`, etc.
+- **`expense_receipt_items`**: Line items storing description, quantity, unit price, and total amount.
 
 ---
 
-### 2.7 `api_call_logs` (AI Observability & Cost Telemetry)
+### 2.8 `api_call_logs` (AI Observability & Cost Telemetry)
 | Column | Type | Nullable | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `log_id` 🔑 | `VARCHAR(100)` | NO | PK | Telemetry call log ID |

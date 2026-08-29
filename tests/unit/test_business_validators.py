@@ -4,7 +4,7 @@ Tests financial math validation, VAT integrity, date normalization policies, and
 """
 
 import pytest
-from src.domain.policies.validators import (
+from src.domain.policies.financial_rules import (
     DateNormalizationValidator,
     FinancialMathValidator,
     ValidationStrategyEngine,

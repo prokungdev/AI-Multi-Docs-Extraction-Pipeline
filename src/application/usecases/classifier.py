@@ -7,24 +7,24 @@ import os
 from typing import Optional
 from PIL import Image
 
-from src.infrastructure.common.logger import logger
-from src.infrastructure.pdf.pdf_service import PDFService
-from src.infrastructure.common.config_loader import (
+from src.infrastructure.core.logger import logger
+from src.infrastructure.external.pdf.pdf_service import PDFService
+from src.infrastructure.core.config import (
     load_doc_type_classify_prompt,
     load_doc_type_classify_schema,
     get_default_company_code,
 )
-from src.infrastructure.common.constants import (
+from src.infrastructure.core.constants import (
     PipelineAction,
     DefaultIdentifier,
     MerchantStatusCode,
 )
-from src.infrastructure.storage.storage_manager import storage_manager
-from src.infrastructure.persistence import (
+from src.infrastructure.external.storage.storage_manager import storage_manager
+from src.infrastructure.database import (
     get_or_create_merchant_auto,
     match_merchant_by_file_prefix,
 )
-from src.domain.services.classifier import (
+from src.domain.services.text_normalizer import (
     sanitize_short_name,
     evaluate_merchant_pipeline_action,
     format_merchant_folder_identifier,
@@ -115,7 +115,7 @@ def classify_document(
     try:
         from dotenv import load_dotenv
         load_dotenv()
-        from src.infrastructure.ai.ai_service import ai_service
+        from src.infrastructure.external.ai.ai_service import ai_service
 
         if not ai_service.api_key:
             logger.error("AI API key is not configured. Cannot perform AI document classification.")

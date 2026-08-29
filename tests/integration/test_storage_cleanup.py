@@ -7,7 +7,7 @@ Requires integration test DB setup (schema + seed) from conftest.py.
 import os
 import pytest
 
-from src.infrastructure.storage.storage_manager import StoragePathManager
+from src.infrastructure.external.storage.storage_manager import StoragePathManager
 
 
 def test_01_cleanup_empty_staging_folders_only_deletes_empty(tmp_path):

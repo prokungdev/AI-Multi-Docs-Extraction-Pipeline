@@ -1,6 +1,6 @@
-from src.infrastructure.common.logger import logger
-from src.infrastructure.common.config_loader import load_system_settings
-from src.infrastructure.persistence import (
+from src.infrastructure.core.logger import logger
+from src.infrastructure.core.config import load_system_settings
+from src.infrastructure.database import (
     initialize_db_schema,
     initialize_log_db_schema,
     seed_initial_data,
@@ -11,7 +11,7 @@ from src.application.usecases.initializer import (
     validate_environment,
     initialize_storage_directories,
 )
-from src.infrastructure.common.logger import setup_logger
+from src.infrastructure.core.logger import setup_logger
 
 
 def init_system(settings_path: str = "configs/settings.json", drop_and_recreate: bool = False) -> bool:

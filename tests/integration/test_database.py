@@ -3,7 +3,7 @@ import unittest
 import uuid
 from datetime import datetime, timezone
 
-from src.infrastructure.persistence import (
+from src.infrastructure.database import (
     initialize_db_schema,
     seed_initial_data,
     create_batch,
@@ -25,22 +25,19 @@ from src.infrastructure.persistence import (
     update_source_active_status,
 )
 from sqlalchemy import select
-from src.infrastructure.persistence.connection import get_db_session, get_engine, get_database_url
-from src.infrastructure.persistence.models import (
+from src.infrastructure.database.engine import get_db_session, get_engine, get_database_url
+from src.infrastructure.database.models import (
     Base,
     Batch,
     BatchPage,
-    ExtractedDocument,
-    ProcessedBatch,
-    Document,
+    DocumentControl,
     DocumentStatus,
-    DocumentPage,
     Merchant,
     MerchantStatus,
     ExpenseReceipt,
     ExpenseReceiptItem,
 )
-from src.infrastructure.common.constants import DocumentStatusCode
+from src.infrastructure.core.constants import DocumentStatusCode
 
 
 class TestDatabase(unittest.TestCase):
@@ -58,7 +55,7 @@ class TestDatabase(unittest.TestCase):
     def tearDownClass(cls):
         # Clean up the test database file and dispose SQLAlchemy engine
         import gc
-        from src.infrastructure.persistence.connection import dispose_all_engines
+        from src.infrastructure.database.engine import dispose_all_engines
         dispose_all_engines()
         gc.collect()
         if os.path.exists(cls.db_path):
@@ -119,7 +116,7 @@ class TestDatabase(unittest.TestCase):
         self.assertTrue(p1)
         self.assertTrue(p2)
 
-        # 4. Create Document
+        # 4. Create DocumentControl
         doc_id = "test_doc_456"
         success = create_document(
             document_id=doc_id,
@@ -139,7 +136,7 @@ class TestDatabase(unittest.TestCase):
         # Link pages to document using ORM helper
         link_pages_to_document(doc_id, ["page_1", "page_2"])
 
-        # 5. Fetch Document & Pages
+        # 5. Fetch DocumentControl & Pages
         doc = get_document_by_id(doc_id)
         self.assertIsNotNone(doc)
         self.assertEqual(doc["doc_number"], "DOC-001")
@@ -197,7 +194,7 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(doc["total_amount"], 110.0)
         self.assertEqual(doc["is_manually_edited"], 1)
 
-        # Approve Document
+        # Approve DocumentControl
         success = update_document_to_approved(
             document_id=doc_id,
             doc_number="DOC-001-REV",
@@ -265,7 +262,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
         file_hash = f"hash_{uuid.uuid4().hex}"
 
         with get_db_session() as session:
-            batch = ProcessedBatch(
+            batch = Batch(
                 batch_id=batch_id,
                 original_filename="test_orm_doc.pdf",
                 total_pages=1,
@@ -276,7 +273,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
             session.add(batch)
 
         with get_db_session() as session:
-            queried_batch = session.scalars(select(ProcessedBatch).filter_by(batch_id=batch_id)).first()
+            queried_batch = session.scalars(select(Batch).filter_by(batch_id=batch_id)).first()
             self.assertIsNotNone(queried_batch)
             self.assertEqual(queried_batch.original_filename, "test_orm_doc.pdf")
             self.assertEqual(queried_batch.file_hash, file_hash)
@@ -306,7 +303,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
 
     def test_04_sqlite_pragma_event_listener(self):
         """Test SQLite WAL mode and foreign keys are auto-enabled via connection listener."""
-        from src.infrastructure.persistence.connection import get_engine
+        from src.infrastructure.database.engine import get_engine
         engine = get_engine()
         with engine.connect() as conn:
             fk_res = conn.exec_driver_sql("PRAGMA foreign_keys;").scalar()
@@ -314,9 +311,9 @@ class TestSQLAlchemyORM(unittest.TestCase):
 
     def test_05_user_entity_crud_and_seed(self):
         """Test User entity seeding, creation, retrieval, and unique email validation."""
-        from src.infrastructure.common.constants import SystemUserId, UserRole
-        from src.infrastructure.persistence.seeder import seed_initial_data
-        from src.infrastructure.persistence.masters import (
+        from src.infrastructure.core.constants import SystemUserId, UserRole
+        from src.infrastructure.database.seeder import seed_initial_data
+        from src.infrastructure.database.repositories import (
             create_user,
             get_user_by_id,
             get_user_by_email,
@@ -363,8 +360,8 @@ class TestSQLAlchemyORM(unittest.TestCase):
 
     def test_06_atomic_locking_concurrency(self):
         """Test atomic concurrency lock guard preventing double-approval and lost updates."""
-        from src.infrastructure.common.constants import SystemUserId, DocumentStatusCode
-        from src.infrastructure.persistence.documents import (
+        from src.infrastructure.core.constants import SystemUserId, DocumentStatusCode
+        from src.infrastructure.database.repositories import (
             create_batch,
             create_document,
             update_document_to_approved,
@@ -448,10 +445,10 @@ class TestSQLAlchemyORM(unittest.TestCase):
         Test Airline Ticket Hold pattern (15-min TTL, renew heartbeat, and auto-release on expiration).
         """
         from datetime import datetime, timezone, timedelta
-        from src.infrastructure.common.constants import DocumentStatusCode
-        from src.infrastructure.persistence.connection import get_db_session
-        from src.infrastructure.persistence.models import Document
-        from src.infrastructure.persistence.documents import (
+        from src.infrastructure.core.constants import DocumentStatusCode
+        from src.infrastructure.database.engine import get_db_session
+        from src.infrastructure.database.models import DocumentControl
+        from src.infrastructure.database.repositories import (
             create_batch,
             create_document,
             acquire_document_lock,
@@ -512,7 +509,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
         # 4. TTL Expiration & Auto-Release (Inject past timestamp 16 minutes ago)
         stale_time = (datetime.now(timezone.utc) - timedelta(minutes=16)).isoformat()
         with get_db_session() as session:
-            doc = session.scalars(select(Document).filter_by(document_id=doc_id)).first()
+            doc = session.scalars(select(DocumentControl).filter_by(document_id=doc_id)).first()
             doc.locked_at = stale_time
 
         status_stale = get_document_lock_status(doc_id, ttl_seconds=900)
@@ -536,14 +533,14 @@ class TestSQLAlchemyORM(unittest.TestCase):
         self.assertFalse(status_unlocked["is_locked"])
         self.assertIsNone(status_unlocked["locked_by"])
 
-        # 6. Closed Document Lock Protection
+        # 6. Closed DocumentControl Lock Protection
         update_document_to_approved(doc_id, confirmed_by="usr_admin", total_amount=1500.0)
         success_on_closed, msg_closed, _ = acquire_document_lock(doc_id, user_id="usr_user_a")
         self.assertFalse(success_on_closed)
         self.assertEqual(msg_closed, "DOCUMENT_ALREADY_CLOSED")
 
     def test_09_document_schema_modernization(self):
-        """Test that Document uses doc_type_id and merchant_id (with relationship to Merchant)."""
+        """Test that DocumentControl uses doc_type_id and merchant_id (with relationship to Merchant)."""
         merch_id = f"merch_{uuid.uuid4().hex[:8]}"
         batch_id = f"batch_{uuid.uuid4().hex[:8]}"
         doc_id = f"doc_{uuid.uuid4().hex[:8]}"
@@ -557,32 +554,38 @@ class TestSQLAlchemyORM(unittest.TestCase):
                 file_prefix="7eleven",
                 status_code=MerchantStatus.APPROVED.value
             )
-            batch = ProcessedBatch(
+            batch = Batch(
                 batch_id=batch_id,
                 original_filename="receipt.pdf",
                 total_pages=1,
                 storage_path="/tmp/receipt.pdf",
                 file_hash=f"hash_{uuid.uuid4().hex}"
             )
-            doc = Document(
+            doc = DocumentControl(
                 document_id=doc_id,
                 batch_id=batch_id,
                 doc_type_id="expense_receipt",
-                merchant_id=merch_id,
                 status_code=DocumentStatusCode.PENDING,
-                total_amount=150.0
+            )
+            receipt = ExpenseReceipt(
+                receipt_id=doc_id,
+                document_id=doc_id,
+                merchant_id=merch_id,
+                net_amount=150.0
             )
             session.add(merchant)
             session.add(batch)
             session.add(doc)
+            session.add(receipt)
 
         with get_db_session() as session:
-            saved_doc = session.scalars(select(Document).filter_by(document_id=doc_id)).first()
+            saved_doc = session.scalars(select(DocumentControl).filter_by(document_id=doc_id)).first()
             self.assertIsNotNone(saved_doc)
             self.assertEqual(saved_doc.doc_type_id, "expense_receipt")
-            self.assertEqual(saved_doc.merchant_id, merch_id)
-            self.assertIsNotNone(saved_doc.merchant)
-            self.assertEqual(saved_doc.merchant.short_name, "7eleven")
+            self.assertGreater(len(saved_doc.expense_receipts), 0)
+            self.assertEqual(saved_doc.expense_receipts[0].merchant_id, merch_id)
+            self.assertIsNotNone(saved_doc.expense_receipts[0].merchant)
+            self.assertEqual(saved_doc.expense_receipts[0].merchant.short_name, "7eleven")
 
     def test_10_postgresql_url_resolution_fail_fast(self):
         """Verify get_database_url raises ValueError when postgresql driver is active but env var is missing."""
@@ -617,9 +620,9 @@ class TestSQLAlchemyORM(unittest.TestCase):
 
     def test_11_reset_pipeline_database_full_drop_and_reseed(self):
         """Verify reset_pipeline_database(clear_documents_only=False) drops DB, recreates schema, and reseeds default master data."""
-        from src.infrastructure.persistence.schema import reset_pipeline_database
-        from src.infrastructure.persistence.models import Merchant, Company, DocumentStatus, User
-        from src.infrastructure.common.constants import DefaultIdentifier
+        from src.infrastructure.database.schema import reset_pipeline_database
+        from src.infrastructure.database.models import Merchant, Company, DocumentStatus, User
+        from src.infrastructure.core.constants import DefaultIdentifier
 
         # Call full reset
         result = reset_pipeline_database(clear_documents_only=False)

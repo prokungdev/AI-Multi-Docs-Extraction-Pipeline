@@ -60,6 +60,9 @@ Before writing any Review Report or assigning quality scores, the AI Agent **MUS
 | **Dual Source of Truth / Middleman Path Functions** | Redundant path resolution functions outside dedicated Storage Manager | `python-enterprise-stack` / `refactoring-expert` | **🚨 CRITICAL**: Filesystem path calculations must be centralized in the designated Storage Manager. Utility modules must never duplicate path resolution or act as intermediate wrappers. |
 | **Indirection Chaining & Variable Relaying** | Configs referencing variables that point to other variables | `python-enterprise-stack` | **🚨 CRITICAL**: Configuration values must map directly in a single hop without multi-tier variable/secret indirection or middleman translation layers. |
 | **Shallow Test Storage Watchdogs** | Test guards using `os.listdir` instead of deep recursive tree snapshots | `test-suite-generator` | **🚨 CRITICAL (Auto-FAIL Test Suite)**: Anti-pollution storage guards must take deep recursive file tree snapshots (`rglob` / `glob(**/*)`) to detect stray files in all nested subdirectories. |
+| **Stale Documentation & Dead Links** | Broken relative links, deprecated folder references, or obsolete module paths in docs | `documentation-generator` | **⚠️ WARNING**: Documentation in `docs/`, `README.md`, and notebooks must never reference deleted files, purged facades, or outdated paths. |
+| **Workspace Stray Temp Artifacts** | Leftover temporary files (`_temp*`, mock images, `.db-wal` journals) in root or storage | `project-standardizer` | **⚠️ WARNING**: The repository workspace must be purged of all temporary artifacts before release or review completion. |
+| **Documentation Metric Drift** | Documented test counts, table numbers, or schema versions drifting from active code/tests | `documentation-generator` | **⚠️ WARNING**: Metrics in documentation (such as total passed test count in `architecture.md`) must exactly match active test execution results. |
 
 ---
 
@@ -104,6 +107,11 @@ The AI Agent MUST evaluate the target code across the following dimensions witho
     - **Zero Source Code Coupling**: Enforce that NO skill contains repository-specific source code symbols, local module paths, internal table/column names, or hardcoded project configurations.
     - **Zero Vendor & Tool Lock-in**: Enforce that NO skill contains proprietary third-party tool brands or vendor lock-in; all external capabilities must be described as decoupled wrappers, adapters, or generic provider protocols.
     - **100% Universal Enterprise Reusability**: Ensure every skill represents a standalone, universal standard drop-in reusable across any enterprise repository without modification.
+11. **📚 Holistic Workspace Hygiene & Documentation Sync (`documentation-generator` / `project-standardizer`)**:
+    - **Zero Stray Artifacts**: Verify root directory and storage trees are clean of temporary test files, sample images, or orphaned journals.
+    - **Relative Link Integrity**: Confirm that all Markdown documents in `docs/`, `README.md`, and `notebooks/` use clean relative links (no absolute `file:///` URLs).
+    - **Heading & Schema Parity**: Ensure section numbering in database dictionaries and schema documents are sequential and unique.
+    - **Metric Accuracy**: Ensure test execution summaries in architectural docs reflect active test execution output.
 
 ---
 

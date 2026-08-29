@@ -5,7 +5,7 @@ Enforces isolated temporary file creation and verifies post-test file deletion.
 
 import os
 import tempfile
-from src.infrastructure.persistence.documents import calculate_file_hash
+from src.infrastructure.database.repositories import calculate_file_hash
 
 
 def test_file_hashing_sha256():

@@ -2,10 +2,10 @@ import copy
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 from src.application.dtos.document_dto import DocumentStatus, ReviewPriority
-from src.domain.policies.validators import ValidationStrategyEngine
-from src.infrastructure.storage.storage_manager import StoragePathManager, storage_manager
-from src.infrastructure.common.config_loader import get_validation_thresholds
-from src.infrastructure.common.constants import (
+from src.domain.policies.financial_rules import ValidationStrategyEngine
+from src.infrastructure.external.storage.storage_manager import StoragePathManager, storage_manager
+from src.infrastructure.core.config import get_validation_thresholds
+from src.infrastructure.core.constants import (
     DefaultPath,
     DefaultIdentifier,
 )

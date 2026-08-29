@@ -6,7 +6,7 @@ Tests discovery and rendering logic of accounting and data exporters.
 import os
 import tempfile
 import pytest
-from src.infrastructure.exporters.registry import get_exporter, list_exporters
+from src.application.exporters.registry import get_exporter, list_exporters
 
 
 def test_exporter_registry_lookup():

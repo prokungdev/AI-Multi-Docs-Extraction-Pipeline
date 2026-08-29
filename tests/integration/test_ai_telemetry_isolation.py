@@ -13,7 +13,7 @@ import gc
 from unittest.mock import MagicMock, patch
 from PIL import Image
 
-from src.infrastructure.persistence import (
+from src.infrastructure.database import (
     initialize_db_schema,
     seed_initial_data,
     create_company,
@@ -22,8 +22,8 @@ from src.infrastructure.persistence import (
     AuditLogService,
     get_api_call_logs,
 )
-from src.infrastructure.persistence.connection import get_engine, dispose_all_engines
-from src.infrastructure.ai.ai_service import ai_service
+from src.infrastructure.database.engine import get_engine, dispose_all_engines
+from src.infrastructure.external.ai.ai_service import ai_service
 from src.application.usecases.classifier import classify_document
 from src.application.usecases.extractor import extract_document_data
 

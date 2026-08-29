@@ -13,11 +13,11 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from sqlalchemy import select, update
-from src.infrastructure.persistence.connection import get_db_session
-from src.infrastructure.persistence.models import BatchPage, Batch, ExtractedDocument
-from src.infrastructure.persistence.masters import insert_relational_receipt
-from src.infrastructure.common.constants import DocumentStatusCode, DefaultIdentifier, EntityIdPrefix, generate_entity_id
-from src.infrastructure.common.logger import logger
+from src.infrastructure.database.engine import get_db_session
+from src.infrastructure.database.models import BatchPage, Batch, DocumentControl
+from src.infrastructure.database.repositories import insert_relational_receipt
+from src.infrastructure.core.constants import DocumentStatusCode, DefaultIdentifier, EntityIdPrefix, generate_entity_id
+from src.infrastructure.core.logger import logger
 
 
 def seed_from_queue(storage_root: str = "pipeline_storage", domain: str = DefaultIdentifier.DOC_TYPE):
@@ -79,24 +79,16 @@ def seed_from_queue(storage_root: str = "pipeline_storage", domain: str = Defaul
                                     error_reason = f"Missing pages: {', '.join(map(str, missing))}"
 
                                 doc_number = payload.get("doc_number", "")
-                                doc_date = payload.get("transaction_date", "")
                                 entity_name = payload.get("merchant_name", "")
-                                fin_summary = payload.get("financial_summary", {})
-                                total_amount = float(fin_summary.get("net_amount", 0.0) or 0.0)
                                 tax_id = payload.get("tax_id", "")
                                 payment_method = payload.get("payment_method", "")
                                 search_text = f"{doc_number} {entity_name} {tax_id} {payment_method}".strip()
 
-                                new_doc = ExtractedDocument(
+                                new_doc = DocumentControl(
                                     document_id=doc_id,
                                     batch_id=batch_id,
                                     doc_type_id=domain,
-                                    merchant_id=source or DefaultIdentifier.NO_TAX_ID,
                                     status_code=status_code,
-                                    doc_number=doc_number,
-                                    doc_date=doc_date,
-                                    entity_name=entity_name,
-                                    total_amount=total_amount,
                                     search_text=search_text,
                                     data_payload=json.dumps(payload, ensure_ascii=False),
                                     error_reason=error_reason

@@ -4,18 +4,18 @@ import unittest
 import pymupdf as fitz
 from PIL import Image
 
-from src.infrastructure.common.config_loader import load_system_settings
+from src.infrastructure.core.config import load_system_settings
 from src.application.usecases.initializer import initialize_storage_directories
-from src.infrastructure.common.logger import setup_logger
-from src.infrastructure.pdf.image_service import split_pdf, process_raw_image, format_page_filename
-from src.domain.services.classifier import sanitize_short_name
+from src.infrastructure.core.logger import setup_logger
+from src.infrastructure.external.pdf.image_service import split_pdf, process_raw_image, format_page_filename
+from src.domain.services.text_normalizer import sanitize_short_name
 from src.application.usecases.classifier import (
     classify_drop_zone_document,
     classify_document,
     fast_filename_prefix_match,
 )
 from src.application.pipeline.stage_1_ingestion import release_pending_merchant_files
-from src.infrastructure.persistence import (
+from src.infrastructure.database import (
     initialize_db_schema,
     seed_initial_data,
     get_merchant_by_tax_id,
@@ -171,7 +171,7 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         import gc, shutil
-        from src.infrastructure.persistence.connection import get_engine
+        from src.infrastructure.database.engine import get_engine
         try:
             get_engine().dispose()
         except Exception:
@@ -197,7 +197,7 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
     def test_02_new_merchant_auto_discovery_and_hold(self):
         """Test auto-discovery of new merchant and HOLD pipeline action via AI classification."""
         from unittest.mock import patch
-        from src.infrastructure.ai.ai_service import ai_service
+        from src.infrastructure.external.ai.ai_service import ai_service
 
         mock_payload = {
             "tax_id": "0107542000011",
@@ -224,7 +224,7 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
     def test_03_merchant_approval_flow(self):
         """Test approving merchant and subsequent classification PROCEED."""
         from unittest.mock import patch
-        from src.infrastructure.ai.ai_service import ai_service
+        from src.infrastructure.external.ai.ai_service import ai_service
 
         merchant = get_merchant_by_tax_id("0107542000011")
         self.assertIsNotNone(merchant)
@@ -274,7 +274,7 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
     def test_06_merchant_ignored_flow(self):
         """Test ignoring merchant and subsequent IGNORE routing."""
         from unittest.mock import patch
-        from src.infrastructure.ai.ai_service import ai_service
+        from src.infrastructure.external.ai.ai_service import ai_service
 
         merchant = get_merchant_by_tax_id("0107542000011")
         ok, msg = ignore_merchant(merchant["merchant_id"], approved_by="test_admin")
@@ -327,7 +327,7 @@ class TestUnifiedSourceClassifier(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         import shutil, gc
-        from src.infrastructure.persistence.connection import dispose_all_engines
+        from src.infrastructure.database.engine import dispose_all_engines
         dispose_all_engines()
         gc.collect()
         if hasattr(cls, "temp_dir") and os.path.exists(cls.temp_dir):
@@ -377,7 +377,7 @@ class TestSmartChunkCheckpointAndResume(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         import shutil, gc
-        from src.infrastructure.persistence.connection import dispose_all_engines
+        from src.infrastructure.database.engine import dispose_all_engines
         dispose_all_engines()
         gc.collect()
         if hasattr(cls, "temp_dir") and os.path.exists(cls.temp_dir):
@@ -394,7 +394,7 @@ class TestSmartChunkCheckpointAndResume(unittest.TestCase):
         """Test that PDF splitting correctly computes and records chunk_index per page in DB."""
         from unittest.mock import patch
         from src.application.pipeline.stage_1_ingestion import split_and_match
-        from src.infrastructure.persistence import get_batch_pages
+        from src.infrastructure.database import get_batch_pages
 
         # Mock max_images_per_request to 2 pages per chunk
         with patch("src.application.pipeline.stage_1_ingestion.get_ai_provider_config", return_value={"max_images_per_request": 2}):
@@ -420,7 +420,7 @@ class TestSmartChunkCheckpointAndResume(unittest.TestCase):
         """Test partial failure at chunk 2, checkpointing of chunk 1, and subsequent resume."""
         from unittest.mock import patch
         from src.application.pipeline.stage_2_extraction import extract_documents
-        from src.infrastructure.persistence import get_batch_pages, get_unextracted_chunks_for_batch
+        from src.infrastructure.database import get_batch_pages, get_unextracted_chunks_for_batch
 
         batch_id = getattr(self.__class__, "batch_id", None)
         self.assertIsNotNone(batch_id)
@@ -575,7 +575,7 @@ class TestStage5DatabaseTransformation(unittest.TestCase):
 
     def test_02_insert_relational_receipt_with_items_and_metadata(self):
         """Test insert_relational_receipt persists header and item rows with Pure SQLAlchemy 2.0."""
-        from src.infrastructure.persistence import (
+        from src.infrastructure.database import (
             create_batch,
             create_document,
             insert_relational_receipt,
@@ -658,7 +658,7 @@ class TestStage5DatabaseTransformation(unittest.TestCase):
     def test_03_transform_to_db_end_to_end_populates_all_tables(self):
         """Test transform_to_db full pipeline stage populates extracted_documents, receipts, and items."""
         from src.application.pipeline.stage_3_transformation import transform_to_db
-        from src.infrastructure.persistence import (
+        from src.infrastructure.database import (
             create_batch,
             create_page,
             get_document_by_id,
@@ -667,7 +667,7 @@ class TestStage5DatabaseTransformation(unittest.TestCase):
             ExpenseReceipt,
             ExpenseReceiptItem
         )
-        from src.infrastructure.storage.storage_manager import storage_manager
+        from src.infrastructure.external.storage.storage_manager import storage_manager
         from sqlalchemy import select
 
         comps = get_all_companies(active_only=True)
@@ -742,15 +742,12 @@ class TestStage5DatabaseTransformation(unittest.TestCase):
         self.assertEqual(result.get("imported"), 1)
         self.assertEqual(result.get("failed"), 0)
 
-        # Assert extracted_documents record
+        # Assert document_controls record
         with get_db_session() as session:
-            from src.infrastructure.persistence.models import ExtractedDocument
-            doc = session.scalars(select(ExtractedDocument).filter_by(batch_id=batch_id)).first()
+            from src.infrastructure.database.models import DocumentControl
+            doc = session.scalars(select(DocumentControl).filter_by(batch_id=batch_id)).first()
             self.assertIsNotNone(doc)
-            self.assertEqual(doc.doc_number, "IM20260601034010")
-            self.assertEqual(doc.doc_date, "2026-06-01")
-            self.assertEqual(doc.entity_name, "Grabtaxi (Thailand) Co., Ltd.")
-            self.assertEqual(doc.total_amount, 2319.55)
+            self.assertEqual(doc.doc_type_id, "expense_receipt")
             self.assertEqual(doc.overall_confidence, 0.98)
             self.assertEqual(doc.confidence_level, "HIGH")
             self.assertEqual(doc.model_used, "gemini-3.5-flash-lite")
@@ -758,6 +755,8 @@ class TestStage5DatabaseTransformation(unittest.TestCase):
             # Assert expense_receipts
             receipt = session.scalars(select(ExpenseReceipt).filter_by(document_id=doc.document_id)).first()
             self.assertIsNotNone(receipt)
+            self.assertEqual(receipt.doc_number, "IM20260601034010")
+            self.assertEqual(receipt.transaction_date, "2026-06-01")
             self.assertEqual(receipt.merchant_name, "Grabtaxi (Thailand) Co., Ltd.")
             self.assertEqual(receipt.tax_id, "0105556090377")
             self.assertEqual(receipt.net_amount, 2319.55)
