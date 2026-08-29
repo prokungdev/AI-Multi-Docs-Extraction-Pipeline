@@ -1,10 +1,15 @@
-"""AI Cost calculation engine and multi-tier pricing estimator."""
+"""AI Cost calculation engine and multi-tier pricing estimator.
+
+Resolves pricing rules, exchange rates, and billing tiers dynamically from AIModelConfig.
+"""
 
 from typing import Dict, Any, Optional
+from sqlalchemy import select
 from src.infrastructure.core.logger import logger
-from src.infrastructure.core.config import load_system_settings
+from src.infrastructure.database import get_resolved_ai_config, get_db_session, AIModelConfig
 
-DEFAULT_MODEL_PRICING: Dict[str, Dict[str, float]] = {
+KNOWN_MODEL_PRICING: Dict[str, Dict[str, float]] = {
+    "gemini-3.5-flash-lite": {"input_per_million": 0.0375, "output_per_million": 0.15},
     "gemini-3.5-flash": {"input_per_million": 0.075, "output_per_million": 0.30},
     "gemini-2.5-flash": {"input_per_million": 0.075, "output_per_million": 0.30},
     "gemini-1.5-flash": {"input_per_million": 0.075, "output_per_million": 0.30},
@@ -13,75 +18,58 @@ DEFAULT_MODEL_PRICING: Dict[str, Dict[str, float]] = {
     "gpt-4o": {"input_per_million": 2.50, "output_per_million": 10.00},
 }
 
-DEFAULT_EXCHANGE_RATE_THB: float = 36.0
-
-
-def get_pricing_config() -> Dict[str, Any]:
-    """
-    Loads AI pricing configuration from settings.json, resolving billing_tier
-    from the global ai_provider configuration with fallback to paid tier.
-    """
-    try:
-        settings = load_system_settings()
-        pricing_cfg = settings.get("ai_pricing", {})
-        models = pricing_cfg.get("models", DEFAULT_MODEL_PRICING)
-        exchange_rate = pricing_cfg.get("exchange_rate_thb", DEFAULT_EXCHANGE_RATE_THB)
-
-        ai_cfg = settings.get("ai_provider", {})
-        active_prov = ai_cfg.get("active_provider")
-        prov_cfg = ai_cfg.get(active_prov, {}) if active_prov else {}
-        billing_tier = prov_cfg.get("billing_tier") or ai_cfg.get("billing_tier", "paid")
-
-        return {
-            "models": models,
-            "exchange_rate_thb": float(exchange_rate),
-            "billing_tier": str(billing_tier).strip().lower()
-        }
-    except Exception as e:
-        logger.warning(f"Failed to load pricing config from settings, using defaults: {e}")
-        return {
-            "models": DEFAULT_MODEL_PRICING,
-            "exchange_rate_thb": DEFAULT_EXCHANGE_RATE_THB,
-            "billing_tier": "paid"
-        }
-
 
 def calculate_api_cost(
     provider: str,
     model_name: str,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    company_id: Optional[str] = None,
     override_tier: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Calculates exact real-time cost for an AI API request.
+    Calculates exact real-time cost for an AI API request using AIModelConfig.
     """
-    cfg = get_pricing_config()
-    tier = (override_tier or cfg.get("billing_tier", "paid")).strip().lower()
+    input_rate = None
+    output_rate = None
+    exchange_rate = 36.0
+    tier = override_tier
+
+    # 1. Attempt to match model directly from database
+    try:
+        with get_db_session() as session:
+            db_cfg = session.scalars(select(AIModelConfig).filter_by(model_name=model_name)).first()
+            if db_cfg:
+                input_rate = db_cfg.input_price_per_million
+                output_rate = db_cfg.output_price_per_million
+                exchange_rate = db_cfg.exchange_rate_thb
+                if not tier:
+                    tier = db_cfg.billing_tier
+    except Exception as e:
+        logger.debug(f"DB lookup note in calculate_api_cost: {e}")
+
+    # 2. If not matched, try resolving company AI config
+    if input_rate is None:
+        try:
+            cfg = get_resolved_ai_config(company_id=company_id)
+            if cfg.get("model_name") == model_name or not model_name:
+                input_rate = float(cfg.get("input_price_per_million", 0.0375))
+                output_rate = float(cfg.get("output_price_per_million", 0.15))
+                exchange_rate = float(cfg.get("exchange_rate_thb", 36.0))
+                if not tier:
+                    tier = cfg.get("billing_tier", "free")
+        except Exception:
+            pass
+
+    # 3. If still unmatched, use known models table
+    if input_rate is None:
+        clean_model = (model_name or "").strip().lower()
+        pricing = KNOWN_MODEL_PRICING.get(clean_model, {"input_per_million": 0.0375, "output_per_million": 0.15})
+        input_rate = pricing["input_per_million"]
+        output_rate = pricing["output_per_million"]
+
+    tier = (tier or "paid").strip().lower()
     is_free = 1 if tier == "free" else 0
-    exchange_rate = cfg.get("exchange_rate_thb", DEFAULT_EXCHANGE_RATE_THB)
-
-    # Normalize model name for lookup
-    clean_model = (model_name or "").strip().lower()
-    models_dict = cfg.get("models", DEFAULT_MODEL_PRICING)
-
-    # Find matching pricing rule
-    pricing = models_dict.get(clean_model)
-    if not pricing:
-        # Fuzzy match prefix
-        for k, v in models_dict.items():
-            if k in clean_model or clean_model in k:
-                pricing = v
-                break
-
-    if not pricing:
-        pricing = DEFAULT_MODEL_PRICING.get(clean_model)
-
-    if not pricing:
-        pricing = {"input_per_million": 0.075, "output_per_million": 0.30}
-
-    input_rate = float(pricing.get("input_per_million", 0.075))
-    output_rate = float(pricing.get("output_per_million", 0.30))
 
     nominal_cost_usd = (input_tokens / 1_000_000.0 * input_rate) + (output_tokens / 1_000_000.0 * output_rate)
     actual_cost_usd = 0.0 if is_free else nominal_cost_usd
@@ -109,4 +97,3 @@ def format_cost_display(cost_dict: Optional[Dict[str, Any]] = None, cost_usd: fl
         nominal_value_usd = cost_dict.get("nominal_value_usd", nominal_value_usd)
     tag = " [FREE TIER]" if is_free_tier else ""
     return f"${cost_usd:.5f} (~{cost_thb:.4f} THB){tag}"
-

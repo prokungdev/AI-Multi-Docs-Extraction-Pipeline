@@ -25,9 +25,17 @@ from .engine import (
 from .models import (
     Base,
     LogBase,
+    BaseEntity,
+    BaseLogEntity,
+    Role,
     Company,
     User,
+    UserCompany,
+    AuditTrailMixin,
+    AppendOnlyAuditMixin,
     DocumentStatus,
+    DocumentType,
+    AIModelConfig,
     Batch,
     DocumentControl,
     BatchPage,
@@ -47,6 +55,8 @@ from .schema import (
 
 from .seeder import (
     seed_initial_data,
+    seed_roles,
+    seed_document_types,
     seed_default_company,
     seed_document_statuses,
     seed_default_merchants,
@@ -127,9 +137,23 @@ from .repositories import (
     get_doc_types,
     update_doc_type_active_status,
     create_user,
+    update_user,
+    assign_user_to_company,
+    remove_user_from_company,
+    get_user_companies,
+    has_company_access,
+    get_accessible_companies,
+    get_default_company_for_user,
+    list_roles,
     get_user_by_id,
     get_user_by_email,
     list_users,
+    get_resolved_ai_config,
+    get_ai_config_by_id,
+    list_ai_configs,
+    create_ai_config,
+    update_ai_config,
+    set_default_ai_config,
 )
 
 from . import repositories
@@ -158,9 +182,13 @@ __all__ = [
     # Models
     "Base",
     "LogBase",
+    "Role",
     "Company",
     "User",
+    "UserCompany",
+    "AuditTrailMixin",
     "DocumentStatus",
+    "DocumentType",
     "Batch",
     "DocumentControl",
     "BatchPage",
@@ -176,11 +204,13 @@ __all__ = [
     "reset_pipeline_database",
     # Seeder
     "seed_initial_data",
+    "seed_roles",
+    "seed_document_types",
     "seed_default_company",
     "seed_document_statuses",
     "seed_default_merchants",
     "seed_default_users",
-    # Telemetry & Logs
+    # Telemetry
     "AuditLogService",
     "ApiCallLogCreate",
     "create_api_call_log",
@@ -252,9 +282,17 @@ __all__ = [
     "delete_company",
     "get_doc_types",
     "update_doc_type_active_status",
+    # User RBAC
     "create_user",
+    "update_user",
+    "assign_user_to_company",
+    "remove_user_from_company",
+    "get_user_companies",
+    "has_company_access",
+    "get_accessible_companies",
+    "get_default_company_for_user",
+    "list_roles",
     "get_user_by_id",
     "get_user_by_email",
     "list_users",
 ]
-

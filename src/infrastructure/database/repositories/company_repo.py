@@ -41,10 +41,17 @@ def get_or_create_default_company() -> dict:
         ) from e
 
 
-def create_company(company_code: str, company_name: str, short_name: str = None,
-                   tax_id: str = "0000000000000", branch_code: str = "00000",
-                   is_active: int = 1, company_id: str = None) -> dict:
-    """Creates a new client company entity in the database."""
+def create_company(
+    company_code: str,
+    company_name: str,
+    created_by: str,
+    short_name: str = None,
+    tax_id: str = "0000000000000",
+    branch_code: str = "00000",
+    is_active: int = 1,
+    company_id: str = None
+) -> dict:
+    """Creates a new client company entity in the database. Requires created_by."""
     clean_code = company_code.strip().upper()
     clean_tax_id = tax_id.strip() if tax_id and tax_id.strip() else None
     cid = company_id or generate_entity_id(EntityIdPrefix.COMPANY)
@@ -75,11 +82,12 @@ def create_company(company_code: str, company_name: str, short_name: str = None,
                 tax_id=clean_tax_id,
                 branch_code=branch_code.strip() if branch_code else "00000",
                 is_active=is_active,
-                created_at=now_str
+                created_at=now_str,
+                created_by=created_by
             )
             session.add(comp)
             session.flush()
-            logger.info(f"Created company '{clean_code}' with ID '{cid}'.")
+            logger.info(f"Created company '{clean_code}' with ID '{cid}' by '{created_by}'.")
             return comp.to_dict()
     except Exception as e:
         logger.error(f"Failed to create company '{company_code}': {e}")
@@ -131,8 +139,8 @@ def get_all_companies(active_only: bool = False) -> list[dict]:
         return []
 
 
-def update_company(company_id: str, **kwargs) -> bool:
-    """Updates fields of an existing company."""
+def update_company(company_id: str, updated_by: str, **kwargs) -> bool:
+    """Updates fields of an existing company. Requires updated_by."""
     try:
         with get_db_session() as session:
             stmt = select(Company).filter_by(company_id=company_id)
@@ -153,7 +161,9 @@ def update_company(company_id: str, **kwargs) -> bool:
             for k, v in kwargs.items():
                 if hasattr(comp, k):
                     setattr(comp, k, v)
-            comp.updated_at = datetime.now(timezone.utc).isoformat()
+            now_str = datetime.now(timezone.utc).isoformat()
+            comp.updated_at = now_str
+            comp.updated_by = updated_by
             return True
     except Exception as e:
         logger.error(f"Failed to update company '{company_id}': {e}")
@@ -179,16 +189,18 @@ def delete_company(company_id_or_code: str) -> bool:
 
 
 def get_doc_types(company_id: str = None) -> list[dict]:
-    """Returns active document types."""
-    from src.infrastructure.core.config import get_active_doc_types
-    active = get_active_doc_types()
-    if active and isinstance(active[0], dict):
-        return active
-    return [{"doc_type_id": str(dt), "display_name": str(dt).replace("_", " ").title(), "is_active": 1} for dt in active]
-
+    """Returns active document types from DocTypeRegistry."""
+    from src.domain.doc_types import DocTypeRegistry
+    return DocTypeRegistry.get_active_doc_types()
 
 
 def update_doc_type_active_status(doc_type_id: str, is_active: int) -> bool:
-    """Updates active status for document type."""
-    return True
+    """Updates active status for document type in DocTypeRegistry."""
+    from src.domain.doc_types import DocTypeRegistry
+    try:
+        dt = DocTypeRegistry.get(doc_type_id)
+        dt.is_active = bool(is_active)
+        return True
+    except KeyError:
+        return False
 

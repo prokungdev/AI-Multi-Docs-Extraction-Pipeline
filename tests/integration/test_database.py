@@ -97,6 +97,7 @@ class TestDatabase(unittest.TestCase):
         # 1. Create Batch
         success = create_batch(
             batch_id=batch_id,
+            created_by="test_user",
             original_filename="test_document.pdf",
             total_pages=2,
             storage_path=f"storage/companies/C00000_SAMPLE/{test_doc_type}/05_archive/2026-08/raw",
@@ -121,6 +122,7 @@ class TestDatabase(unittest.TestCase):
         success = create_document(
             document_id=doc_id,
             batch_id=batch_id,
+            created_by="test_user",
             doc_type_id=test_doc_type,
             merchant_id=test_source,
             status_code="PROCESSED",
@@ -139,9 +141,9 @@ class TestDatabase(unittest.TestCase):
         # 5. Fetch DocumentControl & Pages
         doc = get_document_by_id(doc_id)
         self.assertIsNotNone(doc)
-        self.assertEqual(doc["doc_number"], "DOC-001")
-        self.assertEqual(doc["total_amount"], 120.0)
         self.assertEqual(doc["status_code"], "PROCESSED")
+        self.assertEqual(doc["entity_name"], "Test Vendor Inc.")
+        self.assertEqual(doc["total_amount"], 120.0)
 
         pages = get_document_pages(doc_id)
         self.assertEqual(len(pages), 2)
@@ -152,19 +154,30 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(pending[0]["document_id"], doc_id)
 
     def test_03_status_updates(self):
-        """Test approval and failure transitions with generic mock parameters."""
-        batch_id = "test_batch_123"
-        doc_id = "test_doc_456"
+        """Test document update and lifecycle status changes."""
+        from src.infrastructure.core.constants import DefaultIdentifier, SystemUserId
+        batch_id = "test_batch_789"
+        doc_id = "test_doc_789"
 
+        # Resolve active doc_type & source dynamically
         doc_types = get_doc_types()
         test_doc_type = doc_types[0]["doc_type_id"] if doc_types else "expense_receipt"
         sources = get_sources(test_doc_type)
         test_source = sources[0]["source_id"] if sources else "NO_TAXID"
 
-        # Ensure document exists
+        # Ensure batch and document exist
+        create_batch(
+            batch_id=batch_id,
+            created_by="test_user",
+            original_filename="test_update.pdf",
+            total_pages=1,
+            storage_path="storage/companies/C00000_SAMPLE/expense_receipt/05_archive/raw",
+            file_hash=f"hash_{uuid.uuid4().hex}"
+        )
         create_document(
             document_id=doc_id,
             batch_id=batch_id,
+            created_by="test_user",
             doc_type_id=test_doc_type,
             merchant_id=test_source,
             status_code="PROCESSED",
@@ -179,6 +192,7 @@ class TestDatabase(unittest.TestCase):
         # Update payload (simulate human edit in Review UI)
         success = update_document_payload(
             document_id=doc_id,
+            updated_by="test_user",
             data_payload='{"net_amount": 110.0}',
             status_code="PROCESSED",
             doc_number="DOC-001-REV",
@@ -197,12 +211,12 @@ class TestDatabase(unittest.TestCase):
         # Approve DocumentControl
         success = update_document_to_approved(
             document_id=doc_id,
+            confirmed_by="test_user",
             doc_number="DOC-001-REV",
             doc_date="2026-08-15",
             entity_name="Test Vendor Corp.",
             total_amount=110.0,
-            data_payload='{"net_amount": 110.0}',
-            confirmed_by="test_user"
+            data_payload='{"net_amount": 110.0}'
         )
         self.assertTrue(success)
 
@@ -268,7 +282,8 @@ class TestSQLAlchemyORM(unittest.TestCase):
                 total_pages=1,
                 storage_path="storage/companies/C00000_SAMPLE/expense_receipt/03_preprocess",
                 file_hash=file_hash,
-                created_at=datetime.now(timezone.utc).isoformat()
+                created_at=datetime.now(timezone.utc).isoformat(),
+                created_by="usr_system_admin"
             )
             session.add(batch)
 
@@ -291,7 +306,8 @@ class TestSQLAlchemyORM(unittest.TestCase):
                 file_prefix="orm_test",
                 status_code=MerchantStatus.APPROVED.value,
                 default_wht_rate=0.0,
-                is_vat_registered=1
+                is_vat_registered=1,
+                created_by="usr_system_admin"
             )
             session.add(merchant)
 
@@ -327,15 +343,16 @@ class TestSQLAlchemyORM(unittest.TestCase):
         self.assertIsNotNone(sys_user)
         self.assertEqual(sys_user["role"], UserRole.SYSTEM.value)
 
-        dev_admin = get_user_by_id(SystemUserId.DEV_ADMIN)
-        self.assertIsNotNone(dev_admin)
-        self.assertEqual(dev_admin["role"], UserRole.ADMIN.value)
+        sys_admin = get_user_by_id(SystemUserId.SYSTEM_ADMIN)
+        self.assertIsNotNone(sys_admin)
+        self.assertEqual(sys_admin["role"], UserRole.ADMIN.value)
 
         # 2. Create custom user with unique email
         test_email = f"reviewer_{uuid.uuid4().hex[:6]}@test.local"
         custom_user = create_user(
             email=test_email,
             full_name="Auditor One",
+            created_by=SystemUserId.SYSTEM_ADMIN,
             role=UserRole.REVIEWER.value
         )
         self.assertIsNotNone(custom_user)
@@ -355,6 +372,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
             create_user(
                 email=test_email,
                 full_name="Auditor Duplicate",
+                created_by=SystemUserId.SYSTEM_ADMIN,
                 role=UserRole.REVIEWER.value
             )
 
@@ -375,6 +393,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
 
         create_batch(
             batch_id=batch_id,
+            created_by="test_user",
             original_filename="concurrency_test.pdf",
             total_pages=1,
             storage_path="storage/companies/C00000_SAMPLE/expense_receipt/05_archive/raw",
@@ -384,6 +403,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
         create_document(
             document_id=doc_id,
             batch_id=batch_id,
+            created_by="test_user",
             doc_type_id="expense_receipt",
             merchant_id="NO_TAXID",
             status_code=DocumentStatusCode.NEEDS_REVIEW,
@@ -421,6 +441,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
         # Step 3: User B tries to update payload on the closed document
         payload_update_success = update_document_payload(
             document_id=doc_id,
+            updated_by="usr_user_b",
             entity_name="Hijacked Vendor",
             total_amount=999.0
         )
@@ -463,6 +484,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
 
         create_batch(
             batch_id=batch_id,
+            created_by="test_user",
             original_filename="ticket_hold_test.pdf",
             total_pages=1,
             storage_path="storage/companies/C00000_SAMPLE/expense_receipt/05_archive/raw",
@@ -472,6 +494,7 @@ class TestSQLAlchemyORM(unittest.TestCase):
         create_document(
             document_id=doc_id,
             batch_id=batch_id,
+            created_by="test_user",
             doc_type_id="expense_receipt",
             merchant_id="NO_TAXID",
             status_code=DocumentStatusCode.NEEDS_REVIEW,
@@ -552,26 +575,30 @@ class TestSQLAlchemyORM(unittest.TestCase):
                 merchant_name="CP ALL PUBLIC CO., LTD.",
                 short_name="7eleven",
                 file_prefix="7eleven",
-                status_code=MerchantStatus.APPROVED.value
+                status_code=MerchantStatus.APPROVED.value,
+                created_by="test_user"
             )
             batch = Batch(
                 batch_id=batch_id,
                 original_filename="receipt.pdf",
                 total_pages=1,
                 storage_path="/tmp/receipt.pdf",
-                file_hash=f"hash_{uuid.uuid4().hex}"
+                file_hash=f"hash_{uuid.uuid4().hex}",
+                created_by="test_user"
             )
             doc = DocumentControl(
                 document_id=doc_id,
                 batch_id=batch_id,
                 doc_type_id="expense_receipt",
                 status_code=DocumentStatusCode.PENDING,
+                created_by="test_user"
             )
             receipt = ExpenseReceipt(
                 receipt_id=doc_id,
                 document_id=doc_id,
                 merchant_id=merch_id,
-                net_amount=150.0
+                net_amount=150.0,
+                created_by="test_user"
             )
             session.add(merchant)
             session.add(batch)

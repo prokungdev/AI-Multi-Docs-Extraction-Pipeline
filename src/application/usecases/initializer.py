@@ -5,7 +5,11 @@ import shutil
 from dotenv import load_dotenv
 from pydantic import ValidationError
 from src.infrastructure.core.logger import logger
-from src.infrastructure.core.constants import DefaultPath
+from src.infrastructure.core.constants import (
+    DefaultPath,
+    DefaultIdentifier,
+    PipelineStageFolder,
+)
 from src.application.dtos.settings_dto import SystemSettingsModel
 
 def validate_settings_config(settings_path: str = DefaultPath.SETTINGS) -> tuple[bool, list[str]]:
@@ -39,12 +43,7 @@ def validate_settings_config(settings_path: str = DefaultPath.SETTINGS) -> tuple
             errors.append(f"Field '{loc_str}': {err['msg']}")
         return False, errors
 
-    # 4. Check active doc_types
-    active_doc_types = [d for d in validated_model.doc_types if d.is_active]
-    if not active_doc_types:
-        errors.append("No active doc_types configured in 'doc_types' list in settings.json.")
-
-    # 5. Check filename pattern placeholders
+    # 4. Check filename pattern placeholders
     split_pattern = validated_model.image_processing.split_filename_pattern
     if "{doc_type}" not in split_pattern:
         errors.append("Missing placeholder '{doc_type}' in 'image_processing.split_filename_pattern'.")
@@ -62,22 +61,19 @@ def validate_settings_config(settings_path: str = DefaultPath.SETTINGS) -> tuple
         if ph not in archive_pattern:
             errors.append(f"Missing placeholder '{ph}' in 'image_processing.archive_filename_pattern'.")
 
-    # 6. Bidirectional DocType Configuration & Directory Sync Check
+    # 5. DocType Configuration & Directory Sync Check via DocTypeRegistry
+    from pathlib import Path
+    from src.domain.doc_types import DocTypeRegistry
     configs_dir = os.path.dirname(settings_path) or "configs"
-    doc_types_base_dir = os.path.join(configs_dir, "doc_types")
-    configured_dt_ids = {d.doc_type_id for d in validated_model.doc_types}
-    
-    if os.path.exists(doc_types_base_dir):
-        disk_dt_folders = {
-            f for f in os.listdir(doc_types_base_dir)
-            if os.path.isdir(os.path.join(doc_types_base_dir, f)) and not f.startswith(".")
-        }
-        # Check for active doc_types missing corresponding config directories on disk
-        for active_dt in active_doc_types:
-            if active_dt.doc_type_id not in disk_dt_folders:
-                errors.append(
-                    f"Active doc_type '{active_dt.doc_type_id}' is missing config directory '{doc_types_base_dir}/{active_dt.doc_type_id}'."
-                )
+    if not (Path(configs_dir) / "doc_types").exists() and Path("configs/doc_types").exists():
+        configs_dir = "configs"
+
+    for dt in DocTypeRegistry.list_all():
+        if dt.is_active:
+            cfg_dir = dt.get_config_dir(configs_dir=configs_dir)
+            if not cfg_dir.exists():
+                errors.append(f"Active doc_type '{dt.doc_type_id.value}' is missing config directory '{cfg_dir}'.")
+
 
     return len(errors) == 0, errors
 
@@ -85,40 +81,29 @@ def validate_settings_config(settings_path: str = DefaultPath.SETTINGS) -> tuple
 
 def validate_doc_type_config(doc_type: str, configs_dir: str = "configs", settings_path: str = DefaultPath.SETTINGS) -> tuple[bool, list[str]]:
     """
-    Validates all files configured in settings.json 'files' map for a specific doc_type.
+    Validates all standard assets for a specific doc_type via DocTypeRegistry.
     
     Returns:
         A tuple of (is_valid, error_messages).
     """
     errors = []
-    
-    # Locate doc_type config directory
-    doc_type_dir = os.path.join(configs_dir, "doc_types", doc_type)
-    
-    # 1. Check if doc_type directory exists
-    if not os.path.exists(doc_type_dir):
+    from src.domain.doc_types import DocTypeRegistry
+
+    try:
+        dt = DocTypeRegistry.get(doc_type)
+    except KeyError as e:
+        return False, [str(e)]
+
+    doc_type_dir = dt.get_config_dir(configs_dir=configs_dir)
+    if not doc_type_dir.exists():
         errors.append(f"DocType config directory not found at: {doc_type_dir}")
         return False, errors
 
-    from src.infrastructure.core.config import load_system_settings
-    settings = load_system_settings(settings_path)
-    doc_types = settings.get("doc_types", [])
-    matched_dt = next((dt for dt in doc_types if dt.get("doc_type_id") == doc_type), None)
-    if not matched_dt:
-        errors.append(f"DocType '{doc_type}' is not registered in 'doc_types' in '{settings_path}'.")
-        return False, errors
-
-    files_map = matched_dt.get("files", {})
-    required_keys = ["classify_prompt", "classify_schema", "extract_prompt", "extract_schema", "extract_rules"]
-    for key in required_keys:
-        filename = files_map.get(key)
-        if not filename:
-            errors.append(f"[{doc_type}] Missing '{key}' definition in 'files' within settings.json.")
-            continue
-        
-        file_path = os.path.join(doc_type_dir, filename)
-        if not os.path.exists(file_path):
-            errors.append(f"[{doc_type}] Configured file '{filename}' (key: '{key}') does not exist at '{file_path}'.")
+    # Check required asset files
+    for filename in ["classify-prompt.txt", "classify-schema.json", "extract-prompt.txt", "extract-schema.json", "extract-rules.json"]:
+        file_path = doc_type_dir / filename
+        if not file_path.exists():
+            errors.append(f"[{doc_type}] Missing required asset '{filename}' at '{file_path}'.")
         elif filename.endswith(".json"):
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
@@ -134,7 +119,7 @@ def validate_doc_type_config(doc_type: str, configs_dir: str = "configs", settin
                 if not content:
                     errors.append(f"[{doc_type}] Text prompt file '{filename}' is empty.")
             except Exception as e:
-                errors.append(f"[{doc_type}] Failed to read prompt file '{filename}': {e}")
+                errors.append(f"[{doc_type}] Failed to read prompt in '{filename}': {e}")
 
     return len(errors) == 0, errors
 
@@ -238,7 +223,7 @@ def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS, cl
     root = settings.get("storage_root", "storage")
     default_company_code = settings.get("default_company_code", "C00000_SAMPLE")
     
-    # Load active doc_types from settings.json
+    # Load active doc_types from settings.json or DocTypeRegistry
     doc_types_data = settings.get("doc_types", [])
     doc_types = [
         d.get("doc_type_id")
@@ -246,19 +231,15 @@ def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS, cl
         if isinstance(d, dict) and d.get("is_active", True) and d.get("doc_type_id")
     ]
     if not doc_types:
+        try:
+            from src.domain.doc_types import DocTypeRegistry
+            doc_types = [dt.doc_type_id.value for dt in DocTypeRegistry.list_active()]
+        except Exception:
+            doc_types = []
+
+    if not doc_types:
         doc_types = [DefaultIdentifier.DOC_TYPE]
 
-    from src.infrastructure.core.constants import PipelineStageFolder
-
-    folders = settings.get("pipeline_folders", [
-        PipelineStageFolder.DROP_ZONE,
-        PipelineStageFolder.RAW_DATA,
-        PipelineStageFolder.PREPROCESS,
-        PipelineStageFolder.PROCESSING,
-        PipelineStageFolder.ARCHIVE,
-        PipelineStageFolder.OUTPUT,
-    ])
-    
     ensured_count = 0
 
     # 1. Discover all companies from DB (fallback to default_company_code)
@@ -283,6 +264,8 @@ def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS, cl
             logger.warning(f"Failed to create .gitkeep in database directory: {e}")
 
     # 3. Setup Company-Centric Storage Hierarchy: storage/companies/{company}/{doc_type}/01..06
+    from src.domain.doc_types import DocTypeRegistry
+
     for comp_code in company_codes:
         comp_root = os.path.join(root, "companies", comp_code)
         os.makedirs(comp_root, exist_ok=True)
@@ -291,8 +274,14 @@ def initialize_storage_directories(settings_path: str = DefaultPath.SETTINGS, cl
         for dt in doc_types:
             dt_root = os.path.join(comp_root, dt)
             os.makedirs(dt_root, exist_ok=True)
+
+            try:
+                dt_instance = DocTypeRegistry.get(dt)
+                stage_folders = dt_instance.get_stage_folders()
+            except Exception:
+                stage_folders = PipelineStageFolder.list_all()
             
-            for folder in folders:
+            for folder in stage_folders:
                 path = os.path.join(dt_root, folder)
                 os.makedirs(path, exist_ok=True)
 

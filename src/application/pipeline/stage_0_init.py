@@ -33,16 +33,9 @@ def init_system(settings_path: str = "configs/settings.json", drop_and_recreate:
         return False
     logger.info("[PASS] settings.json is valid and complete.")
 
-    # 2. Validate doc_types
-    settings = load_system_settings(settings_path)
-    doc_types_data = settings.get("doc_types", [])
-    active_doc_types = [
-        d.get("doc_type_id")
-        for d in doc_types_data
-        if isinstance(d, dict) and d.get("is_active", True) and d.get("doc_type_id")
-    ]
-    if not active_doc_types:
-        active_doc_types = ["expense_receipt"]
+    # 2. Validate doc_types via DocTypeRegistry
+    from src.domain.doc_types import DocTypeRegistry
+    active_doc_types = [dt.doc_type_id.value for dt in DocTypeRegistry.list_all() if dt.is_active]
 
     logger.info("[2/4] Checking DocType-specific configurations...")
     for dt in active_doc_types:
@@ -73,7 +66,7 @@ def init_system(settings_path: str = "configs/settings.json", drop_and_recreate:
     logger.info("[4/4] Initializing Pipeline Storage Directories & DB Schema...")
     initialize_log_db_schema(settings_path)
     initialize_db_schema(drop_and_recreate=drop_and_recreate)
-    seed_initial_data(configs_dir=settings_path)
+    seed_initial_data(configs_dir="configs")
     dir_count = initialize_storage_directories(settings_path, clean_staging=drop_and_recreate)
     logger.info(f"[PASS] Ensured {dir_count} directories are created with .gitkeep.")
 

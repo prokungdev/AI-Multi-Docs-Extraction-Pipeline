@@ -21,17 +21,24 @@ def check_database_status() -> tuple[bool, str]:
         return False, f"Database error: {str(e)}"
 
 
-def check_api_ready(settings: dict) -> tuple[bool, str, list[str]]:
+def check_api_ready(settings: dict = None) -> tuple[bool, str, list[str]]:
     """Checks AI API readiness and credential availability."""
     load_dotenv()
     remedies = []
 
     try:
-        ai_cfg = get_ai_provider_config(settings)
-        provider = ai_cfg["active_provider"]
-        api_key_env = ai_cfg["api_key_env"]
+        if isinstance(settings, dict) and "ai_provider" in settings:
+            ai_prov = settings.get("ai_provider", {})
+            provider = ai_prov.get("active_provider", "gemini")
+            tier = ai_prov.get("billing_tier", "free").strip().lower()
+            api_key_env = ai_prov.get(provider, {}).get(f"api_key_env_{tier}", "GEMINI_API_KEY_FREE")
+        else:
+            from src.infrastructure.database import get_resolved_ai_config
+            ai_cfg = get_resolved_ai_config()
+            provider = ai_cfg["provider"]
+            api_key_env = ai_cfg["api_key_env_var"]
     except Exception as e:
-        return False, f"Invalid AI configuration: {e}", [f"Fix 'ai_provider' in settings.json: {e}"]
+        return False, f"Invalid AI configuration: {e}", [f"Fix AI configuration: {e}"]
 
     api_key = os.getenv(api_key_env)
     has_credentials = bool(api_key and api_key.strip())
@@ -91,3 +98,20 @@ def run_healthcheck(configs_dir: str = "configs") -> dict:
         },
         "remedies": remedies
     }
+
+
+def print_healthcheck_report(results: dict) -> None:
+    """Prints formatted healthcheck diagnostic report to console."""
+    print("==========================================================")
+    print(f" System Healthcheck Diagnostic Report — [{results.get('status', 'UNKNOWN')}]")
+    print("==========================================================")
+    for check_name, info in results.get("checks", {}).items():
+        status_symbol = "✓" if info.get("ok") else "✗"
+        print(f" [{status_symbol}] {check_name}: {info.get('message')}")
+    
+    if results.get("remedies"):
+        print("\n[!] Recommended Actions / Remedies:")
+        for remedy in results["remedies"]:
+            print(f"  - {remedy}")
+    print("==========================================================")
+

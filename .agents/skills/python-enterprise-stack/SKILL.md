@@ -24,12 +24,24 @@ This skill documents the universal technology stack standards, design patterns, 
   - Use strongly-typed `Enum` classes for state machines and status transitions.
 - **Strict Fail-Fast Configuration & Secret Principle**:
   - Never guess or provide silent fallback defaults for missing secrets, credentials, environment variables, or database paths (e.g. `.get("api_key_env", "DEFAULT_KEY")` or `return {}` on file load failure).
-  - If a required configuration is missing or invalid, the system must fail immediately and loudly at boot time via Pydantic v2 schema validation (`model_validate()`) or explicit descriptive Exceptions (`ValueError`, `FileNotFoundError`, `KeyError`).
+  - If a required configuration is missing or invalid, the system must fail immediately and loudly at boot time via Pydantic v2 schema validation (`model_validate()`) or explicit descriptive Exceptions (`ValueError`, `FileNotFoundError`, `KeyError`, `RuntimeError`).
+  - **Strict Fail-Fast on Database Config Resolution**: When looking up dynamic runtime configuration (such as AI credentials or tenant configurations) from database tables, never silently fall back to static configuration files or hardcoded values. If a requested configuration ID is not found or inactive, raise `KeyError`; if no active default record exists, raise `RuntimeError`; if a referenced environment variable is unset, raise `ValueError`.
   - Safe defaults are permitted ONLY for data normalization (e.g. `0.0` for optional numerical fields) or documented performance tuning constants.
+- **Generic In-Memory TTL Caching Pattern**:
+  - Encapsulate time-to-live in-memory caching using a reusable, thread-safe decorator (e.g. `@ttl_cache(seconds=60)`) to decouple caching mechanisms from business and repository logic while protecting database connections during high-throughput workloads.
 - **Single Canonical API & Zero Redundant Aliases Policy**:
   - Never retain module-level function aliases, wrapper functions, or class/property aliases solely for internal backward compatibility (e.g. `legacy_func = new_func`, `def old_func(): return new_func()`).
   - Eliminate vocabulary drift across codebase layers: enforce a single, canonical naming convention across all modules, schemas, database models, and API endpoints.
   - Consumers must import and invoke canonical functions directly without intermediate legacy translation layers.
+- **Universal User & Security Context Pattern (Thread-Safe & Fail-Fast Actor Tracking)**:
+  - **Single Point of Truth for Actors**: Centralize current execution context (`user_id` / `actor_id`) using Python standard `contextvars.ContextVar` to guarantee thread-safety and async task isolation.
+  - **Strict Zero-Default Policy on Caller Accountability & Actor IDs**: Function signatures in repositories, data access layers, and use cases must NEVER supply default or fallback actor IDs (e.g. `created_by=SystemUserId.AUTO_SYSTEM`). All data-mutating operations must receive an explicit required actor parameter or resolve it strictly via `get_current_user_id()`.
+  - **Pure Fail-Fast on Empty Context**: `get_current_user_id()` must NEVER provide silent default fallbacks. If invoked outside an active user scope, it must immediately raise an explicit `RuntimeError` to prevent unauthenticated operations or data corruption.
+  - **Scoped Execution via Context Managers**: Provide an authoritative `@contextmanager def user_scope(user_id: str)` that sets the context token and guarantees clean token reset in a `finally` block.
+- **Hierarchical Audit Pattern & Automatic Event Stamping**:
+  - Distinguish between Immutable/Append-Only entities (`AppendOnlyAuditMixin`) and Mutable entities (`MutableAuditMixin` inheriting `AppendOnlyAuditMixin`).
+  - Standardize on `BaseEntity` for mutable models and `BaseLogEntity` for append-only models.
+  - Bind SQLAlchemy `@event.listens_for(MutableAuditMixin, "before_update", propagate=True)` with `get_current_user_id()` to stamp `updated_at` and `updated_by` automatically on every entity modification.
 - **Zero Indirection Chaining & Subsystem Single Source of Truth**:
   - **No Variable / Config Chaining**: Never configure variables that reference other variables or create multi-tier indirection chains (e.g. `config_key -> var_name -> fallback_var -> real_value`). Configurations and parameters must map directly to their canonical destinations in a single hop.
   - **No Middleman Wrapper Functions**: Subsystem domain logic (e.g. filesystem path resolution, database session management, telemetry) must reside in its single authoritative manager class/service. Other utility modules (like config loaders) must NEVER re-implement or act as proxy middlemen for subsystem responsibilities. Callers must invoke the primary subsystem manager directly.

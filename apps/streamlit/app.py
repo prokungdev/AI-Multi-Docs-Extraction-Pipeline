@@ -21,6 +21,7 @@ from src.infrastructure.external.pdf.image_service import split_pdf
 from src.application.usecases.extractor import extract_document_data
 from src.domain.services.template_evaluator import transform_data
 from src.infrastructure.core.constants import DefaultPath, SystemUserId
+from src.infrastructure.core import set_current_user_id, sync_streamlit_user_context
 from src.application.usecases.initializer import (
     validate_settings_config,
     validate_doc_type_config,
@@ -94,6 +95,11 @@ def get_cached_pending_documents(domain_id: str, company_id: str = None) -> List
     return get_pending_documents(domain_id, company_id=company_id)
 
 def main_app():
+    # 0. Centralized Session to UserContext sync
+    if "user_id" not in st.session_state:
+        st.session_state["user_id"] = SystemUserId.DEMO
+    set_current_user_id(st.session_state["user_id"])
+
     # Setup logger once per session
     if "logger_initialized" not in st.session_state:
         setup_logger()
@@ -600,7 +606,7 @@ def main_app():
                                 entity_name=entity_name,
                                 total_amount=net_amount,
                                 data_payload=json.dumps(final_data, ensure_ascii=False),
-                                confirmed_by=reviewer_name or SystemUserId.DEV_ADMIN
+                                confirmed_by=reviewer_name or SystemUserId.SYSTEM_ADMIN
                             )
                             
                             # Call centralized archiving and exporting helper with custom exporter params

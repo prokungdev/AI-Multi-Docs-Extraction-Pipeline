@@ -29,26 +29,28 @@ class AIService:
         self._client: Optional[Any] = None
         self._reload_config()
 
-    def _reload_config(self):
-        settings = load_system_settings(self.settings_path)
-        ai_cfg = settings.get("ai_provider", {})
-        self.active_provider = ai_cfg.get("active_provider", "gemini").lower()
-        self.billing_tier = ai_cfg.get("billing_tier", "free").strip().lower()
-        self.max_retries = int(ai_cfg.get("max_retries", 3))
-        self.max_images_per_request = int(ai_cfg.get("max_images_per_request", 50))
-
-        provider_cfg = ai_cfg.get(self.active_provider, {})
-        self.default_model = provider_cfg.get("model_name")
-        if not self.default_model:
-            raise ValueError(f"Missing required 'model_name' for AI provider '{self.active_provider}' in {self.settings_path}")
-
-        target_key = f"api_key_env_{self.billing_tier}"
-        self.api_key_env = provider_cfg.get(target_key)
-        if not self.api_key_env:
-            raise ValueError(f"Missing required '{target_key}' for AI provider '{self.active_provider}' (billing_tier='{self.billing_tier}') in {self.settings_path}")
-
-        self.api_key = os.getenv(self.api_key_env, "").strip()
-        self._client = None  # Invalidate cached client on config reload
+    def _reload_config(self, company_id: Optional[str] = None):
+        try:
+            from src.infrastructure.database import get_resolved_ai_config
+            ai_cfg = get_resolved_ai_config(company_id=company_id)
+            self.active_provider = ai_cfg.get("provider", "gemini").lower()
+            self.billing_tier = ai_cfg.get("billing_tier", "free").strip().lower()
+            self.max_retries = 3
+            self.max_images_per_request = 50
+            self.default_model = ai_cfg.get("model_name", "gemini-3.5-flash-lite")
+            self.api_key_env = ai_cfg.get("api_key_env_var", "api_key_env_default_free")
+            self.api_key = os.getenv(self.api_key_env, "").strip()
+            self._client = None
+        except Exception as e:
+            logger.debug(f"Note on loading AI config from DB in AIService init: {e}")
+            self.active_provider = "gemini"
+            self.billing_tier = "free"
+            self.max_retries = 3
+            self.max_images_per_request = 50
+            self.default_model = "gemini-3.5-flash-lite"
+            self.api_key_env = "api_key_env_default_free"
+            self.api_key = os.getenv(self.api_key_env, "").strip()
+            self._client = None
 
     def get_client(self):
         """Returns the active AI provider client instance (cached per config)."""
@@ -391,6 +393,7 @@ class AIService:
                         model_name=effective_model,
                         input_tokens=input_tokens,
                         output_tokens=output_tokens,
+                        company_id=company_id,
                     )
 
                     AuditLogService.log_api_call(ApiCallLogCreate(

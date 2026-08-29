@@ -18,12 +18,14 @@ from src.infrastructure.database import (
     create_page,
     get_company_by_code,
 )
-from src.infrastructure.core.constants import (
+from src.infrastructure.core import (
     DocumentStatusCode,
     MerchantStatusCode,
     PipelineStageFolder,
     EntityIdPrefix,
+    SystemUserId,
     generate_entity_id,
+    get_current_user_id,
 )
 from src.infrastructure.external.pdf.image_service import split_pdf, process_raw_image, format_page_filename
 from src.application.usecases.classifier import classify_document
@@ -205,6 +207,7 @@ def split_and_match(
 
             create_batch(
                 batch_id=batch_id,
+                created_by=get_current_user_id(),
                 company_id=company_id,
                 original_pdf_name=filename,
                 total_pages=total_pages,
@@ -266,6 +269,7 @@ def split_and_match(
 
             create_batch(
                 batch_id=batch_id,
+                created_by=get_current_user_id(),
                 company_id=company_id,
                 original_pdf_name=filename,
                 total_pages=total_pages,

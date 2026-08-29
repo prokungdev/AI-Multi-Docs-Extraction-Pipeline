@@ -32,6 +32,8 @@ class DefaultIdentifier:
     DEFAULT_MERCHANT_NAME = "Unknown Merchant"
     DEFAULT_SHORT_NAME = "merchant"
     UNRECOGNIZED_MERCHANT_NAME = "Unrecognized Merchant"
+    AI_CONFIG_FREE = "conf_default_provider_free"
+    AI_CONFIG_PAID = "conf_default_provider_paid"
 
 
 class MerchantStatusCode:
@@ -45,6 +47,9 @@ class EntityIdPrefix:
     """Standardized entity Primary Key prefixes for database models and logging."""
     COMPANY = "comp"
     USER = "usr"
+    ROLE = "role"
+    USER_COMPANY = "uc"
+    AI_CONFIG = "aic"
     BATCH = "batch"
     DOCUMENT = "doc"
     PAGE = "page"
@@ -57,8 +62,10 @@ class EntityIdPrefix:
 
 class SystemUserId:
     """Centralized identifiers for system actors and default development accounts."""
+    SYSTEM_ADMIN = "usr_system_admin"
     AUTO_SYSTEM = "usr_system_auto"
-    DEV_ADMIN = "usr_dev_admin"
+    SYSTEM_TEST = "usr_system_test"
+    DEMO = "usr_demo"
 
 
 class UserRole(str, enum.Enum):
@@ -67,6 +74,13 @@ class UserRole(str, enum.Enum):
     REVIEWER = "REVIEWER"
     VIEWER = "VIEWER"
     SYSTEM = "SYSTEM"
+
+
+class DocTypeId(str, enum.Enum):
+    """Centralized Document Type Identifiers for Domain Registry and Pipeline Stages."""
+    EXPENSE_RECEIPT = "expense_receipt"
+    TAX_INVOICE = "tax_invoice"
+    WITHHOLDING_TAX = "withholding_tax"
 
 
 def generate_entity_id(prefix: str, hex_length: int = 12) -> str:
@@ -117,3 +131,23 @@ class PipelineStageFolder:
     PROCESSING = "04_processing"
     ARCHIVE = "05_archive"
     OUTPUT = "06_output"
+
+    @classmethod
+    def list_all(cls) -> list[str]:
+        """Returns the canonical ordered list of standard pipeline stage folder names."""
+        return [
+            cls.DROP_ZONE,
+            cls.RAW_DATA,
+            cls.PREPROCESS,
+            cls.PROCESSING,
+            cls.ARCHIVE,
+            cls.OUTPUT,
+        ]
+
+
+class ProcessingType(str, enum.Enum):
+    """Standard document processing strategy types."""
+    AI = "AI"
+    ARCHIVE_ONLY = "ARCHIVE_ONLY"
+
+

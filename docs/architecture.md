@@ -2,6 +2,12 @@
 
 ## 1. Canonical Domain-Driven Design (DDD) Structure
 - `src/domain/`: Pure business rules & in-memory domain services (Zero DB / I/O)
+  - `doc_types/`: 📑 **Domain Document Types Strategy & Registry**
+    - `base.py`: Abstract Base Class (`BaseDocType`)
+    - `registry.py`: Centralized Registry (`DocTypeRegistry`, `get_doc_type`, `list_doc_types`, `get_active_doc_types`)
+    - `expense_receipt.py`: `ExpenseReceiptDocType` (`DocTypeId.EXPENSE_RECEIPT`)
+    - `tax_invoice.py`: `TaxInvoiceDocType` (`DocTypeId.TAX_INVOICE`)
+    - `withholding_tax.py`: `WithholdingTaxDocType` (`DocTypeId.WITHHOLDING_TAX`)
   - `policies/`: Business rule specifications & validation engine
     - `financial_rules.py`: Math balance, VAT 7%, WHT, and Confidence scoring (`ValidationStrategyEngine`)
   - `services/`: Pure string & mapping algorithms
@@ -25,31 +31,33 @@
 - `src/infrastructure/`: Technical adapters & external persistence (Organized in 3 Enterprise Pillars)
   - `database/`: 🗄️ **เสาหลักที่ 1: Database & Data Access**
     - `engine.py`: Engine, Session Pool, Dispose, Connection lifecycle
-    - `models.py`: Pure SQLAlchemy 2.0 ORM Entities (`Company`, `User`, `DocumentControl`, `Batch`, `BatchPage`, `Merchant`, `ExpenseReceipt`, etc.)
-    - `schema.py`: DDL Initializer & DB Reset
-    - `seeder.py`: Initial Master Data Seeders (Default Tenant, Statuses, Default Users)
+    - `models.py`: Pure SQLAlchemy 2.0 ORM Entities (`Role`, `Company`, `User`, `UserCompany`, `DocumentType`, `AIModelConfig`, `BaseEntity`, `BaseLogEntity`, `AppendOnlyAuditMixin`, `MutableAuditMixin`, `DocumentControl`, `Batch`, `BatchPage`, `Merchant`, `ExpenseReceipt`, etc.)
+    - `schema.py`: DDL Initializer & DB Reset with Automated Table Migrations
+    - `seeder.py`: Initial Master Data Seeders (8 Master Tables: Roles, AI Model Configs, Document Types, Default Tenant, Statuses, Merchants, Default Users, User Mappings)
     - `repositories/`: Single-responsibility Repository layer
+      - `ai_config_repo.py`: Universal AI Provider & Pricing Configs with `@ttl_cache`
       - `batch_repo.py`: Ingestion Batches & Chunk Pages
       - `document_repo.py`: DocumentControl Supertype & 15-min Leases
       - `receipt_repo.py`: ExpenseReceipt Subtype & Relational Items
       - `merchant_repo.py`: Merchant Gatekeeper & Matching
-      - `company_repo.py`: Tenant Company Master CRUD
-      - `user_repo.py`: RBAC User Management
+      - `company_repo.py`: Tenant Company Master CRUD & AI Config binding
+      - `user_repo.py`: Enterprise RBAC, Multi-Company Mapping & Super Admin Bypass
   - `external/`: 🔌 **เสาหลักที่ 2: External Adapters & Third-party Services**
-    - `ai/`: Gemini LLM Client & Token Cost Math (`ai_service.py`, `cost_estimator.py`)
+    - `ai/`: Unified GenAI Client & Dynamic Token Cost Math (`ai_service.py`, `cost_estimator.py`)
     - `pdf/`: PyMuPDF Splitting, Image Resizing (`pdf_service.py`, `image_service.py`)
     - `storage/`: Local/S3 Disk Storage Driver (`base.py`, `local_adapter.py`, `storage_manager.py`)
   - `core/`: ⚙️ **เสาหลักที่ 3: Cross-Cutting Core Utilities**
-    - `constants.py`: Enums, Defaults, Status Codes
+    - `constants.py`: Enums, Defaults, Status Codes, `SystemUserId`, `UserRole`, `EntityIdPrefix`
+    - `user_context.py`: Universal User & Security Context Provider (`get_current_user_id`, `user_scope`, `set_current_user_id`, ContextVar)
     - `logger.py`: Universal Logging Gateway
     - `config.py`: Pure Settings Loader (Zero DB dependency)
     - `lock.py`: Pipeline Process File Lock
     - `telemetry.py`: API Call Telemetry & Audit Logs
     - `healthcheck.py`: System Readiness & Database Diagnostic Probes
-    - `utils.py`: Chunking & Short Name Utilities
+    - `utils.py`: Thread-Safe `@ttl_cache`, Chunking & Tax ID Utilities
 - `apps/`: Presentation & delivery mechanisms
   - `api/`: FastAPI REST endpoints & dependency injection
-  - `streamlit/`: Streamlit web UI dashboard
+  - `streamlit/`: Streamlit web UI dashboard (Synced with `UserContext`)
 - `configs/`: `settings.json` (Validated by `SystemSettingsModel`) & `doc_types/`
 - `storage/`: `database/` (`pipeline.db`) & `companies/` (Tenant data folders)
 
@@ -64,17 +72,21 @@
 ## 3. Database & Persistence Layer (Multi-Database Support)
 - **Engines**: SQLite (Default / Dev / Edge) ⇄ PostgreSQL / MySQL (Production / Cloud)
 - **Auto Schema Init**: `initialize_db_schema()` via Pure SQLAlchemy 2.0 `Base.metadata.create_all()`
-- **Lifecycle & Concurrency Architecture**:
+- **Lifecycle, RBAC & Concurrency Architecture**:
+  - **Universal UserContext & Security Context Provider (`src/infrastructure/core/user_context.py`)**: Thread-Safe & Async-Safe `contextvars` holding the active user context across Background Pipeline workers (`usr_system_auto`), Interactive Walkthroughs (`usr_system_admin`), and Streamlit / Future Login UI (`st.session_state["user_id"]`).
+  - **Strict Zero-Default Policy**: All mutating functions strictly require actor parameters or resolve via `get_current_user_id()`, eliminating silent default fallbacks.
+  - **Data-Driven RBAC Super Admin Bypass (`roles.is_admin`)**: Roles with `is_admin == 1` bypass tenant mapping and access all companies, while non-admin roles are strictly scoped to mapped companies in `user_companies`.
+  - **4 Audit Columns (Clean State Pattern)**: Standardized `created_at`, `created_by`, `updated_at` (initial `None`), `updated_by` (initial `None`) via `AuditTrailMixin`.
   - **Lifecycle Finalization (`is_closed`)**: Atomic guard (`is_closed == 0`) seals approved/rejected documents against post-approval modifications.
   - **Airline Ticket Hold Concurrency (`is_locked`, `locked_by`, `locked_at`)**: 15-minute exclusive editing lease with heartbeat renewal and automatic expiration/release to prevent stale locks.
   - **Smart Chunk Checkpointing (`batch_pages.chunk_index`)**: Multi-page PDF extraction tracks chunk-level progress (`PENDING` ➔ `EXTRACTED` / `FAILED`), caching completed chunks and allowing instant resuming for failed segments.
 
 ## 4. Test Suite (Targeted Testing Protocol & Two-Tier Test Harness)
 - **Two-Tier Test Isolation Guard**:
-  - **Tier 1 (Root Guard `tests/conftest.py`)**: Session-level isolation redirecting all DB operations to temporary SQLite database, setting `TEST_ENVIRONMENT="1"` and `APP_ENV="testing"` to bypass disk logging DB sink.
+  - **Tier 1 (Root Guard `tests/conftest.py`)**: Session-level isolation redirecting all DB operations to temporary SQLite database, setting `TEST_ENVIRONMENT="1"` and `APP_ENV="testing"` to bypass disk logging DB sink, and autouse `auto_test_user_context_guard` for context isolation.
   - **Tier 2 (Integration Guard `tests/integration/conftest.py`)**: Package-level fixture initializing schema (`initialize_db_schema()`) and seeding master data (`seed_initial_data()`) exclusively for integration tests.
 - **Environment-Aware Logging Gateway**: Bypass DB sink during testing to eliminate SQLite lock contention and maximize execution speed.
 - **Targeted Test Commands**:
-  - Run all tests: `pytest tests/ -v` (114 unit & integration tests, 100% Passed)
+  - Run all tests: `pytest tests/ -v` (128 unit & integration tests, 100% Passed)
   - Run unit tests (offline & pure logic): `pytest tests/unit -v`
   - Run integration tests (DB & pipeline): `pytest tests/integration -v`

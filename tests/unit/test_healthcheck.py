@@ -130,3 +130,31 @@ def test_run_healthcheck_overall_success(tmp_path, monkeypatch):
     assert report["checks"]["database"]["ok"] is True
     assert report["checks"]["api_ready"]["ok"] is True
     assert report["checks"]["storage_ready"]["ok"] is True
+
+
+def test_initialize_storage_directories_fallback(tmp_path):
+    """Test initialize_storage_directories correctly falls back when doc_types is absent without NameError."""
+    import json
+    from src.application.usecases.initializer import initialize_storage_directories
+
+    test_storage = str(tmp_path / "storage")
+    settings_file = tmp_path / "test_settings.json"
+    settings_content = {
+        "storage_root": test_storage,
+        "default_company_code": "TEST_COMP",
+        "logging": {"logs_dir": str(tmp_path / "logs")},
+    }
+    settings_file.write_text(json.dumps(settings_content), encoding="utf-8")
+
+    with patch("src.infrastructure.database.get_all_companies", return_value=[{"company_code": "TEST_COMP"}]):
+        ensured_count = initialize_storage_directories(str(settings_file))
+
+    assert ensured_count > 0
+    # Verify storage directories created
+    comp_dir = tmp_path / "storage" / "companies" / "TEST_COMP"
+    assert comp_dir.exists()
+    # Verify central database directory created
+    db_dir = tmp_path / "storage" / "database"
+    assert db_dir.exists()
+    assert (db_dir / ".gitkeep").exists()
+

@@ -8,8 +8,13 @@ from .engine import engine, get_engine, get_log_engine, get_db_session, PROJECT_
 from .models import (
     Base,
     LogBase,
+    Role,
     Company,
+    User,
+    UserCompany,
     DocumentStatus,
+    DocumentType,
+    AIModelConfig,
     ExpenseReceiptItem,
     ExpenseReceipt,
     BatchPage,
@@ -24,6 +29,7 @@ from src.infrastructure.core.constants import (
     DefaultIdentifier,
     DocumentStatusCode,
     EntityIdPrefix,
+    SystemUserId,
     generate_entity_id,
 )
 
@@ -73,6 +79,43 @@ def initialize_db_schema(drop_and_recreate: bool = False):
             except Exception as drop_err:
                 logger.debug(f"Note on dropping obsolete tables: {drop_err}")
 
+            # Roles migrations
+            try:
+                res = conn.exec_driver_sql("PRAGMA table_info(roles)")
+                existing_cols = [row[1] for row in res.fetchall()]
+                if "updated_at" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE roles ADD COLUMN updated_at VARCHAR(50)")
+                if "updated_by" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE roles ADD COLUMN updated_by VARCHAR(36)")
+            except Exception as mig_err:
+                logger.debug(f"Roles schema migration note: {mig_err}")
+
+            # Users migrations
+            try:
+                res = conn.exec_driver_sql("PRAGMA table_info(users)")
+                existing_cols = [row[1] for row in res.fetchall()]
+                if "password_hash" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255)")
+                if "created_by" not in existing_cols:
+                    conn.exec_driver_sql(f"ALTER TABLE users ADD COLUMN created_by VARCHAR(36) DEFAULT '{SystemUserId.SYSTEM_ADMIN}'")
+                if "updated_by" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE users ADD COLUMN updated_by VARCHAR(36)")
+                if "updated_at" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE users ADD COLUMN updated_at VARCHAR(50)")
+            except Exception as mig_err:
+                logger.debug(f"Users schema migration note: {mig_err}")
+
+            # User Companies migrations
+            try:
+                res = conn.exec_driver_sql("PRAGMA table_info(user_companies)")
+                existing_cols = [row[1] for row in res.fetchall()]
+                if "updated_at" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE user_companies ADD COLUMN updated_at VARCHAR(50)")
+                if "updated_by" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE user_companies ADD COLUMN updated_by VARCHAR(36)")
+            except Exception as mig_err:
+                logger.debug(f"UserCompanies schema migration note: {mig_err}")
+
             # Merchants migrations
             try:
                 res = conn.exec_driver_sql("PRAGMA table_info(merchants)")
@@ -91,6 +134,10 @@ def initialize_db_schema(drop_and_recreate: bool = False):
                     conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN approved_at VARCHAR(50)")
                 if "is_active" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN is_active INTEGER DEFAULT 1")
+                if "created_by" not in existing_cols:
+                    conn.exec_driver_sql(f"ALTER TABLE merchants ADD COLUMN created_by VARCHAR(36) DEFAULT '{SystemUserId.SYSTEM_ADMIN}'")
+                if "updated_by" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN updated_by VARCHAR(36)")
                 if "updated_at" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN updated_at VARCHAR(50)")
             except Exception as mig_err:
@@ -125,6 +172,10 @@ def initialize_db_schema(drop_and_recreate: bool = False):
                     conn.exec_driver_sql("ALTER TABLE document_controls ADD COLUMN cost_thb FLOAT DEFAULT 0.0")
                 if "is_free_tier" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE document_controls ADD COLUMN is_free_tier INTEGER DEFAULT 0")
+                if "created_by" not in existing_cols:
+                    conn.exec_driver_sql(f"ALTER TABLE document_controls ADD COLUMN created_by VARCHAR(36) DEFAULT '{SystemUserId.AUTO_SYSTEM}'")
+                if "updated_by" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE document_controls ADD COLUMN updated_by VARCHAR(36)")
             except Exception as mig_err:
                 logger.debug(f"DocumentControls schema migration note: {mig_err}")
 
@@ -136,6 +187,12 @@ def initialize_db_schema(drop_and_recreate: bool = False):
                     conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN company_id VARCHAR(36)")
                 if "original_filename" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN original_filename VARCHAR(255) DEFAULT 'document.pdf'")
+                if "created_by" not in existing_cols:
+                    conn.exec_driver_sql(f"ALTER TABLE batches ADD COLUMN created_by VARCHAR(36) DEFAULT '{SystemUserId.AUTO_SYSTEM}'")
+                if "updated_by" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN updated_by VARCHAR(36)")
+                if "updated_at" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE batches ADD COLUMN updated_at VARCHAR(50)")
             except Exception as mig_err:
                 logger.debug(f"Batches schema migration note: {mig_err}")
 
@@ -147,8 +204,25 @@ def initialize_db_schema(drop_and_recreate: bool = False):
                     conn.exec_driver_sql("ALTER TABLE expense_receipts ADD COLUMN company_id VARCHAR(36)")
                 if "doc_number" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE expense_receipts ADD COLUMN doc_number VARCHAR(100)")
+                if "created_by" not in existing_cols:
+                    conn.exec_driver_sql(f"ALTER TABLE expense_receipts ADD COLUMN created_by VARCHAR(36) DEFAULT '{SystemUserId.AUTO_SYSTEM}'")
+                if "updated_by" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE expense_receipts ADD COLUMN updated_by VARCHAR(36)")
             except Exception as mig_err:
                 logger.debug(f"Expense Receipts schema migration note: {mig_err}")
+
+            # Companies migrations
+            try:
+                res = conn.exec_driver_sql("PRAGMA table_info(companies)")
+                existing_cols = [row[1] for row in res.fetchall()]
+                if "created_by" not in existing_cols:
+                    conn.exec_driver_sql(f"ALTER TABLE companies ADD COLUMN created_by VARCHAR(36) DEFAULT '{SystemUserId.SYSTEM_ADMIN}'")
+                if "updated_by" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE companies ADD COLUMN updated_by VARCHAR(36)")
+                if "ai_config_id" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE companies ADD COLUMN ai_config_id VARCHAR(50)")
+            except Exception as mig_err:
+                logger.debug(f"Companies schema migration note: {mig_err}")
 
             # Api call logs migrations
             try:

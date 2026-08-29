@@ -7,6 +7,7 @@ from src.infrastructure.core.logger import logger
 from src.infrastructure.core.constants import (
     DefaultIdentifier,
     EntityIdPrefix,
+    SystemUserId,
     generate_entity_id,
 )
 from ..engine import get_db_session
@@ -14,11 +15,18 @@ from ..models import Company, DocumentControl, Merchant, MerchantStatus, Expense
 from .merchant_repo import match_merchant, sanitize_short_name
 
 
-def insert_relational_receipt(document_id: str, payload: dict, original_filename: str, company_id: str = None, page_number: int = 1) -> bool:
+def insert_relational_receipt(
+    document_id: str,
+    payload: dict,
+    original_filename: str,
+    created_by: str,
+    company_id: str = None,
+    page_number: int = 1
+) -> bool:
     """
     Parses extracted JSON payload and inserts header and items into relational tables using Pure SQLAlchemy 2.0 ORM.
     Supports both unwrapped single document dict and wrapped multi-page AI payload.
-    Also auto-registers new merchants in merchants table.
+    Also auto-registers new merchants in merchants table. Requires created_by.
     """
     try:
         from src.application.pipeline.pipeline_helpers import extract_page_document_payload
@@ -63,7 +71,8 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
                     status_code=MerchantStatus.APPROVED.value,
                     default_wht_rate=0.0,
                     is_vat_registered=1,
-                    created_at=now_str
+                    created_at=now_str,
+                    created_by=created_by
                 )
                 session.add(new_m)
                 session.flush()
@@ -103,7 +112,8 @@ def insert_relational_receipt(document_id: str, payload: dict, original_filename
                 net_amount=net_amount,
                 payment_method=payment_method,
                 source_filename=original_filename,
-                created_at=now_str
+                created_at=now_str,
+                created_by=created_by
             )
             session.add(receipt)
             session.flush()

@@ -46,18 +46,19 @@ def extract_document_data(
     if isinstance(image_paths, str):
         image_paths = [image_paths]
 
-    settings_path = os.path.join(configs_dir, "settings.json")
-    settings = load_system_settings(settings_path)
-    ai_cfg = get_ai_provider_config(settings)
-    max_images = ai_cfg.get("max_images_per_request", 50)
+    from src.infrastructure.database import get_resolved_ai_config
+    ai_cfg = get_resolved_ai_config(company_id=company_id)
+    provider = ai_cfg["provider"]
+    model_name = ai_cfg["model_name"]
+    billing_tier = ai_cfg["billing_tier"]
+    default_env_var = ai_cfg["api_key_env_var"]
+    max_images = 50
 
     if len(image_paths) > max_images:
         error_msg = f"Number of pages ({len(image_paths)}) exceeds the maximum allowed images per request ({max_images})."
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    # Resolve AI provider and model configuration for this doc_type
-    provider, model_name = load_doc_type_ai_config(target_doc_type, settings)
     logger.info(f"AI Config resolved for doc_type '{target_doc_type}' (merchant '{merchant_key}'): Provider='{provider}', Model='{model_name}'")
 
     from src.infrastructure.core.config import load_doc_type_schema, load_doc_type_prompt
@@ -181,17 +182,21 @@ def extract_document_data(
             raise FileNotFoundError(f"Receipt image not found at: {path}")
         images.append(Image.open(path))
     
-    # 4. Resolve active credentials from settings
-    ai_provider_cfg = settings.get("ai_provider", {})
-    provider_cfg = ai_provider_cfg.get(provider, {})
-    billing_tier = ai_provider_cfg.get("billing_tier", "free").strip().lower()
-    target_key = f"api_key_env_{billing_tier}"
-    default_env_var = provider_cfg.get(target_key)
-    if not default_env_var:
-        raise ValueError(f"Missing required '{target_key}' for AI provider '{provider}' (billing_tier='{billing_tier}') in {settings_path}")
+    # 4. Resolve active credentials from AIModelConfig
+    from dotenv import load_dotenv
+    load_dotenv()
+    raw_secret = os.getenv(default_env_var)
+    if not raw_secret or not raw_secret.strip():
+        # Fallback to check legacy GEMINI_API_KEY if testing
+        raw_secret = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY_FREE")
+        if not raw_secret or not raw_secret.strip():
+            raise ValueError(
+                f"Missing required environment variable '{default_env_var}' for AIModelConfig "
+                f"'{ai_cfg.get('config_id')}' (provider='{provider}') in .env (Fail-Fast)."
+            )
 
     credentials = [{
-        "credential_id": "default",
+        "credential_id": ai_cfg.get("config_id", "default"),
         "provider": provider,
         "model_name": model_name,
         "api_key_env": default_env_var,

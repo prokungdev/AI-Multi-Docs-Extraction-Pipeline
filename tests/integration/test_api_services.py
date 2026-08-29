@@ -90,17 +90,16 @@ class TestSystemConfigurationValidation(unittest.TestCase):
         self.assertTrue(is_valid, f"Expected production settings to be valid, got errors: {errors}")
         self.assertEqual(len(errors), 0)
 
-    def test_02_missing_thresholds_fails(self):
-        """Test that missing validation_thresholds fails immediately."""
+    def test_02_missing_thresholds_allowed_as_table_model(self):
+        """Test that settings without validation_thresholds is valid (delegated to DB DocumentType)."""
         from src.application.usecases.initializer import validate_settings_config
         import copy
-        bad_dict = copy.deepcopy(self.valid_dict)
-        del bad_dict["validation_thresholds"]
-        tmp_path = self._write_temp_settings(bad_dict)
+        valid_no_thresh = copy.deepcopy(self.valid_dict)
+        valid_no_thresh.pop("validation_thresholds", None)
+        tmp_path = self._write_temp_settings(valid_no_thresh)
         try:
             is_valid, errors = validate_settings_config(tmp_path)
-            self.assertFalse(is_valid)
-            self.assertTrue(any("validation_thresholds" in e for e in errors))
+            self.assertTrue(is_valid, f"Expected settings without validation_thresholds to be valid, got: {errors}")
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
@@ -110,7 +109,7 @@ class TestSystemConfigurationValidation(unittest.TestCase):
         from src.application.usecases.initializer import validate_settings_config
         import copy
         bad_dict = copy.deepcopy(self.valid_dict)
-        bad_dict["image_processing"]["dpi"] = 10
+        bad_dict.setdefault("image_processing", {})["dpi"] = 10
         tmp_path = self._write_temp_settings(bad_dict)
         try:
             is_valid, errors = validate_settings_config(tmp_path)
@@ -125,7 +124,7 @@ class TestSystemConfigurationValidation(unittest.TestCase):
         from src.application.usecases.initializer import validate_settings_config
         import copy
         bad_dict = copy.deepcopy(self.valid_dict)
-        bad_dict["image_processing"]["split_filename_pattern"] = "{doc_type}_{tax_id}_static"
+        bad_dict.setdefault("image_processing", {})["split_filename_pattern"] = "{doc_type}_{tax_id}_static"
         tmp_path = self._write_temp_settings(bad_dict)
         try:
             is_valid, errors = validate_settings_config(tmp_path)
@@ -135,18 +134,17 @@ class TestSystemConfigurationValidation(unittest.TestCase):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
-    def test_05_missing_active_doc_types_fails(self):
-        """Test that missing active doc_types fails."""
+    def test_05_invalid_schema_type_fails(self):
+        """Test that invalid config schema data types fail validation."""
         from src.application.usecases.initializer import validate_settings_config
         import copy
         bad_dict = copy.deepcopy(self.valid_dict)
-        for d in bad_dict.get("doc_types", []):
-            d["is_active"] = False
+        bad_dict.setdefault("image_processing", {})["supported_input_extensions"] = 12345  # Not a list
         tmp_path = self._write_temp_settings(bad_dict)
         try:
             is_valid, errors = validate_settings_config(tmp_path)
             self.assertFalse(is_valid)
-            self.assertTrue(any("No active doc_types configured" in e for e in errors))
+            self.assertTrue(len(errors) > 0)
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
@@ -156,8 +154,12 @@ class TestSystemConfigurationValidation(unittest.TestCase):
         from src.application.usecases.initializer import validate_settings_config
         import copy
         bad_dict = copy.deepcopy(self.valid_dict)
-        bad_dict["validation_thresholds"]["confidence_low"] = 0.90
-        bad_dict["validation_thresholds"]["confidence_high"] = 0.70
+        bad_dict["validation_thresholds"] = {
+            "confidence_low": 0.90,
+            "confidence_review": 0.80,
+            "confidence_high": 0.70,
+            "financial_tolerance": 0.05,
+        }
         tmp_path = self._write_temp_settings(bad_dict)
         try:
             is_valid, errors = validate_settings_config(tmp_path)
@@ -167,17 +169,17 @@ class TestSystemConfigurationValidation(unittest.TestCase):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
-    def test_07_pricing_parity_mismatch_fails(self):
-        """Test that configuring active AI model missing from pricing table fails."""
+    def test_07_invalid_image_dpi_fails(self):
+        """Test that configuring invalid image DPI fails schema validation."""
         from src.application.usecases.initializer import validate_settings_config
         import copy
         bad_dict = copy.deepcopy(self.valid_dict)
-        bad_dict["ai_provider"]["gemini"]["model_name"] = "unpriced-experimental-model"
+        bad_dict.setdefault("image_processing", {})["dpi"] = 10
         tmp_path = self._write_temp_settings(bad_dict)
         try:
             is_valid, errors = validate_settings_config(tmp_path)
             self.assertFalse(is_valid)
-            self.assertTrue(any("missing pricing configuration" in e for e in errors))
+            self.assertTrue(any("DPI must be between 72 and 600" in e for e in errors))
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)

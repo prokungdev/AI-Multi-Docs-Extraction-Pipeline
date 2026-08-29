@@ -8,12 +8,14 @@ from .constants import (
     EntityIdPrefix,
     SystemUserId,
     UserRole,
+    DocTypeId,
     generate_entity_id,
     AppMetadata,
     DocumentStatusCode,
     ReviewPriority,
     PipelineAction,
     PipelineStageFolder,
+    ProcessingType,
 )
 
 from .logger import (
@@ -59,6 +61,7 @@ from .telemetry import (
 from .utils import (
     chunk_list,
     sanitize_tax_id,
+    ttl_cache,
 )
 
 from .healthcheck import (
@@ -68,7 +71,20 @@ from .healthcheck import (
     run_healthcheck,
 )
 
+from .user_context import (
+    get_current_user_id,
+    set_current_user_id,
+    reset_current_user_id,
+    user_scope,
+    sync_streamlit_user_context,
+)
+
 __all__ = [
+    "get_current_user_id",
+    "set_current_user_id",
+    "reset_current_user_id",
+    "user_scope",
+    "sync_streamlit_user_context",
     "DefaultPath",
     "DefaultCompany",
     "DefaultIdentifier",
@@ -82,6 +98,7 @@ __all__ = [
     "ReviewPriority",
     "PipelineAction",
     "PipelineStageFolder",
+    "ProcessingType",
     "AppLogger",
     "logger",
     "get_logger",

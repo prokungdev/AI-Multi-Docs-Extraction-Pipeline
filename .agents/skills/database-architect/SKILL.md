@@ -33,6 +33,18 @@ All relational database models and schema definitions MUST strictly follow these
 - **Centralized Entity Prefixes**: All entity prefixes MUST be declared in a centralized constants namespace class (`EntityIdPrefix`).
 - **Benefits**: Visual entity identification in logs/DB views, cross-entity type-safety, compact index size, and zero collision across distributed nodes.
 
+### 1.4 Enterprise Hierarchical Audit Trail Standard (Clean State & Automatic Event Stamping)
+- **Hierarchical Audit Mixins**:
+  - **`AppendOnlyAuditMixin` (`created_at`, `created_by`)**: Used strictly for Immutable / Append-Only tables (Audit Logs, Telemetry Logs, Event Streams).
+  - **`MutableAuditMixin` (`updated_at`, `updated_by`)**: Inherits `AppendOnlyAuditMixin`. Used for all Mutable tables (Master, Config, Transaction).
+- **Clean State Pattern**: On record insertion (`INSERT`), `created_at` and `created_by` are set; `updated_at` and `updated_by` MUST remain `None` (NULL). On subsequent updates (`UPDATE`), `updated_at` and `updated_by` are stamped with the modifying actor.
+- **Automatic Audit Stamping via Event Listeners**:
+  - Use SQLAlchemy `@event.listens_for(MutableAuditMixin, "before_update", propagate=True)` paired with thread-safe `UserContext` (`get_current_user_id()`) to automatically update `updated_at` and `updated_by` without manual repository boilerplate.
+- **Abstract Base Classes**:
+  - **`BaseEntity(Base, DictSerializableMixin, MutableAuditMixin)`**: Standard base for all Master, Config, and Transaction tables.
+  - **`BaseLogEntity(Base, DictSerializableMixin, AppendOnlyAuditMixin)`**: Standard base for all Append-Only Log tables.
+- **Strict Zero-Default Policy**: `created_by` and `updated_by` columns must NOT have hardcoded silent fallback defaults (e.g. `default="system"`). The caller must explicitly provide the actor ID or resolve it strictly via a thread-safe `UserContext`.
+
 ---
 
 ## 💾 2. Pure SQLAlchemy 2.0 ORM Policy

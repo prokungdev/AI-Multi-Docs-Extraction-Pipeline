@@ -9,6 +9,7 @@ from src.infrastructure.core.logger import logger
 from src.infrastructure.core.constants import (
     DefaultIdentifier,
     EntityIdPrefix,
+    SystemUserId,
     generate_entity_id,
 )
 from ..engine import get_db_session
@@ -92,7 +93,8 @@ def match_merchant_by_file_prefix(filename: str, company_id: str = None) -> dict
 
 
 def get_or_create_merchant_auto(
-    merchant_name: str = None,
+    merchant_name: str,
+    created_by: str,
     tax_id: str = None,
     suggested_short_name: str = None,
     company_id: str = None,
@@ -103,6 +105,7 @@ def get_or_create_merchant_auto(
     Auto-discovers new merchant during Pipeline execution.
     If already exists (by tax_id or normalized name), returns existing.
     If new, inserts with status_code='PENDING' (Gatekeeper Hold).
+    Requires explicit created_by actor ID.
     """
     name = (merchant_name or raw_name or "Unknown Merchant").strip()
     clean_name = name if name else "Unknown Merchant"
@@ -151,11 +154,12 @@ def get_or_create_merchant_auto(
                 default_wht_rate=0.0,
                 is_vat_registered=1,
                 is_active=1,
-                created_at=now_str
+                created_at=now_str,
+                created_by=created_by
             )
             session.add(new_m)
             session.flush()
-            logger.info(f"Auto-discovered new merchant '{clean_name}' (ID: {mid}) -> Gatekeeper status: PENDING")
+            logger.info(f"Auto-discovered new merchant '{clean_name}' (ID: {mid}) by '{created_by}' -> Gatekeeper status: PENDING")
             return new_m.to_dict(), True
     except Exception as e:
         logger.error(f"Failed in get_or_create_merchant_auto for '{name}': {e}")
@@ -200,6 +204,7 @@ def approve_merchant(
             m.approved_by = approved_by
             m.approved_at = now_str
             m.updated_at = now_str
+            m.updated_by = approved_by
             logger.info(f"Merchant '{m.merchant_name}' ({merchant_id}) APPROVED by '{approved_by}'.")
             return True, f"Merchant '{m.merchant_name}' approved successfully"
     except Exception as e:
@@ -220,6 +225,7 @@ def ignore_merchant(merchant_id: str, approved_by: str) -> tuple[bool, str]:
             m.approved_by = approved_by
             m.approved_at = now_str
             m.updated_at = now_str
+            m.updated_by = approved_by
             logger.info(f"Merchant '{m.merchant_name}' ({merchant_id}) marked IGNORED by '{approved_by}'.")
             return True, f"Merchant '{m.merchant_name}' marked IGNORED"
     except Exception as e:
@@ -279,17 +285,28 @@ def get_merchant_by_tax_id(tax_id: str, company_id: str = None) -> dict | None:
         return None
 
 
-def upsert_merchant(merchant_id: str, company_id: str, merchant_name: str,
-                    short_name: str = None, file_prefix: str = None, tax_id: str = None,
-                    status_code: str = MerchantStatus.APPROVED.value,
-                    default_wht_rate: float = 0.0, is_vat_registered: int = 1,
-                    is_active: int = 1, approved_by: str = None) -> dict:
+def upsert_merchant(
+    merchant_id: str,
+    company_id: str,
+    merchant_name: str,
+    created_by: str,
+    short_name: str = None,
+    file_prefix: str = None,
+    tax_id: str = None,
+    status_code: str = MerchantStatus.APPROVED.value,
+    default_wht_rate: float = 0.0,
+    is_vat_registered: int = 1,
+    is_active: int = 1,
+    approved_by: str = None,
+    updated_by: str = None
+) -> dict:
     """Inserts or updates a merchant record using Pure SQLAlchemy 2.0 ORM."""
     clean_name = merchant_name.strip()
     s_name = (short_name or sanitize_short_name(clean_name)).strip().lower()
     prefix = (file_prefix or s_name).strip().lower()
     clean_tax = tax_id.strip() if tax_id and tax_id.strip() else None
     now_str = datetime.now(timezone.utc).isoformat()
+    actor_update = updated_by or approved_by or created_by
 
     try:
         with get_db_session() as session:
@@ -315,6 +332,7 @@ def upsert_merchant(merchant_id: str, company_id: str, merchant_name: str,
                     m.approved_by = approved_by
                     m.approved_at = now_str
                 m.updated_at = now_str
+                m.updated_by = actor_update
             else:
                 m = Merchant(
                     merchant_id=merchant_id,
@@ -329,7 +347,8 @@ def upsert_merchant(merchant_id: str, company_id: str, merchant_name: str,
                     is_active=int(is_active),
                     approved_by=approved_by,
                     approved_at=now_str if status_code == MerchantStatus.APPROVED.value else None,
-                    created_at=now_str
+                    created_at=now_str,
+                    created_by=created_by
                 )
                 session.add(m)
             session.flush()
@@ -403,8 +422,8 @@ def delete_merchant(merchant_id: str) -> bool:
         return False
 
 
-def update_merchant_status(merchant_id: str, is_active: int) -> bool:
-    """Toggles the is_active status of a merchant."""
+def update_merchant_status(merchant_id: str, is_active: int, updated_by: str) -> bool:
+    """Toggles the is_active status of a merchant and stamps updated_by/updated_at."""
     try:
         with get_db_session() as session:
             stmt = select(Merchant).filter_by(merchant_id=merchant_id)
@@ -413,6 +432,7 @@ def update_merchant_status(merchant_id: str, is_active: int) -> bool:
                 return False
             m.is_active = is_active
             m.updated_at = datetime.now(timezone.utc).isoformat()
+            m.updated_by = updated_by
             return True
     except Exception as e:
         logger.error(f"Failed to update merchant active status '{merchant_id}': {e}")
@@ -440,11 +460,11 @@ def get_sources(doc_type_id: str = None, company_id: str = None) -> list[dict]:
         return []
 
 
-def update_source_active_status(source_id: str, *args, **kwargs) -> bool:
-    """Updates is_active flag for a merchant."""
+def update_source_active_status(source_id: str, updated_by: str, *args, **kwargs) -> bool:
+    """Updates is_active flag for a merchant with required updated_by."""
     is_active = 1
     if args:
         is_active = args[-1]
     elif "is_active" in kwargs:
         is_active = kwargs["is_active"]
-    return update_merchant_status(merchant_id=source_id, is_active=int(is_active))
+    return update_merchant_status(merchant_id=source_id, is_active=int(is_active), updated_by=updated_by)

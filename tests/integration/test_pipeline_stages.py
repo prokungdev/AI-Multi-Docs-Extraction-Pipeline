@@ -590,10 +590,10 @@ class TestStage5DatabaseTransformation(unittest.TestCase):
         comp_id = comps[0]["company_id"]
 
         batch_id = "test_batch_receipt_001"
-        create_batch(batch_id=batch_id, original_filename="test.pdf", total_pages=1, storage_path="fake/path", file_hash="hash_rcpt_001", company_id=comp_id)
+        create_batch(batch_id=batch_id, created_by="test_user", original_filename="test.pdf", total_pages=1, storage_path="fake/path", file_hash="hash_rcpt_001", company_id=comp_id)
 
         doc_id = "doc_test_relational_001"
-        create_document(document_id=doc_id, batch_id=batch_id, doc_type_id="expense_receipt", company_id=comp_id, status_code="PROCESSED")
+        create_document(document_id=doc_id, batch_id=batch_id, created_by="test_user", doc_type_id="expense_receipt", company_id=comp_id, status_code="PROCESSED")
 
         mock_ai_payload = {
             "extracted_documents": [
@@ -631,6 +631,7 @@ class TestStage5DatabaseTransformation(unittest.TestCase):
             document_id=doc_id,
             payload=mock_ai_payload,
             original_filename="test.pdf",
+            created_by="test_user",
             company_id=comp_id,
             page_number=1
         )
@@ -675,7 +676,7 @@ class TestStage5DatabaseTransformation(unittest.TestCase):
         comp_id = comps[0]["company_id"]
 
         batch_id = "test_batch_e2e_transform_001"
-        create_batch(batch_id=batch_id, original_filename="Grab_Sample.pdf", total_pages=1, storage_path="storage/companies/C00000_SAMPLE/expense_receipt/02_raw_data/0105556090377_grab", file_hash="hash_e2e_001", company_id=comp_id)
+        create_batch(batch_id=batch_id, created_by="test_user", original_filename="Grab_Sample.pdf", total_pages=1, storage_path="storage/companies/C00000_SAMPLE/expense_receipt/02_raw_data/0105556090377_grab", file_hash="hash_e2e_001", company_id=comp_id)
 
         # Setup page image and json in isolated storage
         prep_dir = storage_manager.get_preprocess_dir(comp_code, "expense_receipt")

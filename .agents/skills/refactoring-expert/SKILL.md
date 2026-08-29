@@ -68,8 +68,13 @@ When loops or conditional branches create entities (e.g. multi-page file splits 
    - Read source code, identify dependencies, and verify existing test coverage.
 2. **Identify Refactoring Targets**:
    - Flag long methods, code duplication, missing abstractions, or legacy 1.x ORM patterns.
-3. **Present Implementation Plan**:
+3. **Present Implementation Plan (with Mandatory Time Estimation)**:
    - Outline planned refactoring steps, showing before/after architecture and decoupled design.
+   - **Mandatory Time Estimation**: Every plan MUST include a detailed time breakdown:
+     - Per-phase duration estimate.
+     - Total implementation duration.
+     - Post-implementation verification & debrief duration.
+     - Grand total end-to-end estimated time.
 4. **Execute Refactor Incrementally**:
    - Apply edits cleanly while keeping public method contracts and interfaces intact.
 5. **Verify Zero Regressions**:

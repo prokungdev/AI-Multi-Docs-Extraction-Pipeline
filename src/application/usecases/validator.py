@@ -16,7 +16,7 @@ from src.infrastructure.core.config import (
     get_default_doc_type,
     get_default_company_code,
 )
-from src.infrastructure.core.constants import DocumentStatusCode, DefaultIdentifier, SystemUserId
+from src.infrastructure.core import DocumentStatusCode, DefaultIdentifier, SystemUserId, get_current_user_id
 from src.infrastructure.database import (
     get_pages_by_status,
     update_page_status,
@@ -210,15 +210,17 @@ def validate_batch_documents(
                 new_status = post_res["status_code"]
                 priority = post_res["review_priority"]
                 confidence = post_res["overall_confidence"]
+                current_actor = get_current_user_id()
 
                 update_document_metadata(
                     document_id=doc.document_id,
+                    updated_by=current_actor,
                     overall_confidence=confidence,
                     review_priority=priority
                 )
 
                 if new_status == DocumentStatusCode.PROCESSED and priority == "LOW":
-                    update_document_to_approved(doc.document_id, confirmed_by=SystemUserId.DEV_ADMIN)
+                    update_document_to_approved(doc.document_id, confirmed_by=current_actor)
                     archive_and_export_document(
                         document_id=doc.document_id,
                         payload=raw_payload,

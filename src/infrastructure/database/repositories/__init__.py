@@ -81,9 +81,26 @@ from .company_repo import (
 
 from .user_repo import (
     create_user,
+    update_user,
+    assign_user_to_company,
+    remove_user_from_company,
+    get_user_companies,
+    has_company_access,
+    get_accessible_companies,
+    get_default_company_for_user,
+    list_roles,
     get_user_by_id,
     get_user_by_email,
     list_users,
+)
+
+from .ai_config_repo import (
+    get_resolved_ai_config,
+    get_ai_config_by_id,
+    list_ai_configs,
+    create_ai_config,
+    update_ai_config,
+    set_default_ai_config,
 )
 
 __all__ = [
@@ -156,8 +173,16 @@ __all__ = [
     "delete_company",
     "get_doc_types",
     "update_doc_type_active_status",
-    # User
+    # User RBAC
     "create_user",
+    "update_user",
+    "assign_user_to_company",
+    "remove_user_from_company",
+    "get_user_companies",
+    "has_company_access",
+    "get_accessible_companies",
+    "get_default_company_for_user",
+    "list_roles",
     "get_user_by_id",
     "get_user_by_email",
     "list_users",

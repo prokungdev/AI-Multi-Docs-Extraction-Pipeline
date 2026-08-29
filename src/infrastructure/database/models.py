@@ -1,6 +1,7 @@
 """SQLAlchemy ORM Entities and Data Models for AI Multi-Docs Extraction Pipeline.
 
 Provides standardized declarative models for relational database mapping across SQLite and PostgreSQL.
+Includes Enterprise RBAC, Multi-Company Isolation, and Hierarchical Audit Trail Mixins.
 """
 
 from datetime import datetime, timezone
@@ -13,10 +14,13 @@ from sqlalchemy import (
     Text,
     DateTime,
     ForeignKey,
-    Index
+    Index,
+    UniqueConstraint,
+    event,
 )
 from sqlalchemy.orm import declarative_base, relationship
-from src.infrastructure.core.constants import DefaultIdentifier
+from src.infrastructure.core.constants import DefaultIdentifier, SystemUserId, UserRole, ProcessingType
+from src.infrastructure.core.user_context import get_current_user_id
 
 Base = declarative_base()
 LogBase = declarative_base()
@@ -40,7 +44,88 @@ class DictSerializableMixin:
         return result
 
 
-class Company(Base, DictSerializableMixin):
+class AppendOnlyAuditMixin:
+    """Audit Mixin for Append-Only / Log entities (INSERT only, No updates)."""
+    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
+    created_by = Column(String(36), nullable=False, default=SystemUserId.SYSTEM_ADMIN)
+
+
+class MutableAuditMixin(AppendOnlyAuditMixin):
+    """Full 4-column Audit Mixin for Mutable entities (INSERT + UPDATE tracking)."""
+    updated_at = Column(String(50), nullable=True)
+    updated_by = Column(String(36), nullable=True)
+
+
+AuditTrailMixin = MutableAuditMixin
+
+
+@event.listens_for(MutableAuditMixin, "before_update", propagate=True)
+def _auto_stamp_update_audit(mapper, connection, target):
+    """Automatically stamps updated_at and updated_by using UserContext on entity modification."""
+    target.updated_at = datetime.now(timezone.utc).isoformat()
+    try:
+        current_user = get_current_user_id()
+        if current_user and current_user != SystemUserId.AUTO_SYSTEM:
+            target.updated_by = current_user
+        elif not getattr(target, "updated_by", None):
+            target.updated_by = current_user or SystemUserId.AUTO_SYSTEM
+    except Exception:
+        if not getattr(target, "updated_by", None):
+            target.updated_by = SystemUserId.AUTO_SYSTEM
+
+
+class BaseEntity(Base, DictSerializableMixin, MutableAuditMixin):
+    """Abstract Base Entity for all Mutable Master, Config, and Transaction tables."""
+    __abstract__ = True
+
+
+class BaseLogEntity(Base, DictSerializableMixin, AppendOnlyAuditMixin):
+    """Abstract Base Entity for Append-Only Log and Telemetry tables."""
+    __abstract__ = True
+
+
+# ==============================================================================
+# Configuration & AI Models
+# ==============================================================================
+
+class AIModelConfig(BaseEntity):
+    """Universal AI Provider and Model Configuration entity."""
+    __tablename__ = "ai_model_configs"
+
+    config_id = Column(String(50), primary_key=True)
+    config_name = Column(String(100), nullable=False)
+    provider = Column(String(50), nullable=False, default="gemini")
+    model_name = Column(String(100), nullable=False)
+    billing_tier = Column(String(20), nullable=False, default="free")
+    api_key_env_var = Column(String(100), nullable=False)
+    input_price_per_million = Column(Float, default=0.0, server_default="0.0")
+    output_price_per_million = Column(Float, default=0.0, server_default="0.0")
+    exchange_rate_thb = Column(Float, default=36.0, server_default="36.0")
+    max_concurrent_requests = Column(Integer, default=8, server_default="8")
+    is_default = Column(Integer, default=0, server_default="0", nullable=False)
+    is_active = Column(Integer, default=1, server_default="1", nullable=False)
+
+    companies = relationship("Company", back_populates="ai_config")
+
+
+# ==============================================================================
+# RBAC & Master Entities
+# ==============================================================================
+
+class Role(BaseEntity):
+    """RBAC Role entity reference model with Data-Driven Admin Bypass Flag."""
+    __tablename__ = "roles"
+
+    role_code = Column(String(50), primary_key=True)
+    role_name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    is_admin = Column(Integer, nullable=False, default=0, server_default="0")
+    is_system = Column(Integer, nullable=False, default=1, server_default="1")
+
+    users = relationship("User", back_populates="role_rel")
+
+
+class Company(BaseEntity):
     """Standardized client company entity model for multi-company isolation."""
     __tablename__ = "companies"
 
@@ -50,36 +135,52 @@ class Company(Base, DictSerializableMixin):
     short_name = Column(String(50), nullable=False)
     tax_id = Column(String(13), unique=True, nullable=True, index=True)
     branch_code = Column(String(5), nullable=False, default="00000")
-    is_active = Column(Integer, default=1)
-    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at = Column(String(50), nullable=True)
+    is_active = Column(Integer, default=1, server_default="1")
+    ai_config_id = Column(String(50), ForeignKey("ai_model_configs.config_id", ondelete="SET NULL"), nullable=True)
 
+    ai_config = relationship("AIModelConfig", back_populates="companies")
     batches = relationship("Batch", back_populates="company", cascade="all, delete-orphan")
     documents = relationship("DocumentControl", back_populates="company", cascade="all, delete-orphan")
     merchants = relationship("Merchant", back_populates="company", cascade="all, delete-orphan")
     expense_receipts = relationship("ExpenseReceipt", back_populates="company", cascade="all, delete-orphan")
     api_call_logs = relationship("ApiCallLog", back_populates="company")
-    users = relationship("User", back_populates="company", cascade="all, delete-orphan")
+    user_mappings = relationship("UserCompany", back_populates="company", cascade="all, delete-orphan")
 
 
-class User(Base, DictSerializableMixin):
-    """User entity model for multi-tenant identity, Audit Trail, and RBAC."""
+class User(BaseEntity):
+    """User entity model for Global Identity, Authentication, and RBAC."""
     __tablename__ = "users"
 
     user_id = Column(String(36), primary_key=True)
-    company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=True, index=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
     full_name = Column(String(255), nullable=False)
-    role = Column(String(50), nullable=False, default="ADMIN")
-    is_active = Column(Integer, default=1)
-    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at = Column(String(50), nullable=True)
+    password_hash = Column(String(255), nullable=True)
+    role = Column(String(50), ForeignKey("roles.role_code"), nullable=False, default=UserRole.REVIEWER.value, index=True)
+    is_active = Column(Integer, default=1, server_default="1")
 
-    company = relationship("Company", back_populates="users")
+    role_rel = relationship("Role", back_populates="users")
+    user_companies = relationship("UserCompany", back_populates="user", cascade="all, delete-orphan")
+
+
+class UserCompany(BaseEntity):
+    """Junction entity mapping Users to Companies (M:N Multi-Company Access)."""
+    __tablename__ = "user_companies"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True)
+    company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=False, index=True)
+    is_default = Column(Integer, nullable=False, default=0, server_default="0")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "company_id", name="uq_user_company"),
+    )
+
+    user = relationship("User", back_populates="user_companies")
+    company = relationship("Company", back_populates="user_mappings")
 
 
 class DocumentStatus(Base, DictSerializableMixin):
-    """Document processing status reference model."""
+    """Document processing status static reference lookup model."""
     __tablename__ = "document_statuses"
 
     status_code = Column(String(50), primary_key=True)
@@ -87,7 +188,32 @@ class DocumentStatus(Base, DictSerializableMixin):
     description = Column(Text, nullable=True)
 
 
-class Batch(Base, DictSerializableMixin):
+class DocumentType(BaseEntity):
+    """Unified Master Registry for Document Types and Quality/Validation Thresholds."""
+    __tablename__ = "document_types"
+
+    doc_type_id = Column(String(50), primary_key=True)
+    display_name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    processing_type = Column(String(50), nullable=False, default=ProcessingType.AI.value)
+    sort_order = Column(Integer, nullable=False, default=1, server_default="1")
+    is_active = Column(Integer, nullable=False, default=1, server_default="1")
+
+    # Quality and validation thresholds (Nullable for non-AI or non-financial doc types)
+    confidence_high = Column(Float, nullable=True)
+    confidence_review = Column(Float, nullable=True)
+    confidence_low = Column(Float, nullable=True)
+    financial_tolerance = Column(Float, nullable=True)
+
+    # File naming & image processing patterns
+    split_filename_pattern = Column(String(255), nullable=True)
+    archive_filename_pattern = Column(String(255), nullable=True)
+    dpi = Column(Integer, nullable=True, default=150, server_default="150")
+
+    documents = relationship("DocumentControl", back_populates="doc_type_rel")
+
+
+class Batch(BaseEntity):
     """Processed document batch metadata model."""
     __tablename__ = "batches"
 
@@ -97,21 +223,20 @@ class Batch(Base, DictSerializableMixin):
     total_pages = Column(Integer, nullable=False)
     storage_path = Column(String(500), nullable=False)
     file_hash = Column(String(64), unique=True, nullable=False)
-    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
 
     company = relationship("Company", back_populates="batches")
     documents = relationship("DocumentControl", back_populates="batch", cascade="all, delete-orphan")
     pages = relationship("BatchPage", back_populates="batch", cascade="all, delete-orphan")
 
 
-class DocumentControl(Base, DictSerializableMixin):
+class DocumentControl(BaseEntity):
     """Universal Central Document Control & Lifecycle Supertype Model."""
     __tablename__ = "document_controls"
 
     document_id = Column(String(100), primary_key=True)
     company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=True, index=True)
     batch_id = Column(String(100), ForeignKey("batches.batch_id", ondelete="CASCADE"), nullable=False)
-    doc_type_id = Column(String(100), nullable=False)
+    doc_type_id = Column(String(50), ForeignKey("document_types.doc_type_id"), nullable=False, index=True)
     status_code = Column(String(50), ForeignKey("document_statuses.status_code"), nullable=False)
     search_text = Column(Text, nullable=True)
     data_payload = Column(Text, nullable=True)
@@ -136,17 +261,17 @@ class DocumentControl(Base, DictSerializableMixin):
     confidence_notes = Column(Text, nullable=True)
     review_priority = Column(String(20), nullable=True)
     is_auto_approved = Column(Integer, default=0, server_default="0")
-    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at = Column(String(50), nullable=True)
 
     company = relationship("Company", back_populates="documents")
     batch = relationship("Batch", back_populates="documents")
     status = relationship("DocumentStatus")
+    doc_type_rel = relationship("DocumentType", back_populates="documents")
     pages = relationship("BatchPage", back_populates="document")
     expense_receipts = relationship("ExpenseReceipt", back_populates="document", cascade="all, delete-orphan")
 
 
-class BatchPage(Base, DictSerializableMixin):
+
+class BatchPage(BaseEntity):
     """Batch physical page image model."""
     __tablename__ = "batch_pages"
 
@@ -158,14 +283,13 @@ class BatchPage(Base, DictSerializableMixin):
     image_path = Column(String(500), nullable=False)
     status_code = Column(String(50), ForeignKey("document_statuses.status_code"), nullable=False)
     error_reason = Column(Text, nullable=True)
-    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
 
     batch = relationship("Batch", back_populates="pages")
     document = relationship("DocumentControl", back_populates="pages")
     status = relationship("DocumentStatus")
 
 
-class Merchant(Base, DictSerializableMixin):
+class Merchant(BaseEntity):
     """Standardized merchant entity model."""
     __tablename__ = "merchants"
 
@@ -181,8 +305,6 @@ class Merchant(Base, DictSerializableMixin):
     default_wht_rate = Column(Float, default=0.0)
     is_vat_registered = Column(Integer, default=1)
     is_active = Column(Integer, default=1, server_default="1")
-    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at = Column(String(50), nullable=True)
 
     company = relationship("Company", back_populates="merchants")
     receipts = relationship("ExpenseReceipt", back_populates="merchant")
@@ -196,7 +318,7 @@ class Merchant(Base, DictSerializableMixin):
     )
 
 
-class ExpenseReceipt(Base, DictSerializableMixin):
+class ExpenseReceipt(BaseEntity):
     """Standardized expense receipt header model."""
     __tablename__ = "expense_receipts"
 
@@ -215,8 +337,6 @@ class ExpenseReceipt(Base, DictSerializableMixin):
     net_amount = Column(Float, default=0.0)
     payment_method = Column(String(50), nullable=True)
     source_filename = Column(String(255), nullable=True)
-    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at = Column(String(50), nullable=True)
 
     company = relationship("Company", back_populates="expense_receipts")
     document = relationship("DocumentControl", back_populates="expense_receipts")
@@ -224,7 +344,7 @@ class ExpenseReceipt(Base, DictSerializableMixin):
     items = relationship("ExpenseReceiptItem", back_populates="receipt", cascade="all, delete-orphan")
 
 
-class ExpenseReceiptItem(Base, DictSerializableMixin):
+class ExpenseReceiptItem(BaseEntity):
     """Standardized expense receipt item detail model."""
     __tablename__ = "expense_receipt_items"
 
@@ -238,8 +358,12 @@ class ExpenseReceiptItem(Base, DictSerializableMixin):
     receipt = relationship("ExpenseReceipt", back_populates="items")
 
 
-class ApiCallLog(Base, DictSerializableMixin):
-    """API execution log model."""
+# ==============================================================================
+# Logging & Telemetry Models (Append-Only)
+# ==============================================================================
+
+class ApiCallLog(BaseLogEntity):
+    """API execution log model (Append-Only)."""
     __tablename__ = "api_call_logs"
 
     log_id = Column(String(100), primary_key=True)
@@ -258,13 +382,12 @@ class ApiCallLog(Base, DictSerializableMixin):
     latency_ms = Column(Float, nullable=True)
     error_reason = Column(Text, nullable=True)
     raw_response = Column(Text, nullable=True)
-    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())
 
     company = relationship("Company", back_populates="api_call_logs")
 
 
-class ApplicationLog(LogBase, DictSerializableMixin):
-    """Application log model."""
+class ApplicationLog(LogBase, DictSerializableMixin, AppendOnlyAuditMixin):
+    """Application diagnostic log model (Append-Only)."""
     __tablename__ = "application_logs"
 
     log_id = Column(Integer, primary_key=True, autoincrement=True)
@@ -273,4 +396,3 @@ class ApplicationLog(LogBase, DictSerializableMixin):
     function = Column(String(100), nullable=False)
     message = Column(Text, nullable=False)
     extra_data = Column(Text, nullable=True)
-    created_at = Column(String(50), nullable=False, default=lambda: datetime.now(timezone.utc).isoformat())

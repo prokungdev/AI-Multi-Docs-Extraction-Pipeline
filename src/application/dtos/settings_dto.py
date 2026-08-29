@@ -1,25 +1,10 @@
 from typing import List, Dict, Optional, Any
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
-
-
-class DocTypeFilesConfigModel(BaseModel):
-    classify_prompt: str
-    classify_schema: str
-    extract_prompt: str
-    extract_schema: str
-    extract_rules: str
-
-
-class DocTypeConfigModel(BaseModel):
-    doc_type_id: str
-    display_name: str
-    is_active: bool = True
-    sort_order: int = 1
-    files: DocTypeFilesConfigModel
-
+from pydantic import BaseModel, Field, field_validator, model_validator
+from src.infrastructure.core.constants import PipelineStageFolder
 
 
 class LoggingConfigModel(BaseModel):
+    """Application logging settings."""
     logs_dir: str = "logs"
     rotation: str = "00:00"
     retention: str = "30 days"
@@ -28,13 +13,14 @@ class LoggingConfigModel(BaseModel):
 
 
 class ImageProcessingConfigModel(BaseModel):
-    supported_input_extensions: List[str]
-    processing_format: str
-    jpeg_quality: int
-    max_dimension: int
-    dpi: int
-    split_filename_pattern: str
-    archive_filename_pattern: str
+    """Image processing and PDF rasterization settings."""
+    supported_input_extensions: List[str] = Field(default_factory=lambda: [".pdf", ".jpg", ".jpeg", ".png", ".webp", ".tiff"])
+    processing_format: str = "jpg"
+    jpeg_quality: int = 85
+    max_dimension: int = 1800
+    dpi: int = 150
+    split_filename_pattern: str = "{doc_type}_{tax_id}_{original_filename}_{batch_id}_p{page_no}"
+    archive_filename_pattern: str = "{doc_type}_{tax_id}_{doc_no}_{batch_id}_p{page_no}"
     use_ai_fallback_matching: bool = False
 
     @field_validator("dpi")
@@ -53,10 +39,11 @@ class ImageProcessingConfigModel(BaseModel):
 
 
 class ValidationThresholdsConfigModel(BaseModel):
-    confidence_high: float
-    confidence_low: float
-    confidence_review: float
-    financial_tolerance: float
+    """Quality and business rule verification thresholds."""
+    confidence_high: float = 0.85
+    confidence_low: float = 0.60
+    confidence_review: float = 0.70
+    financial_tolerance: float = 0.05
 
     @field_validator("confidence_high", "confidence_low", "confidence_review")
     @classmethod
@@ -71,23 +58,6 @@ class ValidationThresholdsConfigModel(BaseModel):
         if v < 0.0 or v > 100.0:
             raise ValueError(f"Financial tolerance must be positive, got {v}")
         return v
-
-
-class GeminiConfigModel(BaseModel):
-    model_name: str = "gemini-3.5-flash-lite"
-    api_key_env_free: str = "GEMINI_API_KEY_FREE"
-    api_key_env_paid: str = "GEMINI_API_KEY_PAID"
-    max_concurrent_requests: int = 8
-
-
-class AIProviderConfigModel(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    active_provider: str = "gemini"
-    billing_tier: str = "free"
-    max_retries: int = 3
-    max_images_per_request: int = 50
-    gemini: GeminiConfigModel = Field(default_factory=GeminiConfigModel)
 
 
 class SQLiteConfigModel(BaseModel):
@@ -111,43 +81,28 @@ class DatabaseConfigModel(BaseModel):
 
 class SystemSettingsModel(BaseModel):
     """
-    Type-safe, Strictly Validated Pydantic Schema for configs/settings.json
-    Fails immediately if any required configuration or threshold is missing or invalid.
+    Type-safe, Strictly Validated Pydantic Schema for configs/settings.json.
+    Fails immediately if any required infrastructure configuration is missing or invalid.
     """
+    app_name: Optional[str] = "AI Multi-Docs Extraction Pipeline"
+    app_version: Optional[str] = "1.0.0"
+    app_description: Optional[str] = None
     storage_root: str = "storage"
-    pipeline_folders: List[str]
-    doc_types: List[DocTypeConfigModel]
-    logging: LoggingConfigModel
-    image_processing: ImageProcessingConfigModel
-    validation_thresholds: ValidationThresholdsConfigModel
-    ai_provider: AIProviderConfigModel
-    ai_pricing: Dict[str, Any] = Field(default_factory=dict)
-    database: DatabaseConfigModel
+    default_company_code: Optional[str] = "C00000_SAMPLE"
+    pipeline_folders: List[str] = Field(default_factory=PipelineStageFolder.list_all)
+    logging: LoggingConfigModel = Field(default_factory=LoggingConfigModel)
+    image_processing: ImageProcessingConfigModel = Field(default_factory=ImageProcessingConfigModel)
+    validation_thresholds: Optional[ValidationThresholdsConfigModel] = None
+    database: DatabaseConfigModel = Field(default_factory=DatabaseConfigModel)
 
     @model_validator(mode="after")
     def validate_cross_field_rules(self) -> "SystemSettingsModel":
-        # 1. Validation Threshold Hierarchy Check
-        th = self.validation_thresholds
-        if not (th.confidence_low <= th.confidence_review <= th.confidence_high):
-            raise ValueError(
-                f"Invalid threshold hierarchy: confidence_low ({th.confidence_low}) <= "
-                f"confidence_review ({th.confidence_review}) <= confidence_high ({th.confidence_high}) is violated."
-            )
-
-        # 2. AI Pricing Parity Check
-        active_p = self.ai_provider.active_provider
-        provider_cfg = getattr(self.ai_provider, active_p, {})
-        model_name = None
-        if isinstance(provider_cfg, dict):
-            model_name = provider_cfg.get("model_name")
-        elif hasattr(provider_cfg, "model_name"):
-            model_name = getattr(provider_cfg, "model_name")
-
-        if model_name:
-            pricing_models = self.ai_pricing.get("models", {})
-            if pricing_models and model_name not in pricing_models:
+        if self.validation_thresholds is not None:
+            th = self.validation_thresholds
+            if not (th.confidence_low <= th.confidence_review <= th.confidence_high):
                 raise ValueError(
-                    f"Active AI model '{model_name}' (provider '{active_p}') "
-                    f"is missing pricing configuration in 'ai_pricing.models'."
+                    f"Invalid threshold hierarchy: confidence_low ({th.confidence_low}) <= "
+                    f"confidence_review ({th.confidence_review}) <= confidence_high ({th.confidence_high}) is violated."
                 )
         return self
+

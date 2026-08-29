@@ -14,10 +14,12 @@ from src.infrastructure.core.config import (
     load_doc_type_classify_schema,
     get_default_company_code,
 )
-from src.infrastructure.core.constants import (
+from src.infrastructure.core import (
     PipelineAction,
     DefaultIdentifier,
     MerchantStatusCode,
+    SystemUserId,
+    get_current_user_id,
 )
 from src.infrastructure.external.storage.storage_manager import storage_manager
 from src.infrastructure.database import (
@@ -171,7 +173,8 @@ def classify_document(
         merchant, is_new = get_or_create_merchant_auto(
             tax_id=tax_id,
             merchant_name=merchant_name,
-            suggested_short_name=suggested_short_name
+            suggested_short_name=suggested_short_name,
+            created_by=get_current_user_id()
         )
         status = merchant.get("status_code") or merchant.get("status", MerchantStatusCode.PENDING)
         short_name = merchant.get("short_name", suggested_short_name)

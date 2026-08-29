@@ -1,6 +1,7 @@
 """Database Initial Seeder & Master Data Population.
 
-Provides Pure SQLAlchemy 2.0 ORM routines for seeding default tenant, statuses, doc sources, and default users.
+Provides Pure SQLAlchemy 2.0 ORM routines for seeding default roles, tenant, statuses, doc sources, and default users.
+Includes Enterprise RBAC Multi-Company Mapping and Audit Trails.
 """
 
 import os
@@ -18,9 +19,13 @@ from src.infrastructure.core.constants import (
 )
 from .engine import get_db_session
 from .models import (
+    Role,
     Company,
     DocumentStatus,
+    DocumentType,
+    AIModelConfig,
     User,
+    UserCompany,
     Batch,
     DocumentControl,
     Merchant,
@@ -29,6 +34,27 @@ from .models import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+
+
+def seed_roles(session) -> None:
+    """Seeds standardized RBAC roles with Data-Driven Admin Bypass Flags."""
+    roles_data = [
+        (UserRole.ADMIN.value, "ผู้ดูแลระบบสูงสุด", "สิทธิ์สูงสุด สามารถเข้าถึงและจัดการได้ทุก Company ในระบบ (Bypass All Companies)", 1, 1),
+        (UserRole.SYSTEM.value, "ระบบประมวลผลอัตโนมัติ", "Service Account สำหรับ Background Pipeline และ AI Worker (Bypass All Companies)", 1, 1),
+        (UserRole.REVIEWER.value, "ผู้ตรวจสอบเอกสาร", "สิทธิ์ตรวจสอบ แก้ไขตัวเลข และอนุมัติเอกสารเฉพาะ Company ที่ได้รับมอบหมาย", 0, 1),
+        (UserRole.VIEWER.value, "ผู้อ่านข้อมูลทั่วไป", "สิทธิ์ดูเอกสาร สรุปยอด และดาวน์โหลดรายงาน Export เฉพาะ Company ที่ได้รับมอบหมาย", 0, 1),
+    ]
+    for code, name, desc_text, is_adm, is_sys in roles_data:
+        existing = session.scalars(select(Role).filter_by(role_code=code)).first()
+        if not existing:
+            session.add(Role(
+                role_code=code,
+                role_name=name,
+                description=desc_text,
+                is_admin=is_adm,
+                is_system=is_sys,
+                created_by=SystemUserId.SYSTEM_ADMIN
+            ))
 
 
 def seed_default_company(session) -> Company:
@@ -43,7 +69,8 @@ def seed_default_company(session) -> Company:
             short_name=DefaultCompany.SHORT_NAME,
             tax_id=DefaultCompany.TAX_ID,
             branch_code=DefaultCompany.BRANCH_CODE,
-            is_active=1
+            is_active=1,
+            created_by=SystemUserId.SYSTEM_ADMIN
         )
         session.add(default_company)
         session.flush()
@@ -90,44 +117,166 @@ def seed_default_merchants(session, company_id: str) -> None:
             file_prefix="cash_slip",
             status_code=MerchantStatus.APPROVED.value,
             is_vat_registered=0,
-            default_wht_rate=0.0
+            default_wht_rate=0.0,
+            created_by=SystemUserId.SYSTEM_ADMIN
         ))
 
 
 def seed_default_users(session, company_id: str) -> None:
-    """Seeds default system actor and development administrator accounts."""
-    sys_user = session.scalars(select(User).filter_by(user_id=SystemUserId.AUTO_SYSTEM)).first()
-    if not sys_user:
-        session.add(User(
+    """Seeds default system actor, admin, and demo reviewer accounts along with Multi-Company mapping."""
+    # 1. System Administrator (Bypass All Companies)
+    admin_user = session.scalars(select(User).filter_by(user_id=SystemUserId.SYSTEM_ADMIN)).first()
+    if not admin_user:
+        admin_user = User(
+            user_id=SystemUserId.SYSTEM_ADMIN,
+            email="admin@system.local",
+            full_name="System Administrator",
+            role=UserRole.ADMIN.value,
+            is_active=1,
+            created_by=SystemUserId.SYSTEM_ADMIN
+        )
+        session.add(admin_user)
+
+    # 2. Automated Pipeline Actor (Bypass All Companies)
+    sys_auto = session.scalars(select(User).filter_by(user_id=SystemUserId.AUTO_SYSTEM)).first()
+    if not sys_auto:
+        sys_auto = User(
             user_id=SystemUserId.AUTO_SYSTEM,
-            company_id=company_id,
             email="system@pipeline.local",
             full_name="Auto Pipeline System",
             role=UserRole.SYSTEM.value,
-            is_active=1
-        ))
+            is_active=1,
+            created_by=SystemUserId.SYSTEM_ADMIN
+        )
+        session.add(sys_auto)
 
-    dev_admin = session.scalars(select(User).filter_by(user_id=SystemUserId.DEV_ADMIN)).first()
-    if not dev_admin:
-        session.add(User(
-            user_id=SystemUserId.DEV_ADMIN,
-            company_id=company_id,
-            email="admin@dev.local",
-            full_name="Development Administrator",
+    # 3. Demo Reviewer User (Scoped to Company)
+    demo_user = session.scalars(select(User).filter_by(user_id=SystemUserId.DEMO)).first()
+    if not demo_user:
+        demo_user = User(
+            user_id=SystemUserId.DEMO,
+            email="demo@pipeline.local",
+            full_name="Demo Reviewer User",
+            role=UserRole.REVIEWER.value,
+            is_active=1,
+            created_by=SystemUserId.SYSTEM_ADMIN
+        )
+        session.add(demo_user)
+        session.flush()
+
+    # 4. System Test Runner Actor (Bypass All Companies)
+    sys_test = session.scalars(select(User).filter_by(user_id=SystemUserId.SYSTEM_TEST)).first()
+    if not sys_test:
+        sys_test = User(
+            user_id=SystemUserId.SYSTEM_TEST,
+            email="test@pipeline.local",
+            full_name="System Test Runner",
             role=UserRole.ADMIN.value,
-            is_active=1
-        ))
+            is_active=1,
+            created_by=SystemUserId.SYSTEM_ADMIN
+        )
+        session.add(sys_test)
+
+    # 5. Map Demo User to Default Sandbox Company in user_companies
+    if demo_user and company_id:
+        mapping = session.scalars(
+            select(UserCompany).filter_by(user_id=demo_user.user_id, company_id=company_id)
+        ).first()
+        if not mapping:
+            session.add(UserCompany(
+                id=generate_entity_id(EntityIdPrefix.USER_COMPANY),
+                user_id=demo_user.user_id,
+                company_id=company_id,
+                is_default=1,
+                created_by=SystemUserId.SYSTEM_ADMIN
+            ))
+
+
+def seed_ai_model_configs(session) -> None:
+    """Seeds default AI provider and model configurations with pricing and rate limits."""
+    configs_data = [
+        {
+            "config_id": DefaultIdentifier.AI_CONFIG_FREE,
+            "config_name": "Gemini 3.5 Flash Lite (Free Tier)",
+            "provider": "gemini",
+            "model_name": "gemini-3.5-flash-lite",
+            "billing_tier": "free",
+            "api_key_env_var": "api_key_env_default_free",
+            "input_price_per_million": 0.0375,
+            "output_price_per_million": 0.15,
+            "exchange_rate_thb": 36.0,
+            "max_concurrent_requests": 8,
+            "is_default": 1,
+            "is_active": 1,
+            "created_by": SystemUserId.SYSTEM_ADMIN,
+        },
+        {
+            "config_id": DefaultIdentifier.AI_CONFIG_PAID,
+            "config_name": "Gemini 3.5 Flash (Paid Tier)",
+            "provider": "gemini",
+            "model_name": "gemini-3.5-flash",
+            "billing_tier": "paid",
+            "api_key_env_var": "api_key_env_default_paid",
+            "input_price_per_million": 0.075,
+            "output_price_per_million": 0.3,
+            "exchange_rate_thb": 36.0,
+            "max_concurrent_requests": 8,
+            "is_default": 0,
+            "is_active": 1,
+            "created_by": SystemUserId.SYSTEM_ADMIN,
+        },
+    ]
+    for cfg in configs_data:
+        existing = session.scalars(select(AIModelConfig).filter_by(config_id=cfg["config_id"])).first()
+        if not existing:
+            session.add(AIModelConfig(**cfg))
+
+
+def seed_document_types(session) -> None:
+    """Seeds baseline document types and quality/validation thresholds from DocTypeRegistry."""
+    from src.domain.doc_types import DocTypeRegistry
+
+    for dt_strategy in DocTypeRegistry.list_all():
+        dt_dict = dt_strategy.to_dict()
+        doc_type_id = dt_dict["doc_type_id"]
+        existing = session.scalars(select(DocumentType).filter_by(doc_type_id=doc_type_id)).first()
+        if not existing:
+            proc_type = dt_dict.get("processing_type")
+            if hasattr(proc_type, "value"):
+                proc_type = proc_type.value
+
+            session.add(DocumentType(
+                doc_type_id=doc_type_id,
+                display_name=dt_dict.get("display_name") or dt_strategy.display_name,
+                description=dt_dict.get("description") or getattr(dt_strategy, "description", None),
+                processing_type=str(proc_type or "AI"),
+                sort_order=dt_dict.get("sort_order", 1),
+                is_active=dt_dict.get("is_active", 1),
+                confidence_high=dt_dict.get("confidence_high"),
+                confidence_review=dt_dict.get("confidence_review"),
+                confidence_low=dt_dict.get("confidence_low"),
+                financial_tolerance=dt_dict.get("financial_tolerance"),
+                split_filename_pattern=dt_dict.get("split_filename_pattern"),
+                archive_filename_pattern=dt_dict.get("archive_filename_pattern"),
+                dpi=dt_dict.get("dpi", 150),
+                created_by=SystemUserId.SYSTEM_ADMIN,
+            ))
 
 
 def seed_initial_data(configs_dir: str = "configs") -> None:
-    """Main entry point for database master data and reference seed population."""
+    """Main entry point for database master data and reference seed population across all 8 tables."""
     try:
         with get_db_session() as session:
+            seed_roles(session)
+            seed_ai_model_configs(session)
+            seed_document_types(session)
             company = seed_default_company(session)
             seed_document_statuses(session)
             seed_default_merchants(session, company_id=company.company_id)
             seed_default_users(session, company_id=company.company_id)
 
-        logger.info("Database seeding completed.")
+        logger.info("Database master data seeding completed successfully across all 8 tables.")
     except Exception as e:
         logger.error(f"Failed to seed database: {e}")
+        raise e
+

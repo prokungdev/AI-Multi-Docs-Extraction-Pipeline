@@ -20,7 +20,7 @@ from src.infrastructure.database import (
     get_company_by_code,
 )
 from src.application.dtos.document_dto import DocumentStatus
-from src.infrastructure.core.constants import EntityIdPrefix, DefaultIdentifier, generate_entity_id
+from src.infrastructure.core import EntityIdPrefix, DefaultIdentifier, SystemUserId, generate_entity_id, get_current_user_id
 from src.infrastructure.external.storage.storage_manager import storage_manager
 from src.application.pipeline.pipeline_helpers import extract_page_document_payload
 
@@ -138,10 +138,12 @@ def transform_batch_to_db(
             confidence_notes = ext_meta.get("confidence_notes", "")
             review_priority = ext_meta.get("review_priority", "LOW")
 
+            current_actor = get_current_user_id()
             create_success = create_document(
                 document_id=document_id,
-                company_id=company_id,
                 batch_id=batch_id,
+                created_by=current_actor,
+                company_id=company_id,
                 doc_type_id=target_doc_type,
                 merchant_id=merchant_folder,
                 status_code=status_code,
@@ -167,7 +169,14 @@ def transform_batch_to_db(
 
             if create_success:
                 link_pages_to_document(document_id, [page_id])
-                insert_relational_receipt(document_id, doc_payload, original_filename=pdf_name, company_id=company_id, page_number=p.get("page_number", 1))
+                insert_relational_receipt(
+                    document_id=document_id,
+                    payload=doc_payload,
+                    original_filename=pdf_name,
+                    created_by=current_actor,
+                    company_id=company_id,
+                    page_number=p.get("page_number", 1)
+                )
                 imported_count += 1
                 logger.info(f"Imported document record '{document_id}' (Company: {comp_code}, Status: {status_code})")
             else:

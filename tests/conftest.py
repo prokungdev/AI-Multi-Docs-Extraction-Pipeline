@@ -40,6 +40,18 @@ FORBIDDEN_PROD_DB_SUBSTRINGS = ["storage/database/pipeline.db", "pipeline.db", "
 FORBIDDEN_PROD_STORAGE_SUBSTRINGS = ["storage/raw_data", "storage/processed_data"]
 
 
+@pytest.fixture(autouse=True)
+def auto_test_user_context_guard():
+    """
+    Guarantees that every unit and integration test runs inside an isolated UserContext.
+    Sets 'usr_system_auto' as the test actor and cleanly resets on teardown.
+    """
+    from src.infrastructure.core.user_context import user_scope
+    from src.infrastructure.core.constants import SystemUserId
+    with user_scope(SystemUserId.AUTO_SYSTEM):
+        yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def global_test_database_guard():
     """

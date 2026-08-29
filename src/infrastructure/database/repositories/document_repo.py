@@ -14,6 +14,7 @@ DEFAULT_LOCK_TTL_SECONDS = 900  # 15 minutes Airline Ticket Hold duration
 def create_document(
     document_id: str,
     batch_id: str,
+    created_by: str,
     doc_type_id: str = None,
     merchant_id: str = None,
     status_code: str = DocumentStatusCode.PROCESSED,
@@ -39,12 +40,14 @@ def create_document(
     review_priority: str = None,
     is_auto_approved: int = None,
     auto_approved: int = None,
-    company_id: str = None
+    company_id: str = None,
+    updated_by: str = None
 ) -> bool:
-    """Inserts or updates a DocumentControl record and associated ExpenseReceipt if applicable."""
+    """Inserts or updates a DocumentControl record and associated ExpenseReceipt if applicable. Requires created_by."""
     final_dt = doc_type_id or DefaultIdentifier.DOC_TYPE
     final_auto_approved = is_auto_approved if is_auto_approved is not None else (auto_approved or 0)
     final_ambiguous = is_ambiguous if is_ambiguous is not None else (has_ambiguous_fields or 0)
+    actor_update = updated_by or created_by
 
     try:
         with get_db_session() as session:
@@ -111,6 +114,7 @@ def create_document(
                 doc.review_priority = review_priority
                 doc.is_auto_approved = final_auto_approved
                 doc.updated_at = created_at
+                doc.updated_by = actor_update
             else:
                 doc = DocumentControl(
                     document_id=document_id,
@@ -134,7 +138,8 @@ def create_document(
                     confidence_notes=confidence_notes,
                     review_priority=review_priority,
                     is_auto_approved=final_auto_approved,
-                    created_at=created_at
+                    created_at=created_at,
+                    created_by=created_by
                 )
                 session.add(doc)
 
@@ -153,7 +158,8 @@ def create_document(
                         subtotal=total_amount or 0.0,
                         vat_amount=0.0,
                         net_amount=total_amount or 0.0,
-                        created_at=created_at
+                        created_at=created_at,
+                        created_by=created_by
                     )
                     session.add(receipt)
                 else:
@@ -167,6 +173,8 @@ def create_document(
                         receipt.merchant_id = final_merchant_id
                     if total_amount is not None:
                         receipt.net_amount = total_amount
+                    receipt.updated_at = created_at
+                    receipt.updated_by = actor_update
 
             return True
     except Exception as e:
@@ -367,7 +375,7 @@ def get_all_documents(
 
 def update_document_to_approved(
     document_id: str,
-    confirmed_by: str = SystemUserId.DEV_ADMIN,
+    confirmed_by: str,
     doc_number: str = None,
     doc_date: str = None,
     entity_name: str = None,
@@ -375,7 +383,7 @@ def update_document_to_approved(
     data_payload: str = None,
     is_manually_edited: int = 0
 ) -> bool:
-    """Marks a document as APPROVED and closes it using Atomic Guard (is_closed == 0)."""
+    """Marks a document as APPROVED and closes it using Atomic Guard (is_closed == 0). Requires confirmed_by."""
     try:
         with get_db_session() as session:
             doc = session.scalars(
@@ -396,6 +404,7 @@ def update_document_to_approved(
             if data_payload is not None:
                 doc.data_payload = data_payload
             doc.updated_at = now_str
+            doc.updated_by = confirmed_by
 
             receipt = session.scalars(select(ExpenseReceipt).filter_by(document_id=document_id)).first()
             if receipt:
@@ -407,14 +416,16 @@ def update_document_to_approved(
                     receipt.merchant_name = entity_name
                 if total_amount is not None:
                     receipt.net_amount = total_amount
+                receipt.updated_at = now_str
+                receipt.updated_by = confirmed_by
             return True
     except Exception as e:
         logger.error(f"Failed to approve document '{document_id}': {e}")
         return False
 
 
-def update_document_to_rejected(document_id: str, reason: str, confirmed_by: str = SystemUserId.DEV_ADMIN) -> bool:
-    """Marks a document as REJECTED and closes it using Atomic Guard (is_closed == 0)."""
+def update_document_to_rejected(document_id: str, reason: str, confirmed_by: str) -> bool:
+    """Marks a document as REJECTED and closes it using Atomic Guard (is_closed == 0). Requires confirmed_by."""
     try:
         with get_db_session() as session:
             doc = session.scalars(
@@ -433,6 +444,7 @@ def update_document_to_rejected(document_id: str, reason: str, confirmed_by: str
             doc.confirmed_by = confirmed_by
             doc.confirmed_at = now_str
             doc.updated_at = now_str
+            doc.updated_by = confirmed_by
             return True
     except Exception as e:
         logger.error(f"Failed to reject document '{document_id}': {e}")
@@ -492,7 +504,7 @@ def renew_document_lock(
             doc = session.scalars(select(DocumentControl).filter_by(document_id=document_id)).first()
             if not doc or doc.is_closed == 1 or doc.is_locked == 0:
                 return False
-            if doc.locked_by == user_id or user_id == SystemUserId.DEV_ADMIN:
+            if doc.locked_by == user_id or user_id == SystemUserId.SYSTEM_ADMIN:
                 now_str = datetime.now(timezone.utc).isoformat()
                 doc.locked_at = now_str
                 doc.updated_at = now_str
@@ -516,7 +528,7 @@ def release_document_lock(
                 return False
             if doc.is_locked == 0:
                 return True
-            if doc.locked_by == user_id or force or user_id == SystemUserId.DEV_ADMIN:
+            if doc.locked_by == user_id or force or user_id == SystemUserId.SYSTEM_ADMIN:
                 doc.is_locked = 0
                 doc.locked_by = None
                 doc.locked_at = None
@@ -565,8 +577,8 @@ def get_document_lock_status(
         return {"is_locked": False, "locked_by": None, "locked_at": None, "remaining_seconds": 0.0, "is_expired": True}
 
 
-def update_document_status(document_id: str, status_code: str, error_reason: str = None) -> bool:
-    """Updates the status code and optional error reason of a document."""
+def update_document_status(document_id: str, status_code: str, updated_by: str, error_reason: str = None) -> bool:
+    """Updates the status code and optional error reason of a document. Requires updated_by."""
     try:
         with get_db_session() as session:
             doc = session.scalars(select(DocumentControl).filter_by(document_id=document_id)).first()
@@ -575,20 +587,23 @@ def update_document_status(document_id: str, status_code: str, error_reason: str
             doc.status_code = status_code
             if error_reason is not None:
                 doc.error_reason = error_reason
-            doc.updated_at = datetime.now(timezone.utc).isoformat()
+            now_str = datetime.now(timezone.utc).isoformat()
+            doc.updated_at = now_str
+            doc.updated_by = updated_by
             return True
     except Exception as e:
         logger.error(f"Failed to update document status for '{document_id}': {e}")
         return False
 
 
-def update_document_to_failed(document_id: str, error_reason: str) -> bool:
-    """Marks a document as FAILED with error reason."""
-    return update_document_status(document_id, status_code="FAILED", error_reason=error_reason)
+def update_document_to_failed(document_id: str, error_reason: str, updated_by: str) -> bool:
+    """Marks a document as FAILED with error reason. Requires updated_by."""
+    return update_document_status(document_id, status_code="FAILED", updated_by=updated_by, error_reason=error_reason)
 
 
 def update_document_payload(
     document_id: str,
+    updated_by: str,
     data_payload: str = None,
     status_code: str = None,
     doc_number: str = None,
@@ -597,7 +612,7 @@ def update_document_payload(
     total_amount: float = None,
     is_manually_edited: int = None
 ) -> bool:
-    """Updates the JSON data payload for an open document using Atomic Guard (is_closed == 0)."""
+    """Updates the JSON data payload for an open document using Atomic Guard (is_closed == 0). Requires updated_by."""
     try:
         with get_db_session() as session:
             doc = session.scalars(
@@ -614,6 +629,7 @@ def update_document_payload(
             if is_manually_edited is not None:
                 doc.is_manually_edited = is_manually_edited
             doc.updated_at = now_str
+            doc.updated_by = updated_by
 
             receipt = session.scalars(select(ExpenseReceipt).filter_by(document_id=document_id)).first()
             if receipt:
@@ -625,6 +641,8 @@ def update_document_payload(
                     receipt.merchant_name = entity_name
                 if total_amount is not None:
                     receipt.net_amount = total_amount
+                receipt.updated_at = now_str
+                receipt.updated_by = updated_by
             return True
     except Exception as e:
         logger.error(f"Failed to update document payload for '{document_id}': {e}")
@@ -633,6 +651,7 @@ def update_document_payload(
 
 def update_document_metadata(
     document_id: str,
+    updated_by: str,
     overall_confidence: float = None,
     confidence_level: str = None,
     is_blurry: int = None,
@@ -646,7 +665,7 @@ def update_document_metadata(
     cost_thb: float = None,
     is_free_tier: int = None
 ) -> bool:
-    """Updates evaluation metadata and cost columns for a document."""
+    """Updates evaluation metadata and cost columns for a document. Requires updated_by."""
     final_auto_approved = is_auto_approved if is_auto_approved is not None else (auto_approved if auto_approved is not None else None)
     final_ambiguous = is_ambiguous if is_ambiguous is not None else (has_ambiguous_fields if has_ambiguous_fields is not None else None)
 
@@ -677,6 +696,7 @@ def update_document_metadata(
             if is_free_tier is not None:
                 doc.is_free_tier = is_free_tier
             doc.updated_at = now_str
+            doc.updated_by = updated_by
             return True
     except Exception as e:
         logger.error(f"Failed to update document metadata for '{document_id}': {e}")

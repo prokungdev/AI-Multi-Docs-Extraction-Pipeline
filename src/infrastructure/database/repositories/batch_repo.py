@@ -6,7 +6,7 @@ from typing import List, Tuple
 from sqlalchemy import select, update, or_
 
 from src.infrastructure.core.logger import logger
-from src.infrastructure.core.constants import DefaultIdentifier, DocumentStatusCode
+from src.infrastructure.core.constants import DefaultIdentifier, DocumentStatusCode, SystemUserId
 from ..engine import get_db_session
 from ..models import Company, Batch, BatchPage, DocumentControl
 
@@ -47,11 +47,20 @@ def check_duplicate_document(file_hash: str, company_id: str = None) -> tuple[bo
     return False, None
 
 
-def create_batch(batch_id: str, original_filename: str = None, total_pages: int = 1,
-                 storage_path: str = "", file_hash: str = "", original_pdf_name: str = None,
-                 company_id: str = None) -> bool:
-    """Inserts or updates a batch record using Pure SQLAlchemy 2.0 ORM."""
+def create_batch(
+    batch_id: str,
+    created_by: str,
+    original_filename: str = None,
+    total_pages: int = 1,
+    storage_path: str = "",
+    file_hash: str = "",
+    original_pdf_name: str = None,
+    company_id: str = None,
+    updated_by: str = None
+) -> bool:
+    """Inserts or updates a batch record using Pure SQLAlchemy 2.0 ORM. Requires explicit created_by."""
     filename = original_filename or original_pdf_name or "document.pdf"
+    actor_update = updated_by or created_by
     try:
         with get_db_session() as session:
             target_cid = company_id
@@ -69,6 +78,8 @@ def create_batch(batch_id: str, original_filename: str = None, total_pages: int 
                 batch.total_pages = total_pages
                 batch.storage_path = storage_path
                 batch.file_hash = file_hash
+                batch.updated_at = created_at
+                batch.updated_by = actor_update
             else:
                 batch = Batch(
                     batch_id=batch_id,
@@ -77,7 +88,8 @@ def create_batch(batch_id: str, original_filename: str = None, total_pages: int 
                     total_pages=total_pages,
                     storage_path=storage_path,
                     file_hash=file_hash,
-                    created_at=created_at
+                    created_at=created_at,
+                    created_by=created_by
                 )
                 session.add(batch)
             return True

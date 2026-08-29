@@ -37,12 +37,31 @@ def get_app_metadata(settings_path: str = DefaultPath.SETTINGS) -> dict:
     }
 
 
-def get_validation_thresholds(settings_path: str = DefaultPath.SETTINGS) -> dict:
-    """Returns validation thresholds dictionary from settings.json."""
+def get_validation_thresholds(settings_path: str = DefaultPath.SETTINGS, doc_type: str = None) -> dict:
+    """Returns validation thresholds dictionary with fallback to DocTypeRegistry or default standards."""
     settings = load_system_settings(settings_path)
-    if "validation_thresholds" not in settings:
-        raise KeyError("Required configuration 'validation_thresholds' is missing in settings.json.")
-    return settings["validation_thresholds"]
+    if "validation_thresholds" in settings and isinstance(settings["validation_thresholds"], dict):
+        return settings["validation_thresholds"]
+
+    # Fallback to DocTypeRegistry baseline
+    try:
+        from src.domain.doc_types import DocTypeRegistry
+        target_dt = doc_type or get_default_doc_type()
+        strategy = DocTypeRegistry.get(target_dt)
+        return {
+            "confidence_high": getattr(strategy, "confidence_high", 0.85),
+            "confidence_review": getattr(strategy, "confidence_review", 0.70),
+            "confidence_low": getattr(strategy, "confidence_low", 0.60),
+            "financial_tolerance": getattr(strategy, "financial_tolerance", 0.05),
+        }
+    except Exception:
+        return {
+            "confidence_high": 0.85,
+            "confidence_review": 0.70,
+            "confidence_low": 0.60,
+            "financial_tolerance": 0.05,
+        }
+
 
 
 def resolve_doc_type(doc_type: str = None) -> str:
@@ -60,35 +79,21 @@ def resolve_company_code(company_code: str = None) -> str:
 
 
 def get_default_doc_type() -> str:
-    """Returns the primary active doc_type ID from configs/settings.json."""
-    active = get_active_doc_types()
-    if active:
-        return active[0].get("doc_type_id") or active[0].get("domain_id", DefaultIdentifier.DOC_TYPE)
-    return DefaultIdentifier.DOC_TYPE
+    """Returns default active document type ID from DocTypeRegistry."""
+    from src.domain.doc_types import DocTypeRegistry
+    return DocTypeRegistry.get_default_doc_type()
 
 
 def get_active_doc_types() -> list[dict]:
-    """Returns only doc_types that are active from settings.json."""
-    settings = load_system_settings()
-    doc_types = settings.get("doc_types", [])
-    result = []
-    for dt in doc_types:
-        if isinstance(dt, dict) and dt.get("is_active", True):
-            dt_id = dt.get("doc_type_id")
-            if dt_id:
-                result.append({
-                    "doc_type_id": dt_id,
-                    "display_name": dt.get("display_name", dt_id),
-                    "is_active": 1,
-                    "sort_order": dt.get("sort_order", 1)
-                })
-    return result
+    """Returns active document types from DocTypeRegistry."""
+    from src.domain.doc_types import DocTypeRegistry
+    return DocTypeRegistry.get_active_doc_types()
 
 
 def is_doc_type_active(doc_type_id: str) -> bool:
-    """Checks if a doc_type is active."""
-    active_types = get_active_doc_types()
-    return any(d.get("doc_type_id") == doc_type_id for d in active_types)
+    """Checks if a doc_type is registered and active in DocTypeRegistry."""
+    from src.domain.doc_types import is_doc_type_active as _is_active
+    return _is_active(doc_type_id)
 
 
 def get_default_company_code() -> str:
@@ -98,12 +103,10 @@ def get_default_company_code() -> str:
 
 
 def get_doc_type_config_dir(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> str:
-    """Locates configuration directory for doc_type_id."""
-    if company_code:
-        company_specific = os.path.join(configs_dir, "companies", company_code, "doc_types", doc_type_id)
-        if os.path.exists(company_specific):
-            return company_specific
-    return os.path.join(configs_dir, "doc_types", doc_type_id)
+    """Locates configuration directory for doc_type_id via DocTypeRegistry."""
+    from src.domain.doc_types import DocTypeRegistry
+    dt = DocTypeRegistry.get(doc_type_id)
+    return str(dt.get_config_dir(company_code=company_code, configs_dir=configs_dir))
 
 
 def get_doctype_file_path(
@@ -113,127 +116,73 @@ def get_doctype_file_path(
     configs_dir: str = "configs",
     settings_path: str = DefaultPath.SETTINGS
 ) -> str:
-    """Resolves exact file path for a doc_type based on settings.json."""
-    settings = load_system_settings(settings_path)
-    doc_types = settings.get("doc_types", [])
-    matched_dt = next((dt for dt in doc_types if dt.get("doc_type_id") == doc_type_id), None)
-    if not matched_dt:
-        raise KeyError(f"DocType '{doc_type_id}' is not registered in 'doc_types' within '{settings_path}'")
-
-    files_cfg = matched_dt.get("files")
-    if not files_cfg or not isinstance(files_cfg, dict):
-        raise KeyError(f"Missing required 'files' configuration for doc_type '{doc_type_id}' in '{settings_path}'")
-
-    file_name = files_cfg.get(file_key)
-    if not file_name:
-        raise KeyError(f"File key '{file_key}' is not defined in 'files' for doc_type '{doc_type_id}' in '{settings_path}'")
-
-    cfg_dir = get_doc_type_config_dir(doc_type_id, company_code=company_code, configs_dir=configs_dir)
-    full_path = os.path.join(cfg_dir, file_name).replace("\\", "/")
+    """Resolves exact file path for a doc_type based on DocTypeRegistry."""
+    from src.domain.doc_types import DocTypeRegistry
+    dt = DocTypeRegistry.get(doc_type_id)
+    cfg_dir = dt.get_config_dir(company_code=company_code, configs_dir=configs_dir)
+    file_map = {
+        "classify_prompt": "classify-prompt.txt",
+        "classify_schema": "classify-schema.json",
+        "extract_prompt": "extract-prompt.txt",
+        "extract_schema": "extract-schema.json",
+        "extract_rules": "extract-rules.json",
+    }
+    file_name = file_map.get(file_key, file_key)
+    full_path = (cfg_dir / file_name).as_posix()
     if not os.path.exists(full_path):
-        raise FileNotFoundError(
-            f"Configured file '{file_name}' (key: '{file_key}') for doc_type '{doc_type_id}' not found at: '{full_path}'"
-        )
-
+        raise FileNotFoundError(f"File '{file_name}' (key: '{file_key}') for doc_type '{doc_type_id}' not found at: '{full_path}'")
     return full_path
 
 
 def load_doc_type_schema(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> dict:
-    """Loads extraction JSON schema for a doc_type."""
-    schema_path = get_doctype_file_path(doc_type_id, "extract_schema", company_code=company_code, configs_dir=configs_dir)
-    with open(schema_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    """Loads extraction JSON schema for a doc_type via DocTypeRegistry."""
+    from src.domain.doc_types import DocTypeRegistry
+    return DocTypeRegistry.get(doc_type_id).get_extract_schema(company_code=company_code, configs_dir=configs_dir)
 
 
 def load_doc_type_classify_schema(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> dict:
-    """Loads classifier JSON schema for a doc_type."""
-    schema_path = get_doctype_file_path(doc_type_id, "classify_schema", company_code=company_code, configs_dir=configs_dir)
-    with open(schema_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    """Loads classifier JSON schema for a doc_type via DocTypeRegistry."""
+    from src.domain.doc_types import DocTypeRegistry
+    return DocTypeRegistry.get(doc_type_id).get_classify_schema(company_code=company_code, configs_dir=configs_dir)
 
 
 def load_doc_type_prompt(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> str:
-    """Loads extraction prompt text for a doc_type."""
-    prompt_path = get_doctype_file_path(doc_type_id, "extract_prompt", company_code=company_code, configs_dir=configs_dir)
-    with open(prompt_path, "r", encoding="utf-8") as f:
-        return f.read().strip()
+    """Loads extraction prompt text for a doc_type via DocTypeRegistry."""
+    from src.domain.doc_types import DocTypeRegistry
+    return DocTypeRegistry.get(doc_type_id).get_extract_prompt(company_code=company_code, configs_dir=configs_dir)
 
 
 def load_doc_type_classify_prompt(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> str:
-    """Loads classifier prompt text for a doc_type."""
-    prompt_path = get_doctype_file_path(doc_type_id, "classify_prompt", company_code=company_code, configs_dir=configs_dir)
-    with open(prompt_path, "r", encoding="utf-8") as f:
-        return f.read().strip()
+    """Loads classifier prompt text for a doc_type via DocTypeRegistry."""
+    from src.domain.doc_types import DocTypeRegistry
+    return DocTypeRegistry.get(doc_type_id).get_classify_prompt(company_code=company_code, configs_dir=configs_dir)
 
 
 def load_doc_type_rules(doc_type_id: str, company_code: str = None, configs_dir: str = "configs") -> dict:
-    """Loads extraction business rules JSON for a doc_type."""
-    rules_path = get_doctype_file_path(doc_type_id, "extract_rules", company_code=company_code, configs_dir=configs_dir)
-    with open(rules_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    """Loads extraction business rules JSON for a doc_type via DocTypeRegistry."""
+    from src.domain.doc_types import DocTypeRegistry
+    return DocTypeRegistry.get(doc_type_id).get_extract_rules(company_code=company_code, configs_dir=configs_dir)
 
 
-def load_doc_type_ai_config(doc_type_id: str, settings: dict = None) -> tuple[str, str]:
-    """Resolves AI provider and model name for doc_type."""
-    if settings is None:
-        settings = load_system_settings()
-
-    provider = None
-    model = None
-    try:
-        rules = load_doc_type_rules(doc_type_id)
-        if rules and isinstance(rules, dict):
-            provider = rules.get("ai_provider")
-            model = rules.get("ai_model")
-    except Exception:
-        pass
-
-    ai_provider_cfg = settings.get("ai_provider", {})
-    if not provider:
-        provider = ai_provider_cfg.get("active_provider")
-        if not provider:
-            raise ValueError(f"Missing 'active_provider' in 'ai_provider' settings.")
-
-    if not model:
-        provider_cfg = ai_provider_cfg.get(provider, {})
-        model = provider_cfg.get("model_name")
-        if not model:
-            raise ValueError(f"Missing required 'model_name' for AI provider '{provider}' in settings.")
-
-    return provider, model
+def load_doc_type_ai_config(doc_type_id: str = None, company_id: str = None, settings: dict = None) -> tuple[str, str]:
+    """Resolves AI provider and model name from database AIModelConfig."""
+    from src.infrastructure.database import get_resolved_ai_config
+    cfg = get_resolved_ai_config(company_id=company_id)
+    return cfg["provider"], cfg["model_name"]
 
 
-def get_ai_provider_config(settings: dict = None) -> dict:
-    """Returns AI provider configuration dictionary."""
-    if settings is None:
-        settings = load_system_settings()
-    ai_cfg = settings.get("ai_provider", {})
-    active_provider = ai_cfg.get("active_provider")
-    if not active_provider:
-        raise ValueError("Missing required 'active_provider' in 'ai_provider' settings.")
-
-    provider_details = ai_cfg.get(active_provider, {})
-    model_name = provider_details.get("model_name")
-    if not model_name:
-        raise ValueError(f"Missing required 'model_name' for AI provider '{active_provider}' in settings.")
-
-    billing_tier = ai_cfg.get("billing_tier", "free").strip().lower()
-    target_key = f"api_key_env_{billing_tier}"
-    api_key_env = provider_details.get(target_key)
-    if not api_key_env:
-        raise ValueError(f"Missing required '{target_key}' for AI provider '{active_provider}' (billing_tier='{billing_tier}') in settings.")
-
-    max_images = ai_cfg.get("max_images_per_request", settings.get("max_images_per_request", 50))
-    max_concurrent = provider_details.get("max_concurrent_requests", provider_details.get("concurrency", 8))
-
+def get_ai_provider_config(company_id: str = None, settings: dict = None) -> dict:
+    """Returns AI provider configuration dictionary resolved from database AIModelConfig."""
+    from src.infrastructure.database import get_resolved_ai_config
+    cfg = get_resolved_ai_config(company_id=company_id)
     return {
-        "active_provider": active_provider,
-        "billing_tier": billing_tier,
-        "max_retries": int(ai_cfg.get("max_retries", 3)),
-        "max_images_per_request": int(max_images),
-        "model_name": model_name,
-        "api_key_env": api_key_env,
-        "max_concurrent_requests": int(max_concurrent)
+        "active_provider": cfg["provider"],
+        "billing_tier": cfg["billing_tier"],
+        "max_retries": 3,
+        "max_images_per_request": 50,
+        "model_name": cfg["model_name"],
+        "api_key_env": cfg["api_key_env_var"],
+        "max_concurrent_requests": cfg.get("max_concurrent_requests", 8),
     }
 
 

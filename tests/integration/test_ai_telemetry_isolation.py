@@ -79,11 +79,11 @@ class TestAiTelemetryAndIsolation(unittest.TestCase):
         comp_code_2 = f"C_{uuid.uuid4().hex[:6]}"
         tax_id = "0105559998881"
 
-        c1 = create_company(company_code=comp_code_1, company_name="Corp A", tax_id=tax_id)
+        c1 = create_company(company_code=comp_code_1, company_name="Corp A", created_by="usr_system_admin", tax_id=tax_id)
         self.assertIsNotNone(c1)
 
         with self.assertRaises(ValueError):
-            create_company(company_code=comp_code_2, company_name="Corp B", tax_id=tax_id)
+            create_company(company_code=comp_code_2, company_name="Corp B", created_by="usr_system_admin", tax_id=tax_id)
 
     def test_02_company_update_tax_id_uniqueness(self):
         """Verify that update_company rejects assigning an existing tax_id of another company."""
@@ -92,11 +92,11 @@ class TestAiTelemetryAndIsolation(unittest.TestCase):
         tax_1 = "0105551112223"
         tax_2 = "0105553334445"
 
-        c1 = create_company(company_code=comp_code_1, company_name="Alpha", tax_id=tax_1)
-        c2 = create_company(company_code=comp_code_2, company_name="Beta", tax_id=tax_2)
+        c1 = create_company(company_code=comp_code_1, company_name="Alpha", created_by="usr_system_admin", tax_id=tax_1)
+        c2 = create_company(company_code=comp_code_2, company_name="Beta", created_by="usr_system_admin", tax_id=tax_2)
 
         # Updating to existing tax_1 returns False
-        success = update_company(company_id=c2["company_id"], tax_id=tax_1)
+        success = update_company(company_id=c2["company_id"], updated_by="usr_system_admin", tax_id=tax_1)
         self.assertFalse(success)
 
     @patch.object(ai_service, "extract_with_credentials")
