@@ -22,20 +22,26 @@
     - `extractor.py`: Stage 2 multimodal AI prompting & token math
     - `transformer.py`: Stage 3 relational database conversion
     - `validator.py`: Stage 4 multi-rule validation, confidence scoring & archiving
-  - `exporters/`: Output Strategy Adapters & Dynamic Registry:
-    - `base.py`: Base Strategy Interface (`BaseOutputExporter`)
-    - `express_adapter.py`: Express CP874 PV with voucher running numbers
+    - `voucher_generator.py`: Canonical Journal Voucher & ERP Target Payload Generator
+  - `exporters/`: Output Strategy Adapters & Destination ERP Plugin System:
+    - `base.py`: Legacy File Exporter Base (`BaseOutputExporter`)
+    - `express_adapter.py`: Legacy Express PV Exporter
     - `json_adapter.py`: Google Sheet & Line Items summary
     - `registry.py`: Dynamic Exporter Registry (`list_exporters`, `get_exporter`)
+    - `base_target_adapter.py`: Abstract ERP Strategy Interface (`BaseTargetAdapter`)
+    - `express_target_adapter.py`: Express OE Screen RPA Target Adapter (`ExpressTargetAdapter`)
+    - `adapter_registry.py`: Dynamic Destination Target Registry (`TargetAdapterRegistry`)
   - `dtos/`: Pydantic V2 schemas (`settings_dto.py`, `document_dto.py`)
 - `src/infrastructure/`: Technical adapters & external persistence (Organized in 3 Enterprise Pillars)
   - `database/`: 🗄️ **เสาหลักที่ 1: Database & Data Access**
     - `engine.py`: Engine, Session Pool, Dispose, Connection lifecycle
-    - `models.py`: Pure SQLAlchemy 2.0 ORM Entities (`Role`, `Company`, `User`, `UserCompany`, `DocumentType`, `AIModelConfig`, `BaseEntity`, `BaseLogEntity`, `AppendOnlyAuditMixin`, `MutableAuditMixin`, `DocumentControl`, `Batch`, `BatchPage`, `Merchant`, `ExpenseReceipt`, etc.)
+    - `models.py`: Pure SQLAlchemy 2.0 ORM Entities (`Role`, `Company`, `User`, `UserCompany`, `DocumentType`, `AIModelConfig`, `BaseEntity`, `BaseLogEntity`, `AppendOnlyAuditMixin`, `MutableAuditMixin`, `DocumentControl`, `Batch`, `BatchPage`, `Merchant`, `ExpenseReceipt`, `IntegrationMethod`, `TargetSystem`, `VoucherStatus`, `ConsolidateMode`, `ExpenseType`, `ExpenseAccountMapping`, `JournalVoucher`, `JournalVoucherItem`, etc.)
     - `schema.py`: DDL Initializer & DB Reset with Automated Table Migrations
-    - `seeder.py`: Initial Master Data Seeders (8 Master Tables: Roles, AI Model Configs, Document Types, Default Tenant, Statuses, Merchants, Default Users, User Mappings)
+    - `seeder.py`: Initial Master Data Seeders (Roles, AI Models, Doc Types, Statuses, Integration Methods, Target Systems, Voucher Statuses, Consolidate Modes, Expense Types, GL Mappings, Real-World Merchants Grab/SPX/Shopee, Users)
     - `repositories/`: Single-responsibility Repository layer
       - `ai_config_repo.py`: Universal AI Provider & Pricing Configs with `@ttl_cache`
+      - `accounting_config_repo.py`: GL Account Mappings & Master Expense Types
+      - `voucher_repo.py`: Journal Voucher CRUD, Sequential Running Numbers & Concurrency Lease Locks
       - `batch_repo.py`: Ingestion Batches & Chunk Pages
       - `document_repo.py`: DocumentControl Supertype & 15-min Leases
       - `receipt_repo.py`: ExpenseReceipt Subtype & Relational Items

@@ -19,7 +19,16 @@ from sqlalchemy import (
     event,
 )
 from sqlalchemy.orm import declarative_base, relationship
-from src.infrastructure.core.constants import DefaultIdentifier, SystemUserId, UserRole, ProcessingType
+from src.infrastructure.core.constants import (
+    DefaultIdentifier,
+    SystemUserId,
+    UserRole,
+    ProcessingType,
+    VatType,
+    TargetSystemId,
+    ConsolidateModeCode,
+    VoucherStatusCode,
+)
 from src.infrastructure.core.user_context import get_current_user_id
 
 Base = declarative_base()
@@ -85,6 +94,89 @@ class BaseLogEntity(Base, DictSerializableMixin, AppendOnlyAuditMixin):
 
 
 # ==============================================================================
+# Master Integration & Accounting Reference Models
+# ==============================================================================
+
+class IntegrationMethod(BaseEntity):
+    """Integration connectivity methods lookup entity model."""
+    __tablename__ = "integration_methods"
+
+    method_id = Column(String(50), primary_key=True)
+    method_name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Integer, nullable=False, default=1, server_default="1")
+
+    target_systems = relationship("TargetSystem", back_populates="integration_method")
+
+
+class TargetSystem(BaseEntity):
+    """External ERP and Target Destination Systems registry."""
+    __tablename__ = "target_systems"
+
+    system_id = Column(String(50), primary_key=True)
+    system_name = Column(String(100), nullable=False)
+    system_category = Column(String(50), nullable=False, default="ACCOUNTING_ERP")
+    integration_method_id = Column(String(50), ForeignKey("integration_methods.method_id"), nullable=False, default="RPA_UIPATH")
+    description = Column(Text, nullable=True)
+    is_active = Column(Integer, nullable=False, default=1, server_default="1")
+
+    integration_method = relationship("IntegrationMethod", back_populates="target_systems")
+    account_mappings = relationship("ExpenseAccountMapping", back_populates="target_system", cascade="all, delete-orphan")
+
+
+class VoucherStatus(Base, DictSerializableMixin):
+    """Journal Voucher and RPA processing status reference lookup model."""
+    __tablename__ = "voucher_statuses"
+
+    status_code = Column(String(50), primary_key=True)
+    display_name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Integer, nullable=False, default=1, server_default="1")
+
+
+class ConsolidateMode(BaseEntity):
+    """Document Consolidation and line summary modes reference model."""
+    __tablename__ = "consolidate_modes"
+
+    mode_code = Column(String(50), primary_key=True)
+    mode_name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    is_default = Column(Integer, nullable=False, default=0, server_default="0")
+    is_active = Column(Integer, nullable=False, default=1, server_default="1")
+
+
+class ExpenseType(BaseEntity):
+    """Standardized Expense Type reference model with default WHT rates."""
+    __tablename__ = "expense_types"
+
+    expense_type_id = Column(String(50), primary_key=True)
+    expense_type_name = Column(String(100), unique=True, nullable=False)
+    default_wht_rate = Column(Float, nullable=False, default=0.0, server_default="0.0")
+    wht_income_type = Column(String(100), nullable=True)
+    is_active = Column(Integer, nullable=False, default=1, server_default="1")
+
+
+class ExpenseAccountMapping(BaseEntity):
+    """Maps Expense Types to Destination ERP General Ledger Accounts per Company."""
+    __tablename__ = "expense_account_mappings"
+
+    mapping_id = Column(String(36), primary_key=True)
+    company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=False, index=True)
+    target_system_id = Column(String(50), ForeignKey("target_systems.system_id", ondelete="CASCADE"), nullable=False, index=True)
+    expense_type_name = Column(String(100), nullable=False, index=True)
+    account_code = Column(String(50), nullable=False)
+    account_name = Column(String(200), nullable=True)
+    department_code = Column(String(50), nullable=True, default="")
+
+    __table_args__ = (
+        UniqueConstraint("company_id", "target_system_id", "expense_type_name", name="uq_company_target_expense_type"),
+    )
+
+    company = relationship("Company", back_populates="expense_account_mappings")
+    target_system = relationship("TargetSystem", back_populates="account_mappings")
+
+
+# ==============================================================================
 # Configuration & AI Models
 # ==============================================================================
 
@@ -135,14 +227,19 @@ class Company(BaseEntity):
     short_name = Column(String(50), nullable=False)
     tax_id = Column(String(13), unique=True, nullable=True, index=True)
     branch_code = Column(String(5), nullable=False, default="00000")
+    active_target_system_id = Column(String(50), ForeignKey("target_systems.system_id"), nullable=False, default=TargetSystemId.EXPRESS.value, server_default=TargetSystemId.EXPRESS.value)
+    auto_gen_voucher_no = Column(Integer, nullable=False, default=1, server_default="1")
     is_active = Column(Integer, default=1, server_default="1")
     ai_config_id = Column(String(50), ForeignKey("ai_model_configs.config_id", ondelete="SET NULL"), nullable=True)
 
     ai_config = relationship("AIModelConfig", back_populates="companies")
+    active_target_system = relationship("TargetSystem")
     batches = relationship("Batch", back_populates="company", cascade="all, delete-orphan")
     documents = relationship("DocumentControl", back_populates="company", cascade="all, delete-orphan")
     merchants = relationship("Merchant", back_populates="company", cascade="all, delete-orphan")
     expense_receipts = relationship("ExpenseReceipt", back_populates="company", cascade="all, delete-orphan")
+    journal_vouchers = relationship("JournalVoucher", back_populates="company", cascade="all, delete-orphan")
+    expense_account_mappings = relationship("ExpenseAccountMapping", back_populates="company", cascade="all, delete-orphan")
     api_call_logs = relationship("ApiCallLog", back_populates="company")
     user_mappings = relationship("UserCompany", back_populates="company", cascade="all, delete-orphan")
 
@@ -227,6 +324,7 @@ class Batch(BaseEntity):
     company = relationship("Company", back_populates="batches")
     documents = relationship("DocumentControl", back_populates="batch", cascade="all, delete-orphan")
     pages = relationship("BatchPage", back_populates="batch", cascade="all, delete-orphan")
+    journal_vouchers = relationship("JournalVoucher", back_populates="batch", cascade="all, delete-orphan")
 
 
 class DocumentControl(BaseEntity):
@@ -268,7 +366,7 @@ class DocumentControl(BaseEntity):
     doc_type_rel = relationship("DocumentType", back_populates="documents")
     pages = relationship("BatchPage", back_populates="document")
     expense_receipts = relationship("ExpenseReceipt", back_populates="document", cascade="all, delete-orphan")
-
+    journal_vouchers = relationship("JournalVoucher", back_populates="document", cascade="all, delete-orphan")
 
 
 class BatchPage(BaseEntity):
@@ -299,10 +397,15 @@ class Merchant(BaseEntity):
     merchant_name = Column(String(200), nullable=False)
     short_name = Column(String(100), nullable=False, default=DefaultIdentifier.DEFAULT_SHORT_NAME)
     file_prefix = Column(String(100), nullable=False, default=DefaultIdentifier.DEFAULT_SHORT_NAME)
+    vendor_code = Column(String(50), nullable=True)
+    default_expense_type = Column(String(100), nullable=True)
+    consolidate_mode = Column(String(50), nullable=False, default=ConsolidateModeCode.BY_MERCHANT.value, server_default=ConsolidateModeCode.BY_MERCHANT.value)
+    default_vat_type = Column(String(20), nullable=False, default=VatType.EXCLUSIVE.value, server_default=VatType.EXCLUSIVE.value)
+    has_wht = Column(Integer, nullable=False, default=0, server_default="0")
+    default_wht_rate = Column(Float, default=0.0, server_default="0.0")
     status_code = Column(String(50), nullable=False, default=MerchantStatus.APPROVED.value)
     approved_by = Column(String(100), nullable=True)
     approved_at = Column(String(50), nullable=True)
-    default_wht_rate = Column(Float, default=0.0)
     is_vat_registered = Column(Integer, default=1)
     is_active = Column(Integer, default=1, server_default="1")
 
@@ -315,6 +418,7 @@ class Merchant(BaseEntity):
         Index("idx_merchants_company_short_name", "company_id", "short_name"),
         Index("idx_merchants_company_file_prefix", "company_id", "file_prefix"),
         Index("idx_merchants_status_code", "status_code"),
+        Index("idx_merchants_vendor_code", "company_id", "vendor_code"),
     )
 
 
@@ -335,6 +439,9 @@ class ExpenseReceipt(BaseEntity):
     discount_amount = Column(Float, default=0.0)
     vat_amount = Column(Float, default=0.0)
     net_amount = Column(Float, default=0.0)
+    has_wht = Column(Integer, nullable=False, default=0, server_default="0")
+    wht_rate = Column(Float, nullable=False, default=0.0, server_default="0.0")
+    wht_amount = Column(Float, nullable=False, default=0.0, server_default="0.0")
     payment_method = Column(String(50), nullable=True)
     source_filename = Column(String(255), nullable=True)
 
@@ -356,6 +463,82 @@ class ExpenseReceiptItem(BaseEntity):
     total_price = Column(Float, default=0.0)
 
     receipt = relationship("ExpenseReceipt", back_populates="items")
+
+
+# ==============================================================================
+# Universal Journal Voucher & RPA Export Models
+# ==============================================================================
+
+class JournalVoucher(BaseEntity):
+    """Universal Canonical Journal Voucher header entity for ERP Export and RPA."""
+    __tablename__ = "journal_vouchers"
+
+    voucher_id = Column(String(36), primary_key=True)
+    document_id = Column(String(100), ForeignKey("document_controls.document_id", ondelete="CASCADE"), nullable=False, index=True)
+    company_id = Column(String(36), ForeignKey("companies.company_id", ondelete="CASCADE"), nullable=False, index=True)
+    batch_id = Column(String(100), ForeignKey("batches.batch_id", ondelete="CASCADE"), nullable=False)
+    target_system_id = Column(String(50), ForeignKey("target_systems.system_id"), nullable=False, default=TargetSystemId.EXPRESS.value)
+    voucher_type = Column(String(20), nullable=False, default="OE")
+    voucher_no = Column(String(100), unique=True, nullable=True, index=True)
+    voucher_date = Column(String(50), nullable=False)
+    description = Column(Text, nullable=True)
+
+    vendor_code = Column(String(50), nullable=True, index=True)
+    vendor_name = Column(String(200), nullable=True)
+    vendor_tax_id = Column(String(13), nullable=True)
+    vendor_branch_code = Column(String(5), nullable=True, default="00000")
+
+    ref_doc_no = Column(String(100), nullable=True)
+    ref_doc_date = Column(String(50), nullable=True)
+
+    subtotal_amount = Column(Float, nullable=False, default=0.0)
+    vat_type = Column(String(20), nullable=False, default=VatType.EXCLUSIVE.value)
+    vat_rate = Column(Float, nullable=False, default=7.0)
+    vat_amount = Column(Float, nullable=False, default=0.0)
+    wht_amount = Column(Float, nullable=False, default=0.0)
+    net_amount = Column(Float, nullable=False, default=0.0)
+    currency = Column(String(10), nullable=False, default="THB")
+    department_code = Column(String(50), nullable=True, default="")
+
+    target_payload = Column(Text, nullable=True)
+    status_code = Column(String(50), ForeignKey("voucher_statuses.status_code"), nullable=False, default=VoucherStatusCode.READY.value, index=True)
+
+    is_locked = Column(Integer, nullable=False, default=0, server_default="0")
+    locked_by = Column(String(50), nullable=True)
+    locked_at = Column(String(50), nullable=True)
+
+    erp_reference_no = Column(String(100), nullable=True)
+    posted_at = Column(String(50), nullable=True)
+    rpa_error_reason = Column(Text, nullable=True)
+
+    company = relationship("Company", back_populates="journal_vouchers")
+    document = relationship("DocumentControl", back_populates="journal_vouchers")
+    batch = relationship("Batch", back_populates="journal_vouchers")
+    target_system = relationship("TargetSystem")
+    status_rel = relationship("VoucherStatus")
+    items = relationship("JournalVoucherItem", back_populates="voucher", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_jv_company_voucher_date", "company_id", "voucher_date"),
+        Index("idx_jv_status_locked", "status_code", "is_locked"),
+    )
+
+
+class JournalVoucherItem(BaseEntity):
+    """GL Accounting detail line items belonging to a Journal Voucher."""
+    __tablename__ = "journal_vouchers_items"
+
+    item_id = Column(String(36), primary_key=True)
+    voucher_id = Column(String(36), ForeignKey("journal_vouchers.voucher_id", ondelete="CASCADE"), nullable=False, index=True)
+    line_number = Column(Integer, nullable=False, default=1)
+    entry_type = Column(String(10), nullable=False, default="DEBIT")
+    account_code = Column(String(50), nullable=False, index=True)
+    account_name = Column(String(200), nullable=True)
+    description = Column(Text, nullable=True)
+    amount = Column(Float, nullable=False, default=0.0)
+    department_code = Column(String(50), nullable=True, default="")
+
+    voucher = relationship("JournalVoucher", back_populates="items")
 
 
 # ==============================================================================

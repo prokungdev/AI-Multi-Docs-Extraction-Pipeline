@@ -255,3 +255,34 @@ erDiagram
 | `latency_ms` | `FLOAT` | YES | - | Network and model latency in milliseconds |
 | `error_reason` | `TEXT` | YES | - | Error stack trace if failed |
 | `created_at` | `VARCHAR(50)` | NO | UTC ISO | Execution timestamp |
+
+---
+
+### 2.11 `target_systems` & `integration_methods` (Destination ERP Registry)
+- **`integration_methods`**: `method_id` (`RPA_UIPATH`, `REST_API`, `WEBHOOK`, `CSV_EXPORT`, `EXCEL_EXPORT`, `DIRECT_DB`), `method_name`, `description`.
+- **`target_systems`**: `system_id` (`EXPRESS`, `SAP`, `PEAK`, `HR_PORTAL`, `GENERIC_CSV`), `system_name`, `system_category`, `integration_method_id`, `description`.
+
+---
+
+### 2.12 `expense_account_mappings` & `expense_types` (GL Mapping & WHT Rules)
+- **`expense_types`**: `expense_type_id`, `expense_type_name` (`ค่าบริการ`, `ค่าขนส่ง`), `default_wht_rate` (`3.0`, `1.0`), `wht_income_type`.
+- **`expense_account_mappings`**: `mapping_id`, `company_id`, `target_system_id`, `expense_type_name`, `account_code` (`95-5310-19`, `95-5200-05`), `account_name`, `department_code`. (Unique constraint on `company_id + target_system_id + expense_type_name`).
+
+---
+
+### 2.13 `journal_vouchers` & `journal_vouchers_items` (Canonical ERP Export Headers & Lines)
+- **`journal_vouchers`**:
+  - `voucher_id` 🔑 (`vch_...`) PK
+  - `document_id` 🌐 Unique FK to `document_controls`
+  - `company_id` 🌐, `batch_id` 🌐, `target_system_id` 🌐
+  - `voucher_type` (default `'OE'`), `voucher_no` (`OE260730001`), `voucher_date` (ISO `YYYY-MM-DD`)
+  - `vendor_code` (`G0001`, `อ0022`, `S0002`), `vendor_name`, `vendor_tax_id`, `vendor_branch_code`
+  - `ref_doc_no`, `ref_doc_date`
+  - `subtotal_amount`, `vat_type` (`EXCLUSIVE`, `INCLUSIVE`, `NO_VAT`), `vat_rate`, `vat_amount`, `wht_amount`, `net_amount`
+  - `target_payload` (Serialized destination JSON for RPA bot)
+  - `status_code` (`DRAFT`, `READY`, `POSING`, `POSTED`, `ERROR`, `CANCELLED`)
+  - `is_locked`, `locked_by`, `locked_at`, `erp_reference_no`, `posted_at`, `rpa_error_reason`
+- **`journal_vouchers_items`**:
+  - `item_id` 🔑 (`vchi_...`) PK
+  - `voucher_id` 🌐 FK to `journal_vouchers`
+  - `line_number`, `entry_type` (`DEBIT`/`CREDIT`), `account_code`, `account_name`, `department_code`, `amount`, `description`

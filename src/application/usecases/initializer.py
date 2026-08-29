@@ -138,7 +138,7 @@ def validate_environment(settings_path: str = DefaultPath.SETTINGS) -> list[str]
     # 1. Load active AI provider configuration from settings.json
     from src.infrastructure.core.config import load_system_settings, get_ai_provider_config
     settings = load_system_settings(settings_path)
-    ai_cfg = get_ai_provider_config(settings)
+    ai_cfg = get_ai_provider_config(settings=settings)
     active_provider = ai_cfg.get("active_provider", "gemini")
     api_key_env = ai_cfg.get("api_key_env")
     

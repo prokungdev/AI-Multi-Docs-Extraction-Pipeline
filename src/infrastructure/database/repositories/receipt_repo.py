@@ -90,6 +90,9 @@ def insert_relational_receipt(
             discount = float(totals_obj.get("discount", 0.0))
             vat_amount = float(totals_obj.get("vat_amount", 0.0))
             net_amount = float(totals_obj.get("net_amount", 0.0))
+            wht_amount = float(totals_obj.get("wht_amount", 0.0) or totals_obj.get("withholding_tax_amount", 0.0))
+            wht_rate = float(totals_obj.get("wht_rate", 0.0) or totals_obj.get("withholding_tax_rate", 0.0))
+            has_wht = 1 if wht_amount > 0 or wht_rate > 0 else 0
 
             doc_number = receipt_info.get("receipt_number") or doc_payload.get("doc_number")
             transaction_date = receipt_info.get("transaction_date") or doc_payload.get("transaction_date")
@@ -110,6 +113,9 @@ def insert_relational_receipt(
                 discount_amount=discount,
                 vat_amount=vat_amount,
                 net_amount=net_amount,
+                has_wht=has_wht,
+                wht_rate=wht_rate,
+                wht_amount=wht_amount,
                 payment_method=payment_method,
                 source_filename=original_filename,
                 created_at=now_str,

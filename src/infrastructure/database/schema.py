@@ -21,6 +21,14 @@ from .models import (
     DocumentControl,
     Batch,
     Merchant,
+    IntegrationMethod,
+    TargetSystem,
+    VoucherStatus,
+    ConsolidateMode,
+    ExpenseType,
+    ExpenseAccountMapping,
+    JournalVoucher,
+    JournalVoucherItem,
     ApiCallLog,
     ApplicationLog
 )
@@ -126,6 +134,16 @@ def initialize_db_schema(drop_and_recreate: bool = False):
                     conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN short_name VARCHAR(100) DEFAULT 'merchant'")
                 if "file_prefix" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN file_prefix VARCHAR(100) DEFAULT 'merchant'")
+                if "vendor_code" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN vendor_code VARCHAR(50)")
+                if "default_expense_type" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN default_expense_type VARCHAR(100)")
+                if "consolidate_mode" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN consolidate_mode VARCHAR(50) DEFAULT 'BY_MERCHANT'")
+                if "default_vat_type" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN default_vat_type VARCHAR(20) DEFAULT 'EXCLUSIVE'")
+                if "has_wht" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN has_wht INTEGER DEFAULT 0")
                 if "status_code" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN status_code VARCHAR(50) DEFAULT 'APPROVED'")
                 if "approved_by" not in existing_cols:
@@ -204,6 +222,12 @@ def initialize_db_schema(drop_and_recreate: bool = False):
                     conn.exec_driver_sql("ALTER TABLE expense_receipts ADD COLUMN company_id VARCHAR(36)")
                 if "doc_number" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE expense_receipts ADD COLUMN doc_number VARCHAR(100)")
+                if "has_wht" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE expense_receipts ADD COLUMN has_wht INTEGER DEFAULT 0")
+                if "wht_rate" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE expense_receipts ADD COLUMN wht_rate FLOAT DEFAULT 0.0")
+                if "wht_amount" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE expense_receipts ADD COLUMN wht_amount FLOAT DEFAULT 0.0")
                 if "created_by" not in existing_cols:
                     conn.exec_driver_sql(f"ALTER TABLE expense_receipts ADD COLUMN created_by VARCHAR(36) DEFAULT '{SystemUserId.AUTO_SYSTEM}'")
                 if "updated_by" not in existing_cols:
@@ -221,6 +245,10 @@ def initialize_db_schema(drop_and_recreate: bool = False):
                     conn.exec_driver_sql("ALTER TABLE companies ADD COLUMN updated_by VARCHAR(36)")
                 if "ai_config_id" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE companies ADD COLUMN ai_config_id VARCHAR(50)")
+                if "active_target_system_id" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE companies ADD COLUMN active_target_system_id VARCHAR(50) DEFAULT 'EXPRESS'")
+                if "auto_gen_voucher_no" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE companies ADD COLUMN auto_gen_voucher_no INTEGER DEFAULT 1")
             except Exception as mig_err:
                 logger.debug(f"Companies schema migration note: {mig_err}")
 
@@ -247,6 +275,15 @@ def initialize_db_schema(drop_and_recreate: bool = False):
                     conn.exec_driver_sql("ALTER TABLE batch_pages ADD COLUMN chunk_index INTEGER DEFAULT 1")
             except Exception as mig_err:
                 logger.debug(f"Batch Pages schema migration note: {mig_err}")
+
+            # Journal Vouchers migrations
+            try:
+                res = conn.exec_driver_sql("PRAGMA table_info(journal_vouchers)")
+                existing_cols = [row[1] for row in res.fetchall()]
+                if existing_cols and "posted_at" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE journal_vouchers ADD COLUMN posted_at VARCHAR(50)")
+            except Exception as mig_err:
+                logger.debug(f"Journal Vouchers schema migration note: {mig_err}")
 
             conn.commit()
 

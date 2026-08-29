@@ -21,6 +21,10 @@ from .validator import (
     archive_and_export_document,
     validate_batch_documents,
 )
+from .voucher_generator import (
+    generate_voucher_for_document,
+    generate_vouchers_for_batch,
+)
 
 __all__ = [
     "validate_settings_config",
@@ -36,4 +40,6 @@ __all__ = [
     "post_process_document",
     "archive_and_export_document",
     "validate_batch_documents",
+    "generate_voucher_for_document",
+    "generate_vouchers_for_batch",
 ]

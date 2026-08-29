@@ -58,6 +58,45 @@ class EntityIdPrefix:
     ITEM = "itm"
     API_LOG = "api"
     APP_LOG = "log"
+    INTEGRATION_METHOD = "inm"
+    TARGET_SYSTEM = "tgt"
+    EXPENSE_TYPE = "ext"
+    EXPENSE_ACCOUNT_MAPPING = "map"
+    VOUCHER = "vch"
+    VOUCHER_ITEM = "vchi"
+
+
+class VatType(str, enum.Enum):
+    """Universal VAT Calculation Types across accounting systems."""
+    EXCLUSIVE = "EXCLUSIVE"  # แยก VAT (Express: 2)
+    INCLUSIVE = "INCLUSIVE"  # รวม VAT (Express: 1)
+    NO_VAT = "NO_VAT"        # ไม่มี VAT (Express: 0)
+
+
+class TargetSystemId(str, enum.Enum):
+    """Centralized Target System Identifiers."""
+    EXPRESS = "EXPRESS"
+    SAP = "SAP"
+    PEAK = "PEAK"
+    HR_PORTAL = "HR_PORTAL"
+    GENERIC_CSV = "GENERIC_CSV"
+
+
+class ConsolidateModeCode(str, enum.Enum):
+    """Centralized Document Consolidation Modes."""
+    BY_MERCHANT = "BY_MERCHANT"
+    BY_CATEGORY = "BY_CATEGORY"
+    NO_CONSOLIDATION = "NO_CONSOLIDATION"
+
+
+class VoucherStatusCode(str, enum.Enum):
+    """Lifecycle status codes for Journal Vouchers and RPA Export."""
+    DRAFT = "DRAFT"
+    READY = "READY"
+    POSING = "POSING"
+    POSTED = "POSTED"
+    ERROR = "ERROR"
+    CANCELLED = "CANCELLED"
 
 
 class SystemUserId:

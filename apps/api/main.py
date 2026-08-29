@@ -8,17 +8,30 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from apps.api.routers import health, companies
+from contextlib import asynccontextmanager
+from apps.api.routers import health, companies, vouchers
 from src.infrastructure.core.config import get_app_metadata
+from src.infrastructure.database.schema import initialize_db_schema
+from src.infrastructure.database.seeder import seed_initial_data
 
 app_meta = get_app_metadata()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initializes database schema, migrations, and seed data on app startup."""
+    initialize_db_schema()
+    seed_initial_data()
+    yield
+
 
 app = FastAPI(
     title=f"{app_meta['app_name']} REST API",
     description=app_meta["app_description"],
     version=app_meta["app_version"],
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # Enable CORS for future Next.js web and mobile applications
@@ -33,6 +46,7 @@ app.add_middleware(
 # Mount Routers
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(companies.router, prefix="/api/v1")
+app.include_router(vouchers.router, prefix="/api/v1")
 
 
 @app.get("/", tags=["Root"])

@@ -37,6 +37,7 @@ class TestAiTelemetryAndIsolation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # 1. Database Isolation
+        cls._orig_db_override = os.environ.get("DB_PATH_OVERRIDE")
         cls.test_db_path = os.path.join(tempfile.gettempdir(), f"test_telemetry_{uuid.uuid4().hex[:8]}.db").replace("\\", "/")
         os.environ["DB_PATH_OVERRIDE"] = cls.test_db_path
         initialize_db_schema()
@@ -67,7 +68,10 @@ class TestAiTelemetryAndIsolation(unittest.TestCase):
             shutil.rmtree(cls.temp_dir, ignore_errors=True)
 
         os.environ.pop("STORAGE_ROOT_OVERRIDE", None)
-        os.environ.pop("DB_PATH_OVERRIDE", None)
+        if cls._orig_db_override:
+            os.environ["DB_PATH_OVERRIDE"] = cls._orig_db_override
+        else:
+            os.environ.pop("DB_PATH_OVERRIDE", None)
         gc.collect()
 
         # Cleanup Verification Step

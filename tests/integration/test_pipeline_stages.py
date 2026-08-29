@@ -146,6 +146,7 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import tempfile, uuid
+        cls._orig_db_override = os.environ.get("DB_PATH_OVERRIDE")
         cls.temp_dir = tempfile.mkdtemp()
         cls.db_path = os.path.join(tempfile.gettempdir(), f"test_classifier_{uuid.uuid4().hex[:8]}.db").replace("\\", "/")
         os.environ["DB_PATH_OVERRIDE"] = cls.db_path
@@ -184,7 +185,10 @@ class TestClassifierAndGatekeeper(unittest.TestCase):
                 os.remove(cls.db_path)
             except Exception:
                 pass
-        os.environ.pop("DB_PATH_OVERRIDE", None)
+        if cls._orig_db_override:
+            os.environ["DB_PATH_OVERRIDE"] = cls._orig_db_override
+        else:
+            os.environ.pop("DB_PATH_OVERRIDE", None)
         os.environ.pop("STORAGE_ROOT_OVERRIDE", None)
 
     def test_01_sanitize_short_name(self):
@@ -301,6 +305,7 @@ class TestUnifiedSourceClassifier(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import tempfile, uuid
+        cls._orig_db_override = os.environ.get("DB_PATH_OVERRIDE")
         setup_logger("configs/settings.json")
         cls.settings = load_system_settings("configs/settings.json")
         cls.doc_type = "expense_receipt"
@@ -337,7 +342,10 @@ class TestUnifiedSourceClassifier(unittest.TestCase):
                 os.remove(cls.db_path)
             except Exception:
                 pass
-        os.environ.pop("DB_PATH_OVERRIDE", None)
+        if cls._orig_db_override:
+            os.environ["DB_PATH_OVERRIDE"] = cls._orig_db_override
+        else:
+            os.environ.pop("DB_PATH_OVERRIDE", None)
         os.environ.pop("STORAGE_ROOT_OVERRIDE", None)
 
     def test_classify_document_pipeline(self):
@@ -355,6 +363,7 @@ class TestSmartChunkCheckpointAndResume(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import tempfile, uuid
+        cls._orig_db_override = os.environ.get("DB_PATH_OVERRIDE")
         setup_logger("configs/settings.json")
         cls.settings = load_system_settings("configs/settings.json")
         cls.doc_type = "expense_receipt"
@@ -387,7 +396,10 @@ class TestSmartChunkCheckpointAndResume(unittest.TestCase):
                 os.remove(cls.db_path)
             except Exception:
                 pass
-        os.environ.pop("DB_PATH_OVERRIDE", None)
+        if cls._orig_db_override:
+            os.environ["DB_PATH_OVERRIDE"] = cls._orig_db_override
+        else:
+            os.environ.pop("DB_PATH_OVERRIDE", None)
         os.environ.pop("STORAGE_ROOT_OVERRIDE", None)
 
     def test_01_multi_page_splitting_and_chunk_assignment(self):

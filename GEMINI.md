@@ -19,6 +19,7 @@
   2. 🔴 **Issues Encountered & Root Causes** (Exact error trace & why it happened, or "None")
   3. 🛠️ **Resolution Details** (How it was fixed, file modified)
   4. 🧹 **Resource Cleanup Verification** (100% temp isolation & teardown confirmation)
+- **Session Kickoff Protocol (Mandatory Architecture Grounding)**: At the beginning of every new conversation/chat session, AI MUST actively inspect active codebase models (`src/infrastructure/database/models.py`), schema definitions (`docs/database_schema.md`), and core architecture docs (`docs/architecture.md`) to ground and synchronize 100% with the latest codebase state BEFORE formulating plans, advice, or code changes.
 - **Skill-First Execution**: Plans MUST declare `Required Skills`. AI MUST inspect matching `.agents/skills/<skill>/SKILL.md` before modifying code.
 - **Execution**: Strictly ONE phase at a time. Auto-sync `docs/architecture.md` on structural changes.
 
