@@ -43,6 +43,7 @@ class VoucherPayloadDTO(BaseModel):
     vat_type_id: int = Field(..., description="Express VatTypeId: 2 (Exclusive), 1 (Inclusive), 0 (No VAT)")
     subtotal: float = Field(..., description="Amount before VAT")
     vat_amount: float = Field(..., description="VAT Amount")
+    is_override_vat: int = Field(default=1, description="1 if manual VAT from bill overrides auto calculation")
     wht_no: Optional[str] = Field(default=None, description="WHT Certificate No in format YY/MM/NNN")
     wht_rate: float = Field(default=0.0, description="Withholding Tax Rate percentage")
     wht_amount: float = Field(default=0.0, description="Withholding Tax Amount")

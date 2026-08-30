@@ -196,6 +196,12 @@ class ExpressTargetAdapter(BaseTargetAdapter):
                 "description": f"{vendor_name} ({formatted_vch_date})".strip(),
             })
 
+        is_override_vat = int(
+            voucher.get("is_override_vat")
+            if voucher.get("is_override_vat") is not None
+            else (merchant_config.get("is_override_vat", 1) if merchant_config else 1)
+        )
+
         express_payload = {
             "voucher_no": voucher_no,
             "voucher_date": formatted_vch_date,
@@ -205,6 +211,7 @@ class ExpressTargetAdapter(BaseTargetAdapter):
             "vat_type_id": vat_type_id,
             "subtotal": subtotal,
             "vat_amount": vat_amount,
+            "is_override_vat": is_override_vat,
             "wht_no": wht_no,
             "wht_rate": wht_rate if has_wht else 0.0,
             "wht_amount": wht_amount if has_wht else 0.0,

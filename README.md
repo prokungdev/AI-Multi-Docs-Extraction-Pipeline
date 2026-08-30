@@ -74,9 +74,10 @@ flowchart LR
 
 ## 📖 Documentation & Guides
 
+- 🗺️ [**Engineering & Architecture Roadmap**](docs/roadmap.md)
+- 🏗️ [**Architecture & System Design**](docs/architecture.md)
 - 📘 [**Installation & Setup Guide**](docs/installation_guide.md)
 - 🧰 [**AI Skill Kit Guide**](docs/skills_guide.md)
-- 📙 [**Knowledge Base**](docs/KNOWLEDGE_BASE.md)
 - 📓 [**Pipeline Walkthrough Notebook**](notebooks/01_pipeline_walkthrough.ipynb)
 
 ---

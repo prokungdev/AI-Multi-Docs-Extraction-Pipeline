@@ -15,14 +15,15 @@
     - `template_evaluator.py`: JSON template record transformer (`get_nested_value`, `transform_data`)
   - `entities/`: Domain entities & aggregates
 - `src/application/`: Use cases & pipeline orchestration
-  - `pipeline/`: Stages 0 to 4 (`stage_0_init`, `stage_1_ingestion`, `stage_2_extraction`, `stage_3_transformation`, `stage_4_validation`)
+  - `pipeline/`: Stages 0 to 7 (`stage_0_init`, `stage_1_ingestion`, `stage_2_extraction`, `stage_3_transformation`, `stage_4_validation`, `stage_5_confirm`, `stage_6_voucher`, `stage_7_export`)
   - `usecases/`: 100% Symmetrical Stage Use Cases:
     - `initializer.py`: Stage 0 system & storage bootstrap
     - `classifier.py`: Stage 1 zero-cost prefix & multi-tenant routing
     - `extractor.py`: Stage 2 multimodal AI prompting & token math
     - `transformer.py`: Stage 3 relational database conversion
     - `validator.py`: Stage 4 multi-rule validation, confidence scoring & archiving
-    - `voucher_generator.py`: Canonical Journal Voucher & ERP Target Payload Generator
+    - `confirmer.py`: Stage 5 review confirmation & audit stamping
+    - `voucher_generator.py`: Stage 6 Canonical Journal Voucher & ERP Target Payload Generator
   - `exporters/`: Output Strategy Adapters & Destination ERP Plugin System:
     - `base.py`: Legacy File Exporter Base (`BaseOutputExporter`)
     - `express_adapter.py`: Legacy Express PV Exporter
@@ -73,7 +74,10 @@
 3. **Stage 2 (`extract_documents(batch_id)`)**: Multimodal AI extraction + token cost calculation for target batch.
 4. **Stage 3 (`transform_to_db(batch_id)`)**: Inserts normalized records into SQLite via SQLAlchemy 2.0 for target batch.
 5. **Stage 4 (`validate_documents(batch_id)`)**: Verifies financial math balance & confidence scores for target batch.
-6. **Exporters (`run_export_outputs`)**: Generates CSV, JSON, and CP874 Express PV files.
+6. **Stage 5 (`confirm_receipts(batch_id)`)**: Human review confirmation & audit stamping for target batch.
+7. **Stage 6 (`generate_journal_vouchers(batch_id)`)**: Canonical GL Journal Voucher generation & 50-Tawi WHT calculation.
+8. **Stage 7 (`export_target_payloads(batch_id)`)**: Destination Express OE / ERP JSON formatting (`is_override_vat`) & READY sealing.
+9. **Exporters (`run_export_outputs`)**: Generates legacy CSV, JSON, and CP874 Express PV files.
 
 ## 3. Database & Persistence Layer (Multi-Database Support)
 - **Engines**: SQLite (Default / Dev / Edge) ⇄ PostgreSQL / MySQL (Production / Cloud)

@@ -135,13 +135,14 @@ class AppMetadata:
     DESCRIPTION = "RESTful API Backend & Pipeline Engine for Document Extraction"
 
 
-class DocumentStatusCode:
+class DocumentStatusCode(str, enum.Enum):
     """Centralized document processing status code constants."""
     PENDING = "PENDING"
     PREPROCESSED = "PREPROCESSED"
     EXTRACTED = "EXTRACTED"
     NEEDS_REVIEW = "NEEDS_REVIEW"
     PROCESSED = "PROCESSED"
+    CONFIRMED = "CONFIRMED"
     APPROVED = "APPROVED"
     FAILED = "FAILED"
     IGNORED = "IGNORED"

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from src.infrastructure.core.logger import logger
 from src.infrastructure.core.constants import (
     ConsolidateModeCode,
+    DocumentStatusCode,
     VatType,
     VoucherStatusCode,
 )
@@ -20,6 +21,7 @@ from src.infrastructure.database.models import (
     ExpenseReceipt,
     Merchant,
     Company,
+    JournalVoucher,
 )
 from src.infrastructure.database import (
     generate_next_voucher_no,
@@ -30,7 +32,10 @@ from src.infrastructure.database import (
 from src.application.exporters import TargetAdapterRegistry
 
 
-def generate_voucher_for_document(document_id: str) -> Dict[str, Any]:
+def generate_voucher_for_document(
+    document_id: str,
+    force_regenerate: bool = False,
+) -> Dict[str, Any]:
     """
     Generates a Canonical Journal Voucher for an approved DocumentControl and its ExpenseReceipt.
     
@@ -50,8 +55,21 @@ def generate_voucher_for_document(document_id: str) -> Dict[str, Any]:
     # Check if voucher already exists for this document
     existing_vch = get_journal_voucher_by_document_id(clean_doc_id)
     if existing_vch:
-        logger.info(f"JournalVoucher already exists for document '{clean_doc_id}': {existing_vch['voucher_no']}")
-        return existing_vch
+        if not force_regenerate:
+            logger.info(f"JournalVoucher already exists for document '{clean_doc_id}': {existing_vch['voucher_no']}")
+            return existing_vch
+
+        # Guard against regenerating POSTED vouchers
+        if existing_vch.get("status_code") == VoucherStatusCode.POSTED.value:
+            raise RuntimeError(f"Cannot regenerate JournalVoucher '{existing_vch.get('voucher_no')}': Already POSTED to ERP.")
+
+        # Cleanly delete existing unposted voucher for fresh regeneration
+        with get_db_session() as session:
+            old_vch = session.scalars(select(JournalVoucher).filter_by(document_id=clean_doc_id)).first()
+            if old_vch:
+                session.delete(old_vch)
+                session.commit()
+                logger.info(f"Deleted unposted JournalVoucher '{existing_vch.get('voucher_no')}' for clean regeneration.")
 
     with get_db_session() as session:
         # 1. Load DocumentControl
@@ -180,6 +198,7 @@ def generate_voucher_for_document(document_id: str) -> Dict[str, Any]:
         "vat_type": vat_type,
         "vat_rate": 7.0 if vat_type != VatType.NO_VAT.value else 0.0,
         "vat_amount": vat_amount,
+        "is_override_vat": int(merchant_dict.get("is_override_vat", 1)),
         "wht_amount": wht_amount,
         "net_amount": net_amount,
         "status_code": VoucherStatusCode.READY.value,
@@ -204,32 +223,51 @@ def generate_voucher_for_document(document_id: str) -> Dict[str, Any]:
     return created_voucher
 
 
-def generate_vouchers_for_batch(batch_id: str) -> List[Dict[str, Any]]:
+def generate_vouchers_for_batch(
+    batch_id: str,
+    company_code: Optional[str] = None,
+    force_regenerate: bool = False,
+) -> Dict[str, Any]:
     """
-    Generates Journal Vouchers for all APPROVED documents within a batch.
+    Generates Journal Vouchers for all confirmed/approved documents within a batch.
     """
     if not batch_id or not str(batch_id).strip():
         raise ValueError("batch_id is required for batch voucher generation.")
 
     clean_batch_id = str(batch_id).strip()
-    generated = []
+    generated: List[Dict[str, Any]] = []
 
     with get_db_session() as session:
         stmt = (
             select(DocumentControl.document_id)
             .where(
                 DocumentControl.batch_id == clean_batch_id,
-                DocumentControl.status_code == "APPROVED",
+                DocumentControl.status_code.in_([
+                    DocumentStatusCode.APPROVED.value,
+                    DocumentStatusCode.CONFIRMED.value,
+                    DocumentStatusCode.PROCESSED.value,
+                ]),
+                DocumentControl.is_closed == 0,
             )
         )
+        if company_code:
+            comp = session.scalars(select(Company).filter_by(company_code=company_code)).first()
+            if comp:
+                stmt = stmt.where(DocumentControl.company_id == comp.company_id)
+
         doc_ids = session.scalars(stmt).all()
 
     for doc_id in doc_ids:
         try:
-            vch = generate_voucher_for_document(doc_id)
-            generated.append(vch)
+            vch = generate_voucher_for_document(doc_id, force_regenerate=force_regenerate)
+            if vch:
+                generated.append(vch)
         except Exception as e:
             logger.error(f"Failed to generate voucher for document '{doc_id}': {e}")
 
     logger.info(f"Generated {len(generated)}/{len(doc_ids)} Journal Voucher(s) for Batch '{clean_batch_id}'.")
-    return generated
+    return {
+        "batch_id": clean_batch_id,
+        "generated_count": len(generated),
+        "vouchers": generated,
+    }

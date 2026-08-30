@@ -1,0 +1,1440 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Multi-Docs Extraction & Express ERP Gateway</title>
+    <!-- Modern Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base: #0a0e17;
+            --bg-surface: #111827;
+            --bg-card: rgba(17, 24, 39, 0.85);
+            --bg-glass: rgba(30, 41, 59, 0.6);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-hover: rgba(56, 189, 248, 0.4);
+            
+            --primary: #0284c7;
+            --primary-glow: rgba(14, 165, 233, 0.25);
+            --accent: #38bdf8;
+            --emerald: #10b981;
+            --emerald-glow: rgba(16, 185, 129, 0.2);
+            --amber: #f59e0b;
+            --amber-glow: rgba(245, 158, 11, 0.2);
+            --rose: #f43f5e;
+            --rose-glow: rgba(244, 63, 94, 0.2);
+            --purple: #a855f7;
+
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --text-dim: #64748b;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Prompt', 'Inter', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            display: flex;
+            min-height: 100vh;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(14, 165, 233, 0.08) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.06) 0px, transparent 50%);
+        }
+
+        /* Sidebar Navigation */
+        .sidebar {
+            width: 280px;
+            background: var(--bg-surface);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            padding: 24px 16px;
+            gap: 28px;
+            flex-shrink: 0;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 0 8px;
+        }
+
+        .brand-icon {
+            width: 42px;
+            height: 42px;
+            background: linear-gradient(135deg, var(--primary), var(--purple));
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            box-shadow: 0 8px 16px var(--primary-glow);
+        }
+
+        .brand-text h2 {
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            color: #fff;
+        }
+
+        .brand-text span {
+            font-size: 11px;
+            color: var(--accent);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+        }
+
+        .tenant-selector {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 10px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .tenant-selector label {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+        }
+
+        .tenant-selector select {
+            background: transparent;
+            border: none;
+            color: var(--text-main);
+            font-size: 13px;
+            font-weight: 600;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .tenant-selector select option {
+            background: var(--bg-surface);
+            color: #fff;
+        }
+
+        .nav-menu {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            list-style: none;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            color: var(--text-muted);
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
+        }
+
+        .nav-item:hover {
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text-main);
+        }
+
+        .nav-item.active {
+            background: linear-gradient(90deg, rgba(2, 132, 199, 0.18), rgba(2, 132, 199, 0.05));
+            border-color: rgba(56, 189, 248, 0.3);
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .nav-badge {
+            margin-left: auto;
+            background: var(--amber);
+            color: #000;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 10px;
+        }
+
+        .user-status {
+            margin-top: auto;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        .user-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        .user-info {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .user-info span:first-child {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .user-info span:last-child {
+            font-size: 11px;
+            color: var(--emerald);
+        }
+
+        /* Main Content Container */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 28px 36px;
+            gap: 28px;
+            overflow-y: auto;
+            max-width: 1440px;
+        }
+
+        /* Top Header */
+        .header-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .page-title h1 {
+            font-size: 24px;
+            font-weight: 700;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .page-title p {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: #fff;
+            box-shadow: 0 4px 12px var(--primary-glow);
+        }
+
+        .btn-primary:hover {
+            background: #0369a1;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: var(--border-color);
+            color: var(--text-main);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: var(--text-dim);
+        }
+
+        .btn-emerald {
+            background: var(--emerald);
+            color: #fff;
+            box-shadow: 0 4px 12px var(--emerald-glow);
+        }
+
+        .btn-emerald:hover {
+            background: #059669;
+        }
+
+        .btn-amber {
+            background: var(--amber);
+            color: #000;
+            box-shadow: 0 4px 12px var(--amber-glow);
+        }
+
+        .btn-amber:hover {
+            background: #d97706;
+        }
+
+        .btn-rose {
+            background: var(--rose);
+            color: #fff;
+            box-shadow: 0 4px 12px var(--rose-glow);
+        }
+
+        /* Stats Metric Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 18px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            backdrop-filter: blur(12px);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+        }
+
+        .stat-card.blue::before { background: var(--accent); }
+        .stat-card.amber::before { background: var(--amber); }
+        .stat-card.emerald::before { background: var(--emerald); }
+        .stat-card.purple::before { background: var(--purple); }
+
+        .stat-info span {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .stat-info h3 {
+            font-size: 26px;
+            font-weight: 700;
+            margin-top: 4px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .stat-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            border: 1px solid var(--border-color);
+        }
+
+        /* Views / Sections */
+        .view-section {
+            display: none;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .view-section.active {
+            display: flex;
+        }
+
+        /* Panel Container */
+        .panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            backdrop-filter: blur(12px);
+        }
+
+        .panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .panel-header h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Upload Dropzone */
+        .dropzone {
+            border: 2px dashed rgba(56, 189, 248, 0.3);
+            background: rgba(14, 165, 233, 0.02);
+            border-radius: 14px;
+            padding: 40px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .dropzone:hover {
+            border-color: var(--accent);
+            background: rgba(14, 165, 233, 0.05);
+        }
+
+        .dropzone-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: rgba(14, 165, 233, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 26px;
+            color: var(--accent);
+        }
+
+        .dropzone h4 {
+            font-size: 15px;
+            font-weight: 600;
+        }
+
+        .dropzone p {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        /* Filter Toolbar */
+        .filter-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .search-box {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 8px 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 320px;
+        }
+
+        .search-box input {
+            background: transparent;
+            border: none;
+            color: #fff;
+            font-size: 13px;
+            outline: none;
+            width: 100%;
+        }
+
+        .status-filters {
+            display: flex;
+            gap: 8px;
+        }
+
+        .pill-btn {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .pill-btn.active {
+            background: var(--accent);
+            color: #000;
+            font-weight: 600;
+            border-color: var(--accent);
+        }
+
+        /* Data Table */
+        .table-responsive {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 13px;
+        }
+
+        th {
+            padding: 12px 16px;
+            background: rgba(255, 255, 255, 0.02);
+            color: var(--text-muted);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        td {
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-main);
+            vertical-align: middle;
+        }
+
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .doc-no {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+
+        .badge-draft {
+            background: rgba(148, 163, 184, 0.15);
+            color: #cbd5e1;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+        }
+
+        .badge-ready {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--amber);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        .badge-posted {
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--emerald);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .badge-error {
+            background: rgba(244, 63, 94, 0.15);
+            color: var(--rose);
+            border: 1px solid rgba(244, 63, 94, 0.3);
+        }
+
+        .action-btns {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-icon:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.08);
+            border-color: var(--accent);
+        }
+
+        /* Modal Popup */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(8px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-box {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            width: 90%;
+            max-width: 780px;
+            padding: 28px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            box-shadow: 0 24px 48px rgba(0,0,0,0.5);
+            animation: modalFadeIn 0.2s ease;
+        }
+
+        @keyframes modalFadeIn {
+            from { transform: scale(0.95); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 14px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .modal-header h3 {
+            font-size: 18px;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 20px;
+            cursor: pointer;
+        }
+
+        .modal-body {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 14px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .form-group label {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .form-group input, .form-group select {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: #fff;
+            font-size: 13px;
+            outline: none;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            border-color: var(--accent);
+        }
+
+        .modal-footer {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 12px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: var(--bg-surface);
+            border: 1px solid var(--emerald);
+            border-radius: 10px;
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            z-index: 1000;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.error {
+            border-color: var(--rose);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar Menu -->
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-icon">⚡</div>
+            <div class="brand-text">
+                <h2>AI Doc Pipeline</h2>
+                <span>Express ERP Gateway</span>
+            </div>
+        </div>
+
+        <div class="tenant-selector">
+            <label>บริษัทที่เลือก (Active Tenant)</label>
+            <select id="tenantSelect">
+                <option value="C001">บริษัท สหกิจพัฒนา จำกัด (สำนักงานใหญ่)</option>
+                <option value="C002">บริษัท ดิจิทัล โซลูชั่น จำกัด</option>
+                <option value="C003">ห้างหุ้นส่วนจำกัด โลจิสติกส์ไทย</option>
+            </select>
+        </div>
+
+        <ul class="nav-menu">
+            <li class="nav-item active" onclick="switchTab('reviewTab', this)">
+                <span>📑</span>
+                <span>รีวิว & Confirm Journal</span>
+                <span class="nav-badge" id="draftCount">3</span>
+            </li>
+            <li class="nav-item" onclick="switchTab('uploadTab', this)">
+                <span>📥</span>
+                <span>จัดการข้อมูล & Upload</span>
+            </li>
+            <li class="nav-item" onclick="switchTab('rpaTab', this)">
+                <span>🤖</span>
+                <span>RPA Express Bot Monitor</span>
+            </li>
+            <li class="nav-item" onclick="switchTab('masterTab', this)">
+                <span>⚙️</span>
+                <span>ผังบัญชี & Master Data</span>
+            </li>
+        </ul>
+
+        <div class="user-status">
+            <div class="user-avatar">PK</div>
+            <div class="user-info">
+                <span>Prokung (Senior Admin)</span>
+                <span>● Online (usr_system_admin)</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+        
+        <!-- Header -->
+        <header class="header-bar">
+            <div class="page-title">
+                <h1 id="pageHeading">📑 รีวิว & ยืนยันเอกสาร (Review & Confirm Gateway)</h1>
+                <p id="pageSubHeading">ตรวจสอบความถูกต้องของรายการบัญชี, Confirm เพื่อ Seal ส่งให้ RPA หรือ Recall เพื่อดึงกลับมาแก้ไข</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-secondary" onclick="simulateNewUpload()">🔄 รีเฟรชข้อมูล</button>
+                <button class="btn btn-primary" onclick="switchTab('uploadTab')">➕ นำเข้าไฟล์ใหม่</button>
+            </div>
+        </header>
+
+        <!-- Metric Cards -->
+        <div class="stats-grid">
+            <div class="stat-card blue">
+                <div class="stat-info">
+                    <span>เอกสารทั้งหมด (Total)</span>
+                    <h3 id="statTotal">6</h3>
+                </div>
+                <div class="stat-icon">📑</div>
+            </div>
+            <div class="stat-card amber">
+                <div class="stat-info">
+                    <span>รอตรวจสอบ (DRAFT)</span>
+                    <h3 id="statDraft">3</h3>
+                </div>
+                <div class="stat-icon">✏️</div>
+            </div>
+            <div class="stat-card emerald">
+                <div class="stat-info">
+                    <span>พร้อมส่ง RPA (READY)</span>
+                    <h3 id="statReady">2</h3>
+                </div>
+                <div class="stat-icon">🔒</div>
+            </div>
+            <div class="stat-card purple">
+                <div class="stat-info">
+                    <span>เข้า Express แล้ว (POSTED)</span>
+                    <h3 id="statPosted">1</h3>
+                </div>
+                <div class="stat-icon">✅</div>
+            </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- TAB 1: REVIEW & CONFIRM JOURNAL -->
+        <!-- ========================================== -->
+        <section id="reviewTab" class="view-section active">
+            <div class="panel">
+                <div class="panel-header">
+                    <h3><span>📋</span> รายการ Journal Vouchers (OE ค่าใช้จ่าย & IV บิลขาย)</h3>
+                    <div class="filter-bar">
+                        <div class="status-filters">
+                            <button class="pill-btn active" onclick="filterStatus('ALL', this)">ทั้งหมด</button>
+                            <button class="pill-btn" onclick="filterStatus('DRAFT', this)">DRAFT (แก้ได้)</button>
+                            <button class="pill-btn" onclick="filterStatus('READY', this)">READY (Sealed)</button>
+                            <button class="pill-btn" onclick="filterStatus('POSTED', this)">POSTED (สำเร็จ)</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ประเภท</th>
+                                <th>เลขที่ Voucher</th>
+                                <th>วันที่เอกสาร</th>
+                                <th>คู่ค้า / ลูกค้า</th>
+                                <th>เลขที่บิลต้นทาง</th>
+                                <th>ยอดก่อนภาษี</th>
+                                <th>VAT 7%</th>
+                                <th>ยอดสุทธิ</th>
+                                <th>สถานะ</th>
+                                <th>การควบคุม & Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="voucherTableBody">
+                            <!-- Populated dynamically by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- TAB 2: UPLOAD & DATA CLEANSING -->
+        <!-- ========================================== -->
+        <section id="uploadTab" class="view-section">
+            <div class="panel">
+                <div class="panel-header">
+                    <h3><span>📥</span> จัดการนำเข้าข้อมูล (Data Ingestion & Multi-Format Cleansing)</h3>
+                </div>
+
+                <div class="dropzone" onclick="triggerMockUpload()">
+                    <div class="dropzone-icon">📁</div>
+                    <h4>คลิกเพื่อเลือกไฟล์ หรือ ลากไฟล์มาวางที่นี่</h4>
+                    <p>รองรับไฟล์ Excel หลากหลายรูปแบบ (.xlsx, .xls), CSV, และไฟล์สแกน PDF / JPG</p>
+                    <span style="font-size: 11px; background: rgba(56, 189, 248, 0.1); color: var(--accent); padding: 4px 10px; border-radius: 6px;">
+                        ⚡ ระบบมี Auto-Cleansing: แปลง พ.ศ. ➔ ค.ศ., ลบวรรคตัวเลข, จับคู่รหัสภาษี 13 หลัก
+                    </span>
+                </div>
+
+                <h4 style="margin-top: 10px; font-size: 14px; color: #fff;">📊 พรีวิวผลการ Cleansing ข้อมูลล่าสุด (Data Staging Preview)</h4>
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ชื่อไฟล์ต้นทาง</th>
+                                <th>ฟอร์แมต</th>
+                                <th>ผลการ Cleansing</th>
+                                <th>จำนวนบิล</th>
+                                <th>ความสมบูรณ์</th>
+                                <th>การจัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><b>sales_export_aug2026.xlsx</b></td>
+                                <td>Excel (Export หน้าจอ)</td>
+                                <td><span class="badge badge-posted">Cleaned 100% (Merged Cells Handled)</span></td>
+                                <td>15 รายการ</td>
+                                <td>100% ครบถ้วน</td>
+                                <td><button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;">ดูรายละเอียด</button></td>
+                            </tr>
+                            <tr>
+                                <td><b>grab_expense_batch01.pdf</b></td>
+                                <td>PDF Vision Scan</td>
+                                <td><span class="badge badge-posted">AI Extracted (VAT 7% Match)</span></td>
+                                <td>4 รายการ</td>
+                                <td>Confidence 98.4%</td>
+                                <td><button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;">ดูรายละเอียด</button></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- TAB 3: RPA EXPRESS MONITOR -->
+        <!-- ========================================== -->
+        <section id="rpaTab" class="view-section">
+            <div class="panel">
+                <div class="panel-header">
+                    <h3><span>🤖</span> UiPath RPA Express Dispatcher & Realtime Queue</h3>
+                    <button class="btn btn-emerald" onclick="simulateRpaExecution()">⚡ รันจำลอง RPA Keying ตอนนี้</button>
+                </div>
+                <p style="font-size: 13px; color: var(--text-muted);">
+                    RPA Bot จะดึงเฉพาะเอกสารที่มีสถานะ <b>READY</b> ผ่าน API Endpoint <code>/api/v1/rpa/express/oe/pending-jobs</code> และ <code>/sales/pending-jobs</code> ไปคีย์เข้า Express
+                </p>
+
+                <div class="table-responsive" style="margin-top: 10px;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Target ERP</th>
+                                <th>หน้าจอ Express</th>
+                                <th>API Endpoint</th>
+                                <th>คิวที่พร้อมคีย์ (READY)</th>
+                                <th>สถานะบอท</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><b>Express ERP</b></td>
+                                <td>หน้าจอ <b>OE</b> (บันทึกค่าใช้จ่าย + 50 ทวิ)</td>
+                                <td><code>/api/v1/rpa/express/oe/pending-jobs</code></td>
+                                <td><b id="rpaOeCount" style="color: var(--amber);">2 รายการ</b></td>
+                                <td><span class="badge badge-posted">IDLE (Listening)</span></td>
+                            </tr>
+                            <tr>
+                                <td><b>Express ERP</b></td>
+                                <td>หน้าจอ <b>IV</b> (ขายเชื่อ / ใบกำกับภาษี)</td>
+                                <td><code>/api/v1/rpa/express/sales/pending-jobs</code></td>
+                                <td><b id="rpaIvCount" style="color: var(--amber);">0 รายการ</b></td>
+                                <td><span class="badge badge-posted">IDLE (Listening)</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- TAB 4: MASTER DATA -->
+        <!-- ========================================== -->
+        <section id="masterTab" class="view-section">
+            <div class="panel">
+                <div class="panel-header">
+                    <h3><span>⚙️</span> ผังบัญชีและการตั้งค่า Express GL Account Mapping</h3>
+                </div>
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ประเภทค่าใช้จ่าย</th>
+                                <th>รหัสบัญชี Express (GL Code)</th>
+                                <th>ชื่อผังบัญชี</th>
+                                <th>รหัสแผนก</th>
+                                <th>อัตราหัก ณ ที่จ่าย (WHT)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>ค่าบริการดูแลระบบคอมพิวเตอร์</td>
+                                <td><code>95-5310-19</code></td>
+                                <td>ค่าจ้างและบริการ IT</td>
+                                <td>IT01</td>
+                                <td>3.0% (ภ.ง.ด.53)</td>
+                            </tr>
+                            <tr>
+                                <td>ค่าขนส่งและเดลิเวอรี่ (Grab/SPX)</td>
+                                <td><code>95-5200-05</code></td>
+                                <td>ค่าขนส่งและบริการจัดส่ง</td>
+                                <td>OP02</td>
+                                <td>1.0% (ภ.ง.ด.53)</td>
+                            </tr>
+                            <tr>
+                                <td>ค่าอาหารและเครื่องดื่มรับรอง</td>
+                                <td><code>95-5100-02</code></td>
+                                <td>ค่ารับรองและสวัสดิการ</td>
+                                <td>ADMIN</td>
+                                <td>0.0% (ไม่มี)</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- EDIT / REVIEW MODAL -->
+    <div class="modal-overlay" id="editModal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3 id="modalTitle">✏️ แก้ไขและปรับปรุงข้อมูล Journal Voucher</h3>
+                <button class="modal-close" onclick="closeModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>เลขที่ Voucher (Express No)</label>
+                        <input type="text" id="mDocNo" readonly style="color: var(--accent); font-family: monospace;">
+                    </div>
+                    <div class="form-group">
+                        <label>วันที่เอกสาร (วว/ดด/ปปปป)</label>
+                        <input type="text" id="mDate">
+                    </div>
+                    <div class="form-group">
+                        <label>คู่ค้า / ผู้จำหน่าย / ลูกค้า</label>
+                        <input type="text" id="mPartner">
+                    </div>
+                    <div class="form-group">
+                        <label>เลขประจำตัวผู้เสียภาษี 13 หลัก</label>
+                        <input type="text" id="mTaxId">
+                    </div>
+                    <div class="form-group">
+                        <label>รหัสผังบัญชี Express (GL Account Code)</label>
+                        <select id="mGlCode">
+                            <option value="95-5310-19">95-5310-19 (ค่าจ้างและบริการ IT)</option>
+                            <option value="95-5200-05">95-5200-05 (ค่าขนส่งและบริการจัดส่ง)</option>
+                            <option value="95-5100-02">95-5100-02 (ค่ารับรองและสวัสดิการ)</option>
+                            <option value="41-1000-01">41-1000-01 (รายได้จากการขายสินค้า)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>เลขที่เอกสารอ้างอิงต้นทาง (Ref Bill No)</label>
+                        <input type="text" id="mRefNo">
+                    </div>
+                </div>
+
+                <div class="form-grid" style="background: rgba(255,255,255,0.02); padding: 14px; border-radius: 8px; border: 1px solid var(--border-color);">
+                    <div class="form-group">
+                        <label>ยอดรวมก่อนภาษี (Subtotal)</label>
+                        <input type="number" id="mSubtotal" step="0.01" oninput="recalcVat()">
+                    </div>
+                    <div class="form-group">
+                        <label>ภาษีมูลค่าเพิ่ม (VAT 7%)</label>
+                        <input type="number" id="mVat" step="0.01" readonly>
+                    </div>
+                    <div class="form-group" style="grid-column: span 2;">
+                        <label>ยอดสุทธิรวม (Grand Total)</label>
+                        <input type="number" id="mGrandTotal" step="0.01" readonly style="font-weight: 700; color: var(--emerald);">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal()">ยกเลิก</button>
+                <button class="btn btn-primary" onclick="saveVoucherChanges()">💾 บันทึกการแก้ไข (Save Draft)</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- RECALL CONFIRMATION MODAL -->
+    <div class="modal-overlay" id="recallModal">
+        <div class="modal-box" style="max-width: 480px;">
+            <div class="modal-header">
+                <h3 style="color: var(--amber);">⚠️ ยืนยันการ Recall เอกสาร</h3>
+                <button class="modal-close" onclick="closeRecallModal()">✕</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 13px; color: var(--text-muted);">
+                    การ Recall จะเปลี่ยนสถานะจาก <b style="color: var(--amber);">READY</b> กลับเป็น <b style="color: #cbd5e1;">DRAFT</b> เพื่อให้สามารถแก้ไขข้อมูลได้ และป้องกันไม่ให้ RPA Bot ดึงไปคีย์
+                </p>
+                <div class="form-group" style="margin-top: 10px;">
+                    <label>ระบุเหตุผลในการ Recall (Audit Log):</label>
+                    <input type="text" id="recallReason" placeholder="เช่น แก้ไขรหัสผังบัญชี GL ผิดพลาด">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeRecallModal()">ยกเลิก</button>
+                <button class="btn btn-amber" onclick="confirmRecallAction()">⚡ ยืนยันดึงกลับ (Recall to Draft)</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast" id="toast">
+        <span id="toastIcon">✅</span>
+        <span id="toastMsg">บันทึกข้อมูลเรียบร้อยแล้ว</span>
+    </div>
+
+    <script>
+        // Mock In-Memory Data Store
+        let vouchers = [
+            {
+                id: "vch_001",
+                type: "OE (ค่าใช้จ่าย)",
+                docNo: "OE260830001",
+                date: "30/08/2026",
+                partner: "บริษัท แกร็บแท็กซี่ (ประเทศไทย) จำกัด",
+                taxId: "0105556083011",
+                refNo: "GRB-20260830-99",
+                glCode: "95-5200-05",
+                subtotal: 1250.00,
+                vat: 87.50,
+                net: 1337.50,
+                status: "DRAFT"
+            },
+            {
+                id: "vch_002",
+                type: "OE (ค่าใช้จ่าย)",
+                docNo: "OE260830002",
+                date: "30/08/2026",
+                partner: "บริษัท ช้อปปี้ เอ็กซ์เพรส จำกัด",
+                taxId: "0105562002341",
+                refNo: "SPX-99214421",
+                glCode: "95-5200-05",
+                subtotal: 450.00,
+                vat: 31.50,
+                net: 481.50,
+                status: "DRAFT"
+            },
+            {
+                id: "vch_003",
+                type: "IV (ขายเชื่อ)",
+                docNo: "IV260830001",
+                date: "30/08/2026",
+                partner: "บริษัท สยาม ซีเมนต์ คอนซัลติ้ง จำกัด",
+                taxId: "0105532019921",
+                refNo: "SO-2026-0891",
+                glCode: "41-1000-01",
+                subtotal: 25000.00,
+                vat: 1750.00,
+                net: 26750.00,
+                status: "DRAFT"
+            },
+            {
+                id: "vch_004",
+                type: "OE (ค่าใช้จ่าย)",
+                docNo: "OE260830003",
+                date: "29/08/2026",
+                partner: "บริษัท ไอที โซลูชั่น พลัส จำกัด",
+                taxId: "0105549018273",
+                refNo: "INV-IT-8841",
+                glCode: "95-5310-19",
+                subtotal: 8900.00,
+                vat: 623.00,
+                net: 9523.00,
+                status: "READY"
+            },
+            {
+                id: "vch_005",
+                type: "OE (ค่าใช้จ่าย)",
+                docNo: "OE260830004",
+                date: "29/08/2026",
+                partner: "บริษัท ซีพี ออลล์ จำกัด (มหาชน)",
+                taxId: "0107542000011",
+                refNo: "711-RC-0199",
+                glCode: "95-5100-02",
+                subtotal: 320.00,
+                vat: 22.40,
+                net: 342.40,
+                status: "READY"
+            },
+            {
+                id: "vch_006",
+                type: "OE (ค่าใช้จ่าย)",
+                docNo: "OE260829001",
+                date: "28/08/2026",
+                partner: "บริษัท ปตท. น้ำมันและการค้าปลีก จำกัด",
+                taxId: "0107561000057",
+                refNo: "PTT-OIL-4412",
+                glCode: "95-5200-05",
+                subtotal: 1800.00,
+                vat: 126.00,
+                net: 1926.00,
+                status: "POSTED"
+            }
+        ];
+
+        let activeFilter = "ALL";
+        let activeEditId = null;
+        let activeRecallId = null;
+
+        // Render table
+        function renderTable() {
+            const tbody = document.getElementById("voucherTableBody");
+            tbody.innerHTML = "";
+
+            const filtered = vouchers.filter(v => activeFilter === "ALL" || v.status === activeFilter);
+
+            filtered.forEach(v => {
+                const tr = document.createElement("tr");
+
+                let badgeHtml = "";
+                let actionHtml = "";
+
+                if (v.status === "DRAFT") {
+                    badgeHtml = `<span class="badge badge-draft">✏️ DRAFT (แก้ได้)</span>`;
+                    actionHtml = `
+                        <div class="action-btns">
+                            <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="openEditModal('${v.id}')">✏️ แก้ไข</button>
+                            <button class="btn btn-amber" style="padding: 6px 12px; font-size: 12px;" onclick="confirmVoucher('${v.id}')">🔒 Confirm (READY)</button>
+                        </div>
+                    `;
+                } else if (v.status === "READY") {
+                    badgeHtml = `<span class="badge badge-ready">🔒 READY (Sealed)</span>`;
+                    actionHtml = `
+                        <div class="action-btns">
+                            <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px; opacity: 0.5; cursor: not-allowed;" title="ไม่สามารถแก้ไขได้จนกว่าจะ Recall">🔒 ล็อคแล้ว</button>
+                            <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px; border-color: var(--amber); color: var(--amber);" onclick="openRecallModal('${v.id}')">↩️ Recall (ดึงกลับ)</button>
+                        </div>
+                    `;
+                } else if (v.status === "POSTED") {
+                    badgeHtml = `<span class="badge badge-posted">✅ POSTED (ใน Express)</span>`;
+                    actionHtml = `
+                        <div class="action-btns">
+                            <span style="font-size: 11px; color: var(--emerald); font-weight: 600;">✓ คีย์สำเร็จแล้ว (ห้ามแก้ไข)</span>
+                        </div>
+                    `;
+                }
+
+                tr.innerHTML = `
+                    <td><span style="font-size: 11px; font-weight: 600; color: var(--text-dim);">${v.type}</span></td>
+                    <td><span class="doc-no">${v.docNo}</span></td>
+                    <td>${v.date}</td>
+                    <td><b>${v.partner}</b><br><small style="color: var(--text-dim);">Tax ID: ${v.taxId}</small></td>
+                    <td><code>${v.refNo}</code></td>
+                    <td>${v.subtotal.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                    <td>${v.vat.toLocaleString('en-US', {minimumFractionDigits: 2})}</td>
+                    <td><b style="color: #fff;">${v.net.toLocaleString('en-US', {minimumFractionDigits: 2})}</b></td>
+                    <td>${badgeHtml}</td>
+                    <td>${actionHtml}</td>
+                `;
+
+                tbody.appendChild(tr);
+            });
+
+            updateStats();
+        }
+
+        function updateStats() {
+            const total = vouchers.length;
+            const draft = vouchers.filter(v => v.status === "DRAFT").length;
+            const ready = vouchers.filter(v => v.status === "READY").length;
+            const posted = vouchers.filter(v => v.status === "POSTED").length;
+
+            document.getElementById("statTotal").innerText = total;
+            document.getElementById("statDraft").innerText = draft;
+            document.getElementById("statReady").innerText = ready;
+            document.getElementById("statPosted").innerText = posted;
+
+            document.getElementById("draftCount").innerText = draft;
+            document.getElementById("rpaOeCount").innerText = ready + " รายการ";
+        }
+
+        function filterStatus(status, btn) {
+            activeFilter = status;
+            document.querySelectorAll(".status-filters .pill-btn").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            renderTable();
+        }
+
+        function switchTab(tabId, el) {
+            document.querySelectorAll(".view-section").forEach(sec => sec.classList.remove("active"));
+            document.querySelectorAll(".nav-item").forEach(item => item.classList.remove("active"));
+            
+            document.getElementById(tabId).classList.add("active");
+            if (el) el.classList.add("active");
+
+            const titles = {
+                'reviewTab': '📑 รีวิว & ยืนยันเอกสาร (Review & Confirm Gateway)',
+                'uploadTab': '📥 จัดการนำเข้าข้อมูล (Data Ingestion & Cleansing)',
+                'rpaTab': '🤖 UiPath RPA Express Dispatcher & Realtime Queue',
+                'masterTab': '⚙️ ผังบัญชีและการตั้งค่า Express GL Account Mapping'
+            };
+
+            document.getElementById("pageHeading").innerText = titles[tabId];
+        }
+
+        // Edit Modal Operations
+        function openEditModal(id) {
+            const v = vouchers.find(x => x.id === id);
+            if (!v || v.status !== "DRAFT") return;
+
+            activeEditId = id;
+            document.getElementById("mDocNo").value = v.docNo;
+            document.getElementById("mDate").value = v.date;
+            document.getElementById("mPartner").value = v.partner;
+            document.getElementById("mTaxId").value = v.taxId;
+            document.getElementById("mRefNo").value = v.refNo;
+            document.getElementById("mGlCode").value = v.glCode;
+            document.getElementById("mSubtotal").value = v.subtotal;
+            document.getElementById("mVat").value = v.vat;
+            document.getElementById("mGrandTotal").value = v.net;
+
+            document.getElementById("editModal").classList.add("active");
+        }
+
+        function closeModal() {
+            document.getElementById("editModal").classList.remove("active");
+            activeEditId = null;
+        }
+
+        function recalcVat() {
+            const sub = parseFloat(document.getElementById("mSubtotal").value) || 0;
+            const vat = parseFloat((sub * 0.07).toFixed(2));
+            const total = parseFloat((sub + vat).toFixed(2));
+
+            document.getElementById("mVat").value = vat;
+            document.getElementById("mGrandTotal").value = total;
+        }
+
+        function saveVoucherChanges() {
+            const v = vouchers.find(x => x.id === activeEditId);
+            if (!v) return;
+
+            v.date = document.getElementById("mDate").value;
+            v.partner = document.getElementById("mPartner").value;
+            v.taxId = document.getElementById("mTaxId").value;
+            v.refNo = document.getElementById("mRefNo").value;
+            v.glCode = document.getElementById("mGlCode").value;
+            v.subtotal = parseFloat(document.getElementById("mSubtotal").value) || 0;
+            v.vat = parseFloat(document.getElementById("mVat").value) || 0;
+            v.net = parseFloat(document.getElementById("mGrandTotal").value) || 0;
+
+            closeModal();
+            renderTable();
+            showToast("💾 บันทึกการแก้ไข Draft สำเร็จแล้ว");
+        }
+
+        // Confirm Action -> Changes Status to READY (Locked)
+        function confirmVoucher(id) {
+            const v = vouchers.find(x => x.id === id);
+            if (!v) return;
+
+            v.status = "READY";
+            renderTable();
+            showToast(`🔒 Confirm เรียบร้อย! เอกสาร ${v.docNo} ถูก Seal เป็น READY (ห้ามแก้ไข) พร้อมส่งให้ RPA`);
+        }
+
+        // Recall Operations
+        function openRecallModal(id) {
+            activeRecallId = id;
+            document.getElementById("recallReason").value = "";
+            document.getElementById("recallModal").classList.add("active");
+        }
+
+        function closeRecallModal() {
+            document.getElementById("recallModal").classList.remove("active");
+            activeRecallId = null;
+        }
+
+        function confirmRecallAction() {
+            const v = vouchers.find(x => x.id === activeRecallId);
+            if (!v) return;
+
+            v.status = "DRAFT";
+            closeRecallModal();
+            renderTable();
+            showToast(`↩️ Recall สำเร็จ! เอกสาร ${v.docNo} ดึงกลับมาเป็น DRAFT เพื่อแก้ไขแล้ว`);
+        }
+
+        // RPA Simulation
+        function simulateRpaExecution() {
+            const readyItems = vouchers.filter(v => v.status === "READY");
+            if (readyItems.length === 0) {
+                showToast("⚠️ ไม่มีเอกสารสถานะ READY ให้ RPA ดึงไปคีย์", true);
+                return;
+            }
+
+            readyItems.forEach(v => {
+                v.status = "POSTED";
+            });
+
+            renderTable();
+            showToast(`🤖 UiPath Bot ดึงงานและคีย์เข้า Express สำเร็จ ${readyItems.length} รายการ (เปลี่ยนเป็น POSTED)`);
+        }
+
+        function triggerMockUpload() {
+            showToast("📁 จำลอง: อัปโหลดและ Cleansing ข้อมูล Excel สำเร็จเรียบร้อย!");
+        }
+
+        function simulateNewUpload() {
+            renderTable();
+            showToast("🔄 รีเฟรชสถานะข้อมูลล่าสุดเรียบร้อยแล้ว");
+        }
+
+        function showToast(msg, isError = false) {
+            const toast = document.getElementById("toast");
+            document.getElementById("toastMsg").innerText = msg;
+            document.getElementById("toastIcon").innerText = isError ? "⚠️" : "✅";
+            
+            if (isError) {
+                toast.classList.add("error");
+            } else {
+                toast.classList.remove("error");
+            }
+
+            toast.classList.add("show");
+            setTimeout(() => {
+                toast.classList.remove("show");
+            }, 3500);
+        }
+
+        // Initialize
+        document.addEventListener("DOMContentLoaded", () => {
+            renderTable();
+        });
+    </script>
+</body>
+</html>

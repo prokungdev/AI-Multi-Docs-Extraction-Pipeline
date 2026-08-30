@@ -100,14 +100,15 @@ def seed_default_company(session) -> Company:
 def seed_document_statuses(session) -> None:
     """Seeds standard document lifecycle status codes."""
     statuses = [
-        (DocumentStatusCode.PENDING, "Pending Review", "DocumentControl is waiting for initial preprocessing or splitting."),
-        (DocumentStatusCode.PREPROCESSED, "Preprocessed", "DocumentControl is split and matched, ready for AI extraction."),
-        (DocumentStatusCode.EXTRACTED, "Extracted", "AI successfully extracted document payload to JSON file, waiting for DB insertion."),
-        (DocumentStatusCode.NEEDS_REVIEW, "Needs Review", "DocumentControl requires manual review before approval."),
-        (DocumentStatusCode.PROCESSED, "Processed", "AI successfully extracted document payload, waiting for human audit."),
-        (DocumentStatusCode.APPROVED, "Approved", "DocumentControl payload approved and verified for financial export."),
-        (DocumentStatusCode.FAILED, "Failed", "Extraction or validation failed completely."),
-        (DocumentStatusCode.IGNORED, "Ignored", "DocumentControl merchant is marked as ignored and skipped from processing."),
+        (DocumentStatusCode.PENDING.value, "Pending Review", "DocumentControl is waiting for initial preprocessing or splitting."),
+        (DocumentStatusCode.PREPROCESSED.value, "Preprocessed", "DocumentControl is split and matched, ready for AI extraction."),
+        (DocumentStatusCode.EXTRACTED.value, "Extracted", "AI successfully extracted document payload to JSON file, waiting for DB insertion."),
+        (DocumentStatusCode.NEEDS_REVIEW.value, "Needs Review", "DocumentControl requires manual review before approval."),
+        (DocumentStatusCode.PROCESSED.value, "Processed", "AI successfully extracted document payload, waiting for human audit."),
+        (DocumentStatusCode.CONFIRMED.value, "Confirmed", "DocumentControl confirmed by reviewer and ready for journal voucher generation."),
+        (DocumentStatusCode.APPROVED.value, "Approved", "DocumentControl payload approved and verified for financial export."),
+        (DocumentStatusCode.FAILED.value, "Failed", "Extraction or validation failed completely."),
+        (DocumentStatusCode.IGNORED.value, "Ignored", "DocumentControl merchant is marked as ignored and skipped from processing."),
         ("EXPORTED", "Exported", "DocumentControl is exported to destination systems.")
     ]
     for code, name, desc_text in statuses:
@@ -264,6 +265,7 @@ def seed_default_merchants(session, company_id: str) -> None:
             default_wht_rate=0.0,
             status_code=MerchantStatus.APPROVED.value,
             is_vat_registered=0,
+            is_override_vat=1,
             created_by=SystemUserId.SYSTEM_ADMIN
         ))
 
@@ -282,6 +284,7 @@ def seed_default_merchants(session, company_id: str) -> None:
             "has_wht": 1,
             "default_wht_rate": 3.0,
             "is_vat_registered": 1,
+            "is_override_vat": 1,
         },
         {
             "merchant_id": "merch_spx_express",
@@ -296,6 +299,7 @@ def seed_default_merchants(session, company_id: str) -> None:
             "has_wht": 0,
             "default_wht_rate": 0.0,
             "is_vat_registered": 0,
+            "is_override_vat": 1,
         },
         {
             "merchant_id": "merch_shopee_thailand",
@@ -310,6 +314,7 @@ def seed_default_merchants(session, company_id: str) -> None:
             "has_wht": 0,
             "default_wht_rate": 0.0,
             "is_vat_registered": 1,
+            "is_override_vat": 1,
         },
     ]
     for m in real_merchants:

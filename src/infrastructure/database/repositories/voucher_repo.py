@@ -110,6 +110,7 @@ def create_journal_voucher(
             vat_type=voucher_data.get("vat_type", "EXCLUSIVE"),
             vat_rate=voucher_data.get("vat_rate", 7.0),
             vat_amount=voucher_data.get("vat_amount", 0.0),
+            is_override_vat=voucher_data.get("is_override_vat", 1),
             wht_amount=voucher_data.get("wht_amount", 0.0),
             net_amount=voucher_data.get("net_amount", 0.0),
             status_code=voucher_data.get("status_code", VoucherStatusCode.READY.value),

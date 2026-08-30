@@ -156,6 +156,7 @@ erDiagram
 | `approved_at` | `VARCHAR(50)` | YES | - | Approval UTC timestamp |
 | `default_wht_rate` | `FLOAT` | NO | `0.0` | Default Withholding Tax Rate (%) |
 | `is_vat_registered` | `INTEGER` | NO | `1` | 1: VAT Registered (7%), 0: Non-VAT |
+| `is_override_vat` | `INTEGER` | NO | `1` | 1: Manual VAT Override (ยึดตามหน้าบิล), 0: Auto 7% |
 | `is_active` | `INTEGER` | NO | `1` | Master data active switch |
 | `created_at` | `VARCHAR(50)` | NO | UTC ISO | Discovery/Creation timestamp |
 | `created_by` | `VARCHAR(36)` | NO | `'usr_system_admin'` | Creator actor ID |
@@ -278,7 +279,7 @@ erDiagram
   - `voucher_type` (default `'OE'`), `voucher_no` (`OE260730001`), `voucher_date` (ISO `YYYY-MM-DD`)
   - `vendor_code` (`G0001`, `อ0022`, `S0002`), `vendor_name`, `vendor_tax_id`, `vendor_branch_code`
   - `ref_doc_no`, `ref_doc_date`
-  - `subtotal_amount`, `vat_type` (`EXCLUSIVE`, `INCLUSIVE`, `NO_VAT`), `vat_rate`, `vat_amount`, `wht_amount`, `net_amount`
+  - `subtotal_amount`, `vat_type` (`EXCLUSIVE`, `INCLUSIVE`, `NO_VAT`), `vat_rate`, `vat_amount`, `is_override_vat` (1: Manual VAT from bill), `wht_amount`, `net_amount`
   - `target_payload` (Serialized destination JSON for RPA bot)
   - `status_code` (`DRAFT`, `READY`, `POSING`, `POSTED`, `ERROR`, `CANCELLED`)
   - `is_locked`, `locked_by`, `locked_at`, `erp_reference_no`, `posted_at`, `rpa_error_reason`

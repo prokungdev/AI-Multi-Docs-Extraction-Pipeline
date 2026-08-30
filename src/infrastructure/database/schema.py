@@ -152,6 +152,8 @@ def initialize_db_schema(drop_and_recreate: bool = False):
                     conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN approved_at VARCHAR(50)")
                 if "is_active" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN is_active INTEGER DEFAULT 1")
+                if "is_override_vat" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE merchants ADD COLUMN is_override_vat INTEGER DEFAULT 1")
                 if "created_by" not in existing_cols:
                     conn.exec_driver_sql(f"ALTER TABLE merchants ADD COLUMN created_by VARCHAR(36) DEFAULT '{SystemUserId.SYSTEM_ADMIN}'")
                 if "updated_by" not in existing_cols:
@@ -282,6 +284,8 @@ def initialize_db_schema(drop_and_recreate: bool = False):
                 existing_cols = [row[1] for row in res.fetchall()]
                 if existing_cols and "posted_at" not in existing_cols:
                     conn.exec_driver_sql("ALTER TABLE journal_vouchers ADD COLUMN posted_at VARCHAR(50)")
+                if existing_cols and "is_override_vat" not in existing_cols:
+                    conn.exec_driver_sql("ALTER TABLE journal_vouchers ADD COLUMN is_override_vat INTEGER DEFAULT 1")
             except Exception as mig_err:
                 logger.debug(f"Journal Vouchers schema migration note: {mig_err}")
 

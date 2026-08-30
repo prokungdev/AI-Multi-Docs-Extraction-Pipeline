@@ -13,6 +13,7 @@ import gc
 import uuid
 import unittest
 import tempfile
+from typing import Optional, List, Dict, Any
 
 from src.infrastructure.database.engine import get_db_session, dispose_all_engines
 from src.infrastructure.database.schema import initialize_db_schema
@@ -28,6 +29,7 @@ from src.infrastructure.core.constants import (
     generate_entity_id,
     SystemUserId,
     DefaultCompany,
+    DocumentStatusCode,
     VatType,
     VoucherStatusCode,
 )
@@ -40,6 +42,11 @@ from src.infrastructure.database import (
 from src.application.usecases.voucher_generator import (
     generate_voucher_for_document,
     generate_vouchers_for_batch,
+)
+from src.application.pipeline import (
+    confirm_receipts,
+    generate_journal_vouchers,
+    export_target_payloads,
 )
 
 
@@ -87,16 +94,25 @@ class TestVoucherGenerationIntegration(unittest.TestCase):
         else:
             os.environ.pop("DB_PATH_OVERRIDE", None)
 
-    def _create_document_and_receipt(self, payload: dict, doc_number: str, date_str: str) -> str:
+    def _create_document_and_receipt(
+        self,
+        payload: dict,
+        doc_number: str,
+        date_str: str,
+        batch_id: Optional[str] = None,
+        status_code: Optional[str] = None,
+    ) -> str:
         """Helper to create a DocumentControl and insert an ExpenseReceipt."""
         doc_id = generate_entity_id(EntityIdPrefix.DOCUMENT)
+        target_batch = batch_id or self.batch_id
+        target_status = status_code or DocumentStatusCode.APPROVED.value
         with get_db_session() as session:
             session.add(DocumentControl(
                 document_id=doc_id,
                 company_id=self.company_id,
-                batch_id=self.batch_id,
+                batch_id=target_batch,
                 doc_type_id="expense_receipt",
-                status_code="APPROVED",
+                status_code=target_status,
                 created_by=SystemUserId.SYSTEM_ADMIN
             ))
         
@@ -252,10 +268,86 @@ class TestVoucherGenerationIntegration(unittest.TestCase):
     def test_04_idempotency_and_batch_generation(self):
         """Test batch voucher generation and idempotency without duplicates."""
         # Call generate_vouchers_for_batch on the batch
-        vouchers = generate_vouchers_for_batch(self.batch_id)
+        res = generate_vouchers_for_batch(self.batch_id)
         # All 3 documents in this batch already have vouchers generated
-        self.assertEqual(len(vouchers), 3)
+        self.assertEqual(res["generated_count"], 3)
 
         # Total vouchers in DB should still be exactly 3
         all_vchs = list_vouchers(company_id=self.company_id)
         self.assertEqual(len(all_vchs), 3)
+
+    def test_05_stages_5_6_7_pipeline_end_to_end(self):
+        """Test Stage 5 (Confirm), Stage 6 (Voucher), and Stage 7 (Export) Pipeline Stages."""
+        new_batch_id = generate_entity_id(EntityIdPrefix.BATCH)
+
+        with get_db_session() as session:
+            batch = Batch(
+                batch_id=new_batch_id,
+                company_id=self.company_id,
+                original_filename="pipeline_test.pdf",
+                total_pages=1,
+                storage_path="storage/test.pdf",
+                file_hash=f"hash_{new_batch_id}",
+                created_by=SystemUserId.SYSTEM_ADMIN,
+            )
+            session.add(batch)
+
+        grab_payload = {
+            "merchant": {
+                "name": "Grabtaxi (Thailand) Co., Ltd.",
+                "tax_id": "0105556090377",
+                "branch_code": "00000",
+            },
+            "receipt_info": {
+                "receipt_number": "GRB-PIPE-001",
+                "transaction_date": "2026-08-30",
+            },
+            "totals": {
+                "subtotal": 1000.00,
+                "vat_amount": 70.00,
+                "net_amount": 1070.00,
+            },
+            "items": [
+                {"name": "Delivery Service Fee", "quantity": 1, "unit_price": 1000.00, "total_price": 1000.00}
+            ]
+        }
+        doc_id = self._create_document_and_receipt(grab_payload, "PIPE_01", "2026-08-30", batch_id=new_batch_id)
+
+        # 1. Stage 5: Confirm Receipts
+        confirm_res = confirm_receipts(
+            batch_id=new_batch_id,
+            company_code=DefaultCompany.CODE,
+            confirmed_by=SystemUserId.SYSTEM_ADMIN,
+        )
+        self.assertEqual(confirm_res["confirmed_count"], 1)
+        self.assertEqual(confirm_res["confirmed_by"], SystemUserId.SYSTEM_ADMIN)
+
+        # 2. Stage 6: Generate Journal Vouchers
+        voucher_res = generate_journal_vouchers(
+            batch_id=new_batch_id,
+            company_code=DefaultCompany.CODE,
+        )
+        self.assertEqual(voucher_res["generated_count"], 1)
+        vch = voucher_res["vouchers"][0]
+        self.assertTrue(vch["voucher_no"].startswith("OE"))
+        self.assertEqual(vch["is_override_vat"], 1)
+
+        # 3. Stage 7: Export & Seal Target Payloads
+        export_res = export_target_payloads(
+            batch_id=new_batch_id,
+            company_code=DefaultCompany.CODE,
+        )
+        self.assertEqual(export_res["total_exported"], 1)
+        self.assertEqual(export_res["status"], "READY")
+
+        target_payload = export_res["vouchers"][0]["target_payload"]
+        self.assertIn("is_override_vat", str(target_payload))
+        self.assertNotIn("edit_vat", str(target_payload))
+
+        # 4. Test force_regenerate=True successfully regenerates without error
+        regen_res = generate_journal_vouchers(
+            batch_id=new_batch_id,
+            company_code=DefaultCompany.CODE,
+            force_regenerate=True,
+        )
+        self.assertEqual(regen_res["generated_count"], 1)

@@ -407,6 +407,7 @@ class Merchant(BaseEntity):
     approved_by = Column(String(100), nullable=True)
     approved_at = Column(String(50), nullable=True)
     is_vat_registered = Column(Integer, default=1)
+    is_override_vat = Column(Integer, nullable=False, default=1, server_default="1")
     is_active = Column(Integer, default=1, server_default="1")
 
     company = relationship("Company", back_populates="merchants")
@@ -495,6 +496,7 @@ class JournalVoucher(BaseEntity):
     vat_type = Column(String(20), nullable=False, default=VatType.EXCLUSIVE.value)
     vat_rate = Column(Float, nullable=False, default=7.0)
     vat_amount = Column(Float, nullable=False, default=0.0)
+    is_override_vat = Column(Integer, nullable=False, default=1, server_default="1")
     wht_amount = Column(Float, nullable=False, default=0.0)
     net_amount = Column(Float, nullable=False, default=0.0)
     currency = Column(String(10), nullable=False, default="THB")
